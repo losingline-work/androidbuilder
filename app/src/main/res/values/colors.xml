@@ -1,0 +1,7 @@
+<resources>
+    <color name="colorPrimary">#174EA6</color>
+    <color name="colorAccent">#0B8043</color>
+    <color name="colorDanger">#B3261E</color>
+    <color name="surface">#F7F8FA</color>
+    <color name="ink">#202124</color>
+</resources>
