@@ -15,7 +15,10 @@ public class RuntimeInstaller {
         void onError(Exception error);
     }
 
-    private static final String ASSET_BOOTSTRAP = "runtime/bootstrap-arm64.zip";
+    private static final String[] ASSET_BOOTSTRAP_CANDIDATES = {
+            "runtime/bootstrap-aarch64.zip",
+            "runtime/bootstrap-arm64.zip"
+    };
 
     private final Context context;
     private final EmbeddedRuntime runtime;
@@ -32,7 +35,7 @@ public class RuntimeInstaller {
 
     public void installBundledAsync(Callback callback) {
         new Thread(() -> {
-            try (InputStream in = context.getAssets().open(ASSET_BOOTSTRAP)) {
+            try (InputStream in = openBundledBootstrap()) {
                 runtime.installBootstrap(new BufferedInputStream(in));
                 callback.onSuccess(runtime.statusText());
             } catch (Exception error) {
@@ -65,5 +68,17 @@ public class RuntimeInstaller {
                 }
             }
         }, "runtime-install-url").start();
+    }
+
+    private InputStream openBundledBootstrap() throws Exception {
+        Exception lastError = null;
+        for (String asset : ASSET_BOOTSTRAP_CANDIDATES) {
+            try {
+                return context.getAssets().open(asset);
+            } catch (Exception error) {
+                lastError = error;
+            }
+        }
+        throw new IllegalStateException("Bundled bootstrap zip not found. Expected one of: runtime/bootstrap-aarch64.zip, runtime/bootstrap-arm64.zip", lastError);
     }
 }
