@@ -49,6 +49,7 @@ public class ProjectActivity extends BaseActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_project);
         applySystemBarPadding();
+        findViewById(R.id.backButton).setOnClickListener(v -> finish());
         repository = ((AndroidBuilderApp) getApplication()).repository();
         agentService = new AgentService(this, repository);
         projectId = getIntent().getLongExtra(MainActivity.EXTRA_PROJECT_ID, -1);

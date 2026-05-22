@@ -45,6 +45,7 @@ public class SettingsActivity extends BaseActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_settings);
         applySystemBarPadding();
+        findViewById(R.id.backButton).setOnClickListener(v -> finish());
         apiKey = findViewById(R.id.apiKeyInput);
         endpoint = findViewById(R.id.endpointInput);
         model = findViewById(R.id.modelInput);
