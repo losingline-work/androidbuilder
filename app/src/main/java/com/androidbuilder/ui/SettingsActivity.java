@@ -16,6 +16,7 @@ import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.androidbuilder.BuildConfig;
 import com.androidbuilder.R;
 import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.backend.BuildBackendSettings;
@@ -97,6 +98,7 @@ public class SettingsActivity extends BaseActivity {
         findViewById(R.id.copySetupScriptButton).setOnClickListener(v -> copyAsset("termux/setup-termux.sh", "setup-termux.sh"));
         findViewById(R.id.thirdPartyNoticesButton).setOnClickListener(v -> startActivity(new Intent(this, ThirdPartyNoticesActivity.class)));
         ((TextView) findViewById(R.id.termuxHelp)).setText(R.string.termux_help);
+        ((TextView) findViewById(R.id.appVersionText)).setText(getString(R.string.app_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE));
         updateTermuxSectionVisibility();
         updateModelInputVisibility();
         refreshRuntimeStatus();
