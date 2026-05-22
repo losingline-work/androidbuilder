@@ -29,6 +29,9 @@
             android:name=".ui.ThirdPartyNoticesActivity"
             android:exported="false" />
         <activity
+            android:name=".ui.SourceFilesActivity"
+            android:exported="false" />
+        <activity
             android:name=".ui.ProjectActivity"
             android:exported="false" />
         <activity

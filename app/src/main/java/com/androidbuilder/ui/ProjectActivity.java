@@ -1,5 +1,9 @@
 package com.androidbuilder.ui;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import android.text.method.ScrollingMovementMethod;
 import android.view.View;
@@ -63,6 +67,8 @@ public class ProjectActivity extends BaseActivity {
         findViewById(R.id.sendButton).setOnClickListener(v -> generate());
         findViewById(R.id.buildButton).setOnClickListener(v -> buildLatest());
         findViewById(R.id.installButton).setOnClickListener(v -> installLatest());
+        findViewById(R.id.copyLogButton).setOnClickListener(v -> copyLatestLog());
+        findViewById(R.id.sourceFilesButton).setOnClickListener(v -> openSourceFiles());
         buildServer = new LocalBuildServer(repository, (p, j) -> runOnUiThread(() -> {
             refresh();
             maybeAutoRepair(j);
@@ -183,6 +189,33 @@ public class ProjectActivity extends BaseActivity {
         } catch (Exception error) {
             Toast.makeText(this, "Install failed: " + error.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void copyLatestLog() {
+        BuildJobRecord job = repository.latestBuildJob(projectId);
+        if (job == null || job.logsPath == null) {
+            Toast.makeText(this, R.string.no_build_log, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            String logs = FileUtils.readText(new File(job.logsPath));
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.build_log), logs));
+            Toast.makeText(this, getString(R.string.copied, getString(R.string.build_log)), Toast.LENGTH_SHORT).show();
+        } catch (Exception error) {
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void openSourceFiles() {
+        File sourceDir = repository.sourceDir(projectId);
+        if (!sourceDir.exists()) {
+            Toast.makeText(this, R.string.no_source_files, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent intent = new Intent(this, SourceFilesActivity.class);
+        intent.putExtra(MainActivity.EXTRA_PROJECT_ID, projectId);
+        startActivity(intent);
     }
 
     private void maybeAutoRepair(long failedJobId) {
