@@ -175,6 +175,11 @@ public class ProjectActivity extends BaseActivity {
         if (failed == null || !"failed".equals(failed.status) || failed.retryCount >= 3 || autoRepairing.contains(failedJobId)) {
             return;
         }
+        if (!isRepairableFailure(failed)) {
+            repository.addMessage(projectId, "assistant", "构建失败，但这类错误需要先修复本机运行环境或构建后端配置，不自动重试。", failedJobId);
+            refresh();
+            return;
+        }
         autoRepairing.add(failedJobId);
         String logs = "";
         if (failed.logsPath != null) {
@@ -188,14 +193,15 @@ public class ProjectActivity extends BaseActivity {
         }
         String prompt = "Fix the Android build failure and regenerate the project. Build log:\n" + logs;
         repository.addMessage(projectId, "assistant", "构建失败，开始自动修复第 " + (failed.retryCount + 1) + "/3 次。", failedJobId);
-        agentService.generateAsync(projectId, prompt, new AgentService.Callback() {
+        agentService.generateRepairAsync(projectId, prompt, new AgentService.Callback() {
             @Override
             public void onComplete(BuildJobRecord job) {
                 runOnUiThread(() -> {
                     repository.updateBuildJob(job.id, job.status, job.phase, job.logsPath, job.apkPath, job.errorSummary, failed.retryCount + 1);
+                    BuildJobRecord retryJob = repository.getBuildJob(job.id);
                     refresh();
                     BuildBackend backend = BuildBackendFactory.create(ProjectActivity.this, repository, buildServer);
-                    backend.build(job, (p, j) -> runOnUiThread(() -> {
+                    backend.build(retryJob == null ? job : retryJob, (p, j) -> runOnUiThread(() -> {
                         refresh();
                         maybeAutoRepair(j);
                     }));
@@ -210,6 +216,18 @@ public class ProjectActivity extends BaseActivity {
                 });
             }
         });
+    }
+
+    private boolean isRepairableFailure(BuildJobRecord failed) {
+        String phase = failed.phase == null ? "" : failed.phase;
+        String error = failed.errorSummary == null ? "" : failed.errorSummary;
+        if (phase.contains("missing_tools") || phase.contains("termux") || phase.contains("runtime_error")) {
+            return false;
+        }
+        return !error.contains("toolchain is incomplete") &&
+                !error.contains("No such file") &&
+                !error.contains("Permission denied") &&
+                !error.contains("Cannot run program");
     }
 
     private void setBusy(boolean busy) {

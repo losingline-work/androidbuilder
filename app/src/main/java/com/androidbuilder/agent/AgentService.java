@@ -33,7 +33,18 @@ public class AgentService {
     public void generateAsync(long projectId, String prompt, Callback callback) {
         new Thread(() -> {
             try {
-                BuildJobRecord job = generate(projectId, prompt);
+                BuildJobRecord job = generate(projectId, prompt, true, true);
+                callback.onComplete(job);
+            } catch (Exception error) {
+                callback.onError(error);
+            }
+        }, "agent-generate").start();
+    }
+
+    public void generateRepairAsync(long projectId, String prompt, Callback callback) {
+        new Thread(() -> {
+            try {
+                BuildJobRecord job = generate(projectId, prompt, false, false);
                 callback.onComplete(job);
             } catch (Exception error) {
                 callback.onError(error);
@@ -42,12 +53,18 @@ public class AgentService {
     }
 
     public BuildJobRecord generate(long projectId, String prompt) throws Exception {
+        return generate(projectId, prompt, true, true);
+    }
+
+    private BuildJobRecord generate(long projectId, String prompt, boolean recordUserMessage, boolean announceGenerated) throws Exception {
         ProjectRecord project = repository.getProject(projectId);
         if (project == null) {
             throw new IllegalArgumentException("Project not found: " + projectId);
         }
         BuildJobRecord job = repository.createBuildJob(projectId);
-        repository.addMessage(projectId, "user", prompt, job.id);
+        if (recordUserMessage) {
+            repository.addMessage(projectId, "user", prompt, job.id);
+        }
         repository.updateBuildJob(job.id, "generating", "cloud_spec", null, null, null, 0);
 
         List<ChatMessage> history = repository.listMessages(projectId);
@@ -67,7 +84,9 @@ public class AgentService {
         File logs = new File(jobDir, "build.log");
         FileUtils.writeText(logs, "Generated project for " + spec.appName + "\nWaiting for Termux build.\n");
 
-        repository.addMessage(projectId, "assistant", chinese ? "已生成项目源码：" + spec.appName + "。可以点击 Build 开始构建。" : "Generated source for " + spec.appName + ". Tap Build to start the build.", job.id);
+        if (announceGenerated) {
+            repository.addMessage(projectId, "assistant", chinese ? "已生成项目源码：" + spec.appName + "。可以点击 Build 开始构建。" : "Generated source for " + spec.appName + ". Tap Build to start the build.", job.id);
+        }
         repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
         return repository.getBuildJob(job.id);
     }
