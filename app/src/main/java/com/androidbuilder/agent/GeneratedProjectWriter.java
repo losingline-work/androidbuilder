@@ -13,7 +13,11 @@ public class GeneratedProjectWriter {
         String packagePath = spec.packageName.replace('.', '/');
         FileUtils.writeText(new File(sourceDir, "settings.gradle"), settings(spec));
         FileUtils.writeText(new File(sourceDir, "build.gradle"), rootBuild());
-        FileUtils.writeText(new File(sourceDir, "gradle.properties"), "android.useAndroidX=false\norg.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8\n");
+        FileUtils.writeText(new File(sourceDir, "gradle.properties"),
+                "android.useAndroidX=false\n" +
+                "org.gradle.daemon=false\n" +
+                "org.gradle.workers.max=1\n" +
+                "kotlin.compiler.execution.strategy=in-process\n");
         FileUtils.writeText(new File(sourceDir, "app/build.gradle"), appBuild(spec));
         FileUtils.writeText(new File(sourceDir, "app/src/main/AndroidManifest.xml"), manifest(spec));
         FileUtils.writeText(new File(sourceDir, "app/src/main/res/values/strings.xml"), strings(spec));

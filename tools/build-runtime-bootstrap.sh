@@ -173,7 +173,7 @@ chmod +x "$rootfs_dir/usr/bin/apksigner"
 cat > "$rootfs_dir/usr/bin/gradle" <<EOF
 #!/system/bin/sh
 PREFIX="\${PREFIX:-\$(cd "\$(dirname "\$0")/.." && pwd)}"
-exec "\$PREFIX/bin/java" -classpath "\$PREFIX/opt/gradle-$GRADLE_VERSION/lib/gradle-launcher-$GRADLE_VERSION.jar" org.gradle.launcher.GradleMain "\$@"
+exec "\$PREFIX/bin/java" \${GRADLE_OPTS:-} -classpath "\$PREFIX/opt/gradle-$GRADLE_VERSION/lib/gradle-launcher-$GRADLE_VERSION.jar" org.gradle.launcher.GradleMain "\$@"
 EOF
 chmod +x "$rootfs_dir/usr/bin/gradle"
 

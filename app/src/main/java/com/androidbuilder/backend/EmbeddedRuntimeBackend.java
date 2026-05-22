@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 
 public class EmbeddedRuntimeBackend implements BuildBackend {
+    private static final String PROCESS_LAUNCH_OPTION = "-Djdk.lang.Process.launchMechanism=VFORK";
+
     private final Context context;
     private final AppRepository repository;
     private final EmbeddedRuntime runtime;
@@ -137,15 +139,27 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
 
         File gradleProperties = new File(sourceWorkDir, "gradle.properties");
         String existing = gradleProperties.exists() ? FileUtils.readText(gradleProperties) : "";
-        StringBuilder next = new StringBuilder(existing);
-        if (next.length() > 0 && next.charAt(next.length() - 1) != '\n') {
-            next.append('\n');
+        StringBuilder next = new StringBuilder();
+        for (String line : existing.split("\\R", -1)) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("org.gradle.jvmargs=") ||
+                    trimmed.startsWith("org.gradle.daemon=") ||
+                    trimmed.startsWith("org.gradle.workers.max=") ||
+                    trimmed.startsWith("kotlin.compiler.execution.strategy=") ||
+                    trimmed.startsWith("android.aapt2FromMavenOverride=")) {
+                continue;
+            }
+            if (line.isEmpty() && next.length() == 0) {
+                continue;
+            }
+            next.append(line).append('\n');
         }
-        if (!existing.contains("android.aapt2FromMavenOverride=")) {
-            next.append("android.aapt2FromMavenOverride=")
-                    .append(new File(runtime.bin(), "aapt2").getAbsolutePath())
-                    .append('\n');
-        }
+        next.append("org.gradle.daemon=false\n");
+        next.append("org.gradle.workers.max=1\n");
+        next.append("kotlin.compiler.execution.strategy=in-process\n");
+        next.append("android.aapt2FromMavenOverride=")
+                .append(new File(runtime.bin(), "aapt2").getAbsolutePath())
+                .append('\n');
         FileUtils.writeText(gradleProperties, next.toString());
     }
 
@@ -167,6 +181,10 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         env.put("TMPDIR", new File(runtime.home(), "tmp").getAbsolutePath());
         env.put("LANG", "C.UTF-8");
         env.put("TERM", "dumb");
+        env.put("JAVA_TOOL_OPTIONS", appendJvmOption(env.get("JAVA_TOOL_OPTIONS")));
+        env.put("JDK_JAVA_OPTIONS", appendJvmOption(env.get("JDK_JAVA_OPTIONS")));
+        env.put("JAVA_OPTS", appendJvmOption(env.get("JAVA_OPTS")));
+        env.put("GRADLE_OPTS", appendJvmOption(env.get("GRADLE_OPTS")));
         env.put("LD_LIBRARY_PATH", new File(runtime.usr(), "lib").getAbsolutePath() + ":" +
                 new File(runtime.usr(), "lib/jvm/java-21-openjdk/lib").getAbsolutePath() + ":" +
                 new File(runtime.usr(), "lib/jvm/java-21-openjdk/lib/server").getAbsolutePath());
@@ -188,6 +206,16 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             }
         }
         return new ProcessResult(process.waitFor(), tail.toString().trim());
+    }
+
+    private String appendJvmOption(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return PROCESS_LAUNCH_OPTION;
+        }
+        if (value.contains(PROCESS_LAUNCH_OPTION)) {
+            return value;
+        }
+        return value + " " + PROCESS_LAUNCH_OPTION;
     }
 
     private String summarizeFailure(String prefix, ProcessResult result) {
