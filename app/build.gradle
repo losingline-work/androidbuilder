@@ -8,8 +8,10 @@ android {
 
     defaultConfig {
         applicationId "com.androidbuilder"
-        minSdk 31
-        targetSdk 35
+        minSdk 28
+        // Embedded Termux-like runtimes execute binaries from the app private
+        // directory. Android blocks that for apps targeting API 29+.
+        targetSdk 28
         versionCode 1
         versionName "0.1.0"
     }

@@ -39,6 +39,10 @@ public class EmbeddedRuntime {
         return new File(usr(), "android-sdk");
     }
 
+    public File buildTools() {
+        return new File(androidSdk(), "build-tools/35.0.0");
+    }
+
     public File work(long projectId, long jobId) {
         return new File(root, "work/" + projectId + "/" + jobId);
     }
@@ -53,6 +57,7 @@ public class EmbeddedRuntime {
         mkdir(usr());
         mkdir(bin());
         mkdir(androidSdk());
+        mkdir(buildTools());
         mkdir(licenses());
         File notice = new File(licenses(), "TERMUX-GPLV3-NOTICE.txt");
         if (!notice.exists()) {
@@ -88,6 +93,7 @@ public class EmbeddedRuntime {
                 }
             }
         }
+        ensureAndroidSdkWrappers();
     }
 
     public boolean hasMinimumTools() {
@@ -114,9 +120,19 @@ public class EmbeddedRuntime {
     public String statusText() {
         List<String> missing = missingTools();
         if (missing.isEmpty()) {
-            return "Embedded runtime ready: " + root().getAbsolutePath();
+            return "Embedded runtime ready / 内置运行环境已就绪: " + root().getAbsolutePath();
         }
-        return "Embedded runtime missing: " + missing + "\nRoot: " + root().getAbsolutePath();
+        return "Base runtime installed, Android build toolchain incomplete.\n" +
+                "基础运行环境已安装，但 Android 构建工具链不完整。\n" +
+                "Missing / 缺少: " + missing + "\n" +
+                "Root: " + root().getAbsolutePath();
+    }
+
+    public void ensureAndroidSdkWrappers() throws IOException {
+        mkdir(buildTools());
+        writeWrapperIfToolExists("aapt2");
+        writeWrapperIfToolExists("d8");
+        writeWrapperIfToolExists("apksigner");
     }
 
     private void mkdir(File dir) throws IOException {
@@ -133,6 +149,18 @@ public class EmbeddedRuntime {
         try (FileOutputStream out = new FileOutputStream(file)) {
             out.write(value.getBytes(StandardCharsets.UTF_8));
         }
+    }
+
+    private void writeWrapperIfToolExists(String tool) throws IOException {
+        File executable = new File(bin(), tool);
+        if (!executable.exists()) {
+            return;
+        }
+        File wrapper = new File(buildTools(), tool);
+        writeText(wrapper, "#!/system/bin/sh\n" +
+                "PREFIX=\"${PREFIX:-" + usr().getAbsolutePath() + "}\"\n" +
+                "exec \"$PREFIX/bin/" + tool + "\" \"$@\"\n");
+        wrapper.setExecutable(true, false);
     }
 
     private String normalizeEntryName(String raw) {

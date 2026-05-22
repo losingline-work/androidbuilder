@@ -61,7 +61,7 @@ files/runtime/usr/android-sdk/platforms/android-34/android.jar
 
 设置页支持两种安装方式：
 
-- 安装内置 bootstrap：把 `bootstrap-arm64.zip` 放到 `app/src/main/assets/runtime/bootstrap-arm64.zip` 后重新打包 APK。
+- 安装内置 bootstrap：把 `bootstrap-aarch64.zip` 或 `bootstrap-arm64.zip` 放到 `app/src/main/assets/runtime/` 后重新打包 APK。
 - 下载并安装 bootstrap：在设置页填写 zip URL，App 会下载并解压到 `files/runtime`。
 
 支持的 zip 结构：
@@ -102,6 +102,25 @@ https://github.com/termux/termux-packages/releases
 ```
 
 注意：官方 Termux bootstrap 默认面向 `com.termux` 路径。要长期稳定内置到 `com.androidbuilder`，建议重新构建适配本 App 私有路径的 bootstrap。
+
+### 生成完整 Android 构建环境
+
+截图中如果看到：
+
+```text
+Embedded runtime missing: [usr/bin/gradle, usr/bin/java, usr/bin/aapt2, usr/android-sdk/platforms/android-34/android.jar]
+```
+
+说明只安装了基础 bootstrap，还没有 Android 构建工具链。可以在开发机执行：
+
+```bash
+./tools/build-runtime-bootstrap.sh app/src/main/assets/runtime/bootstrap-aarch64.zip
+./gradlew assembleDebug
+```
+
+脚本会从 Termux 官方包仓库下载 `openjdk-21`、`aapt2`、`d8`、`apksigner` 等 arm64 包，并加入 Gradle 8.9 与本机 Android SDK 的 `android-34/android.jar`。生成的完整 zip 通常超过 400 MB，不适合直接提交到普通 GitHub 仓库；推荐放到 GitHub Release 或对象存储，再用设置页的“下载并安装 bootstrap”安装。
+
+由于内置 runtime 需要执行 App 私有目录里的 arm64 二进制，控制 App 的 `targetSdk` 保持在 28，和 Termux 的兼容策略一致。
 
 ## 外部 Termux 兼容模式
 

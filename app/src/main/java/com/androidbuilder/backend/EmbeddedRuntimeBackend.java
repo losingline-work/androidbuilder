@@ -44,8 +44,20 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             File sourceWorkDir = new File(workDir, "source");
             FileUtils.deleteRecursively(workDir);
             FileUtils.copyRecursively(repository.sourceDir(job.projectId), sourceWorkDir);
+            prepareAndroidGradleProject(sourceWorkDir);
             repository.updateBuildJob(job.id, "building", "embedded_runtime", log.getAbsolutePath(), null, null, job.retryCount);
             listener.onJobChanged(job.projectId, job.id);
+
+            if (!runtime.hasMinimumTools()) {
+                String error = "Embedded runtime toolchain is incomplete.\n" +
+                        "Missing: " + runtime.missingTools() + "\n" +
+                        "Install a full Android arm64 runtime bootstrap, then retry the build.\n";
+                FileUtils.appendText(log, error);
+                repository.updateBuildJob(job.id, "failed", "embedded_runtime_missing_tools", log.getAbsolutePath(), null, error, job.retryCount);
+                repository.addMessage(job.projectId, "assistant", "Embedded build failed: Android runtime toolchain is incomplete.", job.id);
+                listener.onJobChanged(job.projectId, job.id);
+                return;
+            }
 
             File gradle = gradleExecutable(sourceWorkDir);
             if (gradle == null) {
@@ -89,6 +101,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
 
     private void initializeLayout(File log) throws Exception {
         runtime.initializeLayout();
+        runtime.ensureAndroidSdkWrappers();
         FileUtils.appendText(log, "Embedded runtime root: " + runtime.root().getAbsolutePath() + "\n");
     }
 
@@ -104,6 +117,24 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             return runtimeGradle;
         }
         return null;
+    }
+
+    private void prepareAndroidGradleProject(File sourceWorkDir) throws Exception {
+        FileUtils.writeText(new File(sourceWorkDir, "local.properties"),
+                "sdk.dir=" + runtime.androidSdk().getAbsolutePath() + "\n");
+
+        File gradleProperties = new File(sourceWorkDir, "gradle.properties");
+        String existing = gradleProperties.exists() ? FileUtils.readText(gradleProperties) : "";
+        StringBuilder next = new StringBuilder(existing);
+        if (next.length() > 0 && next.charAt(next.length() - 1) != '\n') {
+            next.append('\n');
+        }
+        if (!existing.contains("android.aapt2FromMavenOverride=")) {
+            next.append("android.aapt2FromMavenOverride=")
+                    .append(new File(runtime.bin(), "aapt2").getAbsolutePath())
+                    .append('\n');
+        }
+        FileUtils.writeText(gradleProperties, next.toString());
     }
 
     private int runGradle(File gradle, File sourceWorkDir, File log) throws Exception {
