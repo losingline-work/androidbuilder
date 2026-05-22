@@ -41,7 +41,7 @@ public abstract class BaseActivity extends Activity {
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             view.setPadding(
                     insets.getSystemWindowInsetLeft(),
-                    insets.getSystemWindowInsetTop(),
+                    0,
                     insets.getSystemWindowInsetRight(),
                     insets.getSystemWindowInsetBottom()
             );
