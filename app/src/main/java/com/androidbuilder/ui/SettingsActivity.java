@@ -10,8 +10,8 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
+import android.widget.AutoCompleteTextView;
 import android.widget.EditText;
-import android.widget.Spinner;
 import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -23,6 +23,7 @@ import com.androidbuilder.backend.RuntimeInstaller;
 import com.androidbuilder.termux.TermuxBridge;
 import com.androidbuilder.util.AppSettings;
 import com.androidbuilder.util.FileUtils;
+import com.google.android.material.appbar.MaterialToolbar;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -30,13 +31,24 @@ import java.nio.charset.StandardCharsets;
 
 public class SettingsActivity extends BaseActivity {
     private static final int REQUEST_TERMUX_RUN_COMMAND = 8001;
+    private String[] providerLabels;
+    private String[] languageLabels;
+    private String[] backendLabels;
+    private String[] deepseekModelLabels;
+    private String[] minimaxModelLabels;
+
     private EditText apiKey;
     private EditText endpoint;
     private EditText model;
-    private Spinner providerSpinner;
-    private Spinner languageSpinner;
-    private Spinner backendSpinner;
+    private AutoCompleteTextView deepseekModelSpinner;
+    private AutoCompleteTextView minimaxModelSpinner;
+    private AutoCompleteTextView providerSpinner;
+    private AutoCompleteTextView languageSpinner;
+    private AutoCompleteTextView backendSpinner;
     private View termuxSection;
+    private View deepseekModelLayout;
+    private View minimaxModelLayout;
+    private View modelInputLayout;
     private EditText runtimeBootstrapUrlInput;
     private TextView runtimeStatusText;
 
@@ -45,10 +57,16 @@ public class SettingsActivity extends BaseActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_settings);
         applySystemBarPadding();
-        findViewById(R.id.backButton).setOnClickListener(v -> finish());
+        MaterialToolbar toolbar = findViewById(R.id.settingsToolbar);
+        toolbar.setNavigationOnClickListener(v -> finish());
         apiKey = findViewById(R.id.apiKeyInput);
         endpoint = findViewById(R.id.endpointInput);
         model = findViewById(R.id.modelInput);
+        deepseekModelSpinner = findViewById(R.id.deepseekModelSpinner);
+        minimaxModelSpinner = findViewById(R.id.minimaxModelSpinner);
+        deepseekModelLayout = findViewById(R.id.deepseekModelLayout);
+        minimaxModelLayout = findViewById(R.id.minimaxModelLayout);
+        modelInputLayout = findViewById(R.id.modelInputLayout);
         providerSpinner = findViewById(R.id.providerSpinner);
         languageSpinner = findViewById(R.id.languageSpinner);
         backendSpinner = findViewById(R.id.backendSpinner);
@@ -59,11 +77,13 @@ public class SettingsActivity extends BaseActivity {
         SharedPreferences prefs = getSharedPreferences(OpenAiClient.PREFS, MODE_PRIVATE);
         apiKey.setText(prefs.getString(OpenAiClient.KEY_API_KEY, ""));
         String provider = prefs.getString(OpenAiClient.KEY_PROVIDER, OpenAiClient.PROVIDER_OPENAI);
-        providerSpinner.setSelection(providerIndex(provider));
+        select(providerSpinner, providerLabels, providerIndex(provider));
         endpoint.setText(prefs.getString(OpenAiClient.KEY_ENDPOINT, OpenAiClient.defaultEndpoint(provider)));
         model.setText(prefs.getString(OpenAiClient.KEY_MODEL, OpenAiClient.defaultModel(provider)));
-        languageSpinner.setSelection(languageIndex(AppSettings.language(this)));
-        backendSpinner.setSelection(backendIndex(BuildBackendSettings.selected(this)));
+        select(deepseekModelSpinner, deepseekModelLabels, deepseekModelIndex(prefs.getString(OpenAiClient.KEY_MODEL, OpenAiClient.defaultModel(provider))));
+        select(minimaxModelSpinner, minimaxModelLabels, minimaxModelIndex(prefs.getString(OpenAiClient.KEY_MODEL, OpenAiClient.defaultModel(provider))));
+        select(languageSpinner, languageLabels, languageIndex(AppSettings.language(this)));
+        select(backendSpinner, backendLabels, backendIndex(BuildBackendSettings.selected(this)));
         runtimeBootstrapUrlInput.setText(BuildBackendSettings.prefs(this).getString(BuildBackendSettings.KEY_BOOTSTRAP_URL, ""));
         findViewById(R.id.saveSettingsButton).setOnClickListener(v -> save());
         findViewById(R.id.refreshRuntimeStatusButton).setOnClickListener(v -> refreshRuntimeStatus());
@@ -78,60 +98,57 @@ public class SettingsActivity extends BaseActivity {
         findViewById(R.id.thirdPartyNoticesButton).setOnClickListener(v -> startActivity(new Intent(this, ThirdPartyNoticesActivity.class)));
         ((TextView) findViewById(R.id.termuxHelp)).setText(R.string.termux_help);
         updateTermuxSectionVisibility();
+        updateModelInputVisibility();
         refreshRuntimeStatus();
     }
 
     private void configureSpinners() {
-        providerSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{getString(R.string.provider_openai), getString(R.string.provider_deepseek), getString(R.string.provider_custom)}));
-        languageSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{getString(R.string.language_system), "English", "中文"}));
-        backendSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{getString(R.string.backend_embedded), getString(R.string.backend_external_termux)}));
-        providerSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
-                String provider = providerAt(position);
-                if (!OpenAiClient.PROVIDER_CUSTOM.equals(provider)) {
-                    endpoint.setText(OpenAiClient.defaultEndpoint(provider));
-                    if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
-                        model.setHint(R.string.deepseek_model_hint);
-                        String currentModel = model.getText().toString().trim();
-                        if (!OpenAiClient.isSupportedDeepSeekModel(currentModel)) {
-                            model.setText(OpenAiClient.defaultModel(provider));
-                        }
-                    } else {
-                        model.setHint(R.string.model);
-                        model.setText(OpenAiClient.defaultModel(provider));
-                    }
-                } else {
-                    model.setHint(R.string.model);
+        providerLabels = new String[]{getString(R.string.provider_openai), getString(R.string.provider_deepseek), getString(R.string.provider_minimax), getString(R.string.provider_custom)};
+        languageLabels = new String[]{getString(R.string.language_system), "English", "中文"};
+        backendLabels = new String[]{getString(R.string.backend_embedded), getString(R.string.backend_external_termux)};
+        deepseekModelLabels = new String[]{getString(R.string.deepseek_model_v4_flash), getString(R.string.deepseek_model_v4_pro)};
+        minimaxModelLabels = new String[]{getString(R.string.minimax_model_m2), getString(R.string.minimax_model_m1), getString(R.string.minimax_model_text_01)};
+        configureDropdown(providerSpinner, providerLabels);
+        configureDropdown(languageSpinner, languageLabels);
+        configureDropdown(backendSpinner, backendLabels);
+        configureDropdown(deepseekModelSpinner, deepseekModelLabels);
+        configureDropdown(minimaxModelSpinner, minimaxModelLabels);
+        providerSpinner.setOnItemClickListener((parent, view, position, id) -> {
+            String provider = providerAt(position);
+            if (!OpenAiClient.PROVIDER_CUSTOM.equals(provider)) {
+                endpoint.setText(OpenAiClient.defaultEndpoint(provider));
+                if (!OpenAiClient.PROVIDER_DEEPSEEK.equals(provider) && !OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
+                    model.setText(OpenAiClient.defaultModel(provider));
                 }
             }
-
-            @Override
-            public void onNothingSelected(android.widget.AdapterView<?> parent) {
-            }
+            updateModelInputVisibility();
         });
-        backendSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
-                updateTermuxSectionVisibility();
-            }
+        backendSpinner.setOnItemClickListener((parent, view, position, id) -> updateTermuxSectionVisibility());
+    }
 
-            @Override
-            public void onNothingSelected(android.widget.AdapterView<?> parent) {
-            }
-        });
+    private void configureDropdown(AutoCompleteTextView view, String[] labels) {
+        view.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, labels));
+        view.setThreshold(0);
+    }
+
+    private void updateModelInputVisibility() {
+        String provider = providerAt(selectedIndex(providerSpinner, providerLabels));
+        boolean isDeepSeek = OpenAiClient.PROVIDER_DEEPSEEK.equals(provider);
+        boolean isMiniMax = OpenAiClient.PROVIDER_MINIMAX.equals(provider);
+        deepseekModelLayout.setVisibility(isDeepSeek ? View.VISIBLE : View.GONE);
+        minimaxModelLayout.setVisibility(isMiniMax ? View.VISIBLE : View.GONE);
+        modelInputLayout.setVisibility((isDeepSeek || isMiniMax) ? View.GONE : View.VISIBLE);
     }
 
     private void save() {
-        String provider = providerAt(providerSpinner.getSelectedItemPosition());
-        String selectedModel = OpenAiClient.normalizedModel(provider, model.getText().toString());
-        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider) && !OpenAiClient.isSupportedDeepSeekModel(selectedModel)) {
-            Toast.makeText(this, R.string.deepseek_model_invalid, Toast.LENGTH_LONG).show();
-            model.setText(OpenAiClient.defaultModel(provider));
-            return;
+        String provider = providerAt(selectedIndex(providerSpinner, providerLabels));
+        String selectedModel;
+        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
+            selectedModel = deepseekModelAt(selectedIndex(deepseekModelSpinner, deepseekModelLabels));
+        } else if (OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
+            selectedModel = minimaxModelAt(selectedIndex(minimaxModelSpinner, minimaxModelLabels));
+        } else {
+            selectedModel = OpenAiClient.normalizedModel(provider, model.getText().toString());
         }
         getSharedPreferences(OpenAiClient.PREFS, MODE_PRIVATE)
                 .edit()
@@ -140,8 +157,8 @@ public class SettingsActivity extends BaseActivity {
                 .putString(OpenAiClient.KEY_ENDPOINT, endpoint.getText().toString().trim())
                 .putString(OpenAiClient.KEY_MODEL, selectedModel)
                 .apply();
-        AppSettings.prefs(this).edit().putString(AppSettings.KEY_LANGUAGE, languageAt(languageSpinner.getSelectedItemPosition())).apply();
-        BuildBackendSettings.setSelected(this, backendAt(backendSpinner.getSelectedItemPosition()));
+        AppSettings.prefs(this).edit().putString(AppSettings.KEY_LANGUAGE, languageAt(selectedIndex(languageSpinner, languageLabels))).apply();
+        BuildBackendSettings.setSelected(this, backendAt(selectedIndex(backendSpinner, backendLabels)));
         BuildBackendSettings.prefs(this).edit().putString(BuildBackendSettings.KEY_BOOTSTRAP_URL, runtimeBootstrapUrlInput.getText().toString().trim()).apply();
         Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show();
         recreate();
@@ -149,8 +166,26 @@ public class SettingsActivity extends BaseActivity {
 
     private void updateTermuxSectionVisibility() {
         if (termuxSection != null) {
-            termuxSection.setVisibility(BuildBackendSettings.EXTERNAL_TERMUX.equals(backendAt(backendSpinner.getSelectedItemPosition())) ? View.VISIBLE : View.GONE);
+            termuxSection.setVisibility(BuildBackendSettings.EXTERNAL_TERMUX.equals(backendAt(selectedIndex(backendSpinner, backendLabels))) ? View.VISIBLE : View.GONE);
         }
+    }
+
+    private void select(AutoCompleteTextView view, String[] labels, int index) {
+        if (labels.length == 0) {
+            return;
+        }
+        int safeIndex = Math.max(0, Math.min(index, labels.length - 1));
+        view.setText(labels[safeIndex], false);
+    }
+
+    private int selectedIndex(AutoCompleteTextView view, String[] labels) {
+        String value = view.getText() == null ? "" : view.getText().toString();
+        for (int index = 0; index < labels.length; index++) {
+            if (labels[index].equals(value)) {
+                return index;
+            }
+        }
+        return 0;
     }
 
     private void copyAsset(String asset, String label) {
@@ -312,8 +347,11 @@ public class SettingsActivity extends BaseActivity {
         if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
             return 1;
         }
-        if (OpenAiClient.PROVIDER_CUSTOM.equals(provider)) {
+        if (OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
             return 2;
+        }
+        if (OpenAiClient.PROVIDER_CUSTOM.equals(provider)) {
+            return 3;
         }
         return 0;
     }
@@ -323,9 +361,46 @@ public class SettingsActivity extends BaseActivity {
             return OpenAiClient.PROVIDER_DEEPSEEK;
         }
         if (position == 2) {
+            return OpenAiClient.PROVIDER_MINIMAX;
+        }
+        if (position == 3) {
             return OpenAiClient.PROVIDER_CUSTOM;
         }
         return OpenAiClient.PROVIDER_OPENAI;
+    }
+
+    private int deepseekModelIndex(String model) {
+        if (OpenAiClient.DEEPSEEK_MODEL_PRO.equals(model)) {
+            return 1;
+        }
+        return 0;
+    }
+
+    private String deepseekModelAt(int position) {
+        if (position == 1) {
+            return OpenAiClient.DEEPSEEK_MODEL_PRO;
+        }
+        return OpenAiClient.DEEPSEEK_MODEL_FLASH;
+    }
+
+    private int minimaxModelIndex(String model) {
+        if (OpenAiClient.MINIMAX_MODEL_M1.equals(model)) {
+            return 1;
+        }
+        if (OpenAiClient.MINIMAX_MODEL_TEXT_01.equals(model)) {
+            return 2;
+        }
+        return 0;
+    }
+
+    private String minimaxModelAt(int position) {
+        if (position == 1) {
+            return OpenAiClient.MINIMAX_MODEL_M1;
+        }
+        if (position == 2) {
+            return OpenAiClient.MINIMAX_MODEL_TEXT_01;
+        }
+        return OpenAiClient.MINIMAX_MODEL_M2;
     }
 
     private int languageIndex(String language) {

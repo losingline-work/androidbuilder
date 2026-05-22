@@ -1,6 +1,5 @@
 package com.androidbuilder.ui;
 
-import android.app.AlertDialog;
 import android.os.Bundle;
 import android.text.method.ScrollingMovementMethod;
 import android.view.View;
@@ -14,6 +13,8 @@ import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.util.FileUtils;
+import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -37,7 +38,8 @@ public class SourceFilesActivity extends BaseActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_source_files);
         applySystemBarPadding();
-        findViewById(R.id.backButton).setOnClickListener(v -> finish());
+        MaterialToolbar toolbar = findViewById(R.id.sourceToolbar);
+        toolbar.setNavigationOnClickListener(v -> finish());
         repository = ((AndroidBuilderApp) getApplication()).repository();
         long projectId = getIntent().getLongExtra(MainActivity.EXTRA_PROJECT_ID, -1);
         rootDir = repository.sourceDir(projectId);
@@ -111,7 +113,7 @@ public class SourceFilesActivity extends BaseActivity {
             preview.setTypeface(android.graphics.Typeface.MONOSPACE);
             preview.setPadding(24, 18, 24, 18);
             preview.setMovementMethod(new ScrollingMovementMethod());
-            new AlertDialog.Builder(this)
+            new MaterialAlertDialogBuilder(this)
                     .setTitle(relativePath(file))
                     .setView(preview)
                     .setPositiveButton(R.string.close, null)

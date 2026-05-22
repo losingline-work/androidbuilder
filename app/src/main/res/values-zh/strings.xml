@@ -1,13 +1,19 @@
 <resources>
-    <string name="app_name">安卓构建器</string>
+    <string name="app_name">app制造机</string>
     <string name="app_tagline">从本地工作台生成、构建和安装安卓 App</string>
     <string name="project_workspace">项目工作台</string>
     <string name="model_configuration">模型配置</string>
     <string name="runtime_configuration">运行环境配置</string>
     <string name="compatibility_mode">兼容模式</string>
     <string name="build_log">构建日志</string>
+    <string name="build_waiting">正在准备构建...</string>
     <string name="conversation">需求沟通</string>
     <string name="copy_log">复制日志</string>
+    <string name="copy_message">复制</string>
+    <string name="delete_message">删除</string>
+    <string name="delete_message_title">删除消息？</string>
+    <string name="delete_message_message">这条消息会从本地历史记录中移除。</string>
+    <string name="message">消息</string>
     <string name="source_files">源码文件</string>
     <string name="file_browser">源码文件</string>
     <string name="parent_directory">上一级目录</string>
@@ -29,6 +35,7 @@
     <string name="provider">模型服务</string>
     <string name="provider_openai">OpenAI</string>
     <string name="provider_deepseek">DeepSeek</string>
+    <string name="provider_minimax">MiniMax</string>
     <string name="provider_custom">自定义</string>
     <string name="build_backend">构建后端</string>
     <string name="backend_embedded">内置运行环境</string>
@@ -36,7 +43,11 @@
     <string name="api_key_hint">API Key</string>
     <string name="endpoint">接口地址</string>
     <string name="model">模型</string>
-    <string name="deepseek_model_hint">deepseek-v4-flash 或 deepseek-v4-pro</string>
+    <string name="deepseek_model_v4_flash">deepseek-v4-flash</string>
+    <string name="deepseek_model_v4_pro">deepseek-v4-pro</string>
+    <string name="minimax_model_m2">MiniMax-M2</string>
+    <string name="minimax_model_m1">MiniMax-M1</string>
+    <string name="minimax_model_text_01">MiniMax-Text-01</string>
     <string name="deepseek_model_invalid">DeepSeek 仅支持 deepseek-v4-flash 和 deepseek-v4-pro。</string>
     <string name="save_settings">保存设置</string>
     <string name="embedded_runtime">内置运行环境</string>

@@ -1,14 +1,15 @@
 package com.androidbuilder.ui;
 
-import android.app.Activity;
 import android.content.Context;
 import android.os.Bundle;
 import android.view.View;
 
+import androidx.appcompat.app.AppCompatActivity;
+
 import com.androidbuilder.util.AppSettings;
 import com.androidbuilder.util.LocaleUtils;
 
-public abstract class BaseActivity extends Activity {
+public abstract class BaseActivity extends AppCompatActivity {
     private String languageAtCreate;
 
     @Override

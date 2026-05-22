@@ -5,12 +5,12 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
-import android.text.method.ScrollingMovementMethod;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -28,11 +28,16 @@ import com.androidbuilder.model.ChatMessage;
 import com.androidbuilder.model.ProjectRecord;
 import com.androidbuilder.server.LocalBuildServer;
 import com.androidbuilder.util.FileUtils;
+import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.io.File;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class ProjectActivity extends BaseActivity {
@@ -42,10 +47,13 @@ public class ProjectActivity extends BaseActivity {
     private long projectId;
     private final List<ChatMessage> messages = new ArrayList<>();
     private MessageAdapter adapter;
+    private ListView messageList;
     private TextView title;
     private TextView status;
-    private TextView logText;
     private EditText promptInput;
+    private boolean buildLogVisible;
+    private BuildJobRecord latestJob;
+    private final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.getDefault());
     private final Set<Long> autoRepairing = new HashSet<>();
 
     @Override
@@ -53,21 +61,24 @@ public class ProjectActivity extends BaseActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_project);
         applySystemBarPadding();
-        findViewById(R.id.backButton).setOnClickListener(v -> finish());
+        MaterialToolbar toolbar = findViewById(R.id.projectToolbar);
+        toolbar.setNavigationOnClickListener(v -> finish());
         repository = ((AndroidBuilderApp) getApplication()).repository();
         agentService = new AgentService(this, repository);
         projectId = getIntent().getLongExtra(MainActivity.EXTRA_PROJECT_ID, -1);
         title = findViewById(R.id.projectTitle);
         status = findViewById(R.id.statusText);
-        logText = findViewById(R.id.logText);
-        logText.setMovementMethod(new ScrollingMovementMethod());
         promptInput = findViewById(R.id.promptInput);
         adapter = new MessageAdapter();
-        ((ListView) findViewById(R.id.messageList)).setAdapter(adapter);
+        messageList = findViewById(R.id.messageList);
+        messageList.setAdapter(adapter);
+        messageList.setOnItemLongClickListener((parent, view, position, id) -> {
+            showMessageActions(position);
+            return true;
+        });
         findViewById(R.id.sendButton).setOnClickListener(v -> generate());
         findViewById(R.id.buildButton).setOnClickListener(v -> buildLatest());
         findViewById(R.id.installButton).setOnClickListener(v -> installLatest());
-        findViewById(R.id.copyLogButton).setOnClickListener(v -> copyLatestLog());
         findViewById(R.id.sourceFilesButton).setOnClickListener(v -> openSourceFiles());
         buildServer = new LocalBuildServer(repository, (p, j) -> runOnUiThread(() -> {
             refresh();
@@ -101,25 +112,52 @@ public class ProjectActivity extends BaseActivity {
             return;
         }
         title.setText(project.name);
-        BuildJobRecord job = repository.latestBuildJob(projectId);
-        status.setText(project.packageName + " · " + project.lastBuildStatus + (job == null ? "" : " · job #" + job.id));
+        latestJob = repository.latestBuildJob(projectId);
+        status.setText(project.packageName + " · " + project.lastBuildStatus + (latestJob == null ? "" : " · job #" + latestJob.id));
         messages.clear();
         messages.addAll(repository.listMessages(projectId));
         adapter.notifyDataSetChanged();
-        if (job != null && job.logsPath != null) {
-            try {
-                String logs = FileUtils.readText(new File(job.logsPath));
-                logText.setText(logs.length() > 5000 ? logs.substring(logs.length() - 5000) : logs);
-                logText.post(() -> {
-                    if (logText.getLayout() != null) {
-                        int scrollY = logText.getLayout().getLineTop(logText.getLineCount()) - logText.getHeight();
-                        logText.scrollTo(0, Math.max(scrollY, 0));
-                    }
-                });
-            } catch (Exception ignored) {
-                logText.setText("");
-            }
+        if (!messages.isEmpty() || buildLogVisible) {
+            messageList.post(() -> messageList.setSelection(Math.max(adapter.getCount() - 1, 0)));
         }
+    }
+
+    private void showMessageActions(int position) {
+        if (position < messages.size()) {
+            ChatMessage message = messages.get(position);
+            new MaterialAlertDialogBuilder(this)
+                    .setItems(new CharSequence[]{getString(R.string.copy_message), getString(R.string.delete_message)}, (dialog, which) -> {
+                        if (which == 0) {
+                            copyText(getString(R.string.message), message.content);
+                        } else {
+                            confirmDeleteMessage(message);
+                        }
+                    })
+                    .show();
+            return;
+        }
+        BuildJobRecord job = latestJob;
+        if (job != null) {
+            copyText(getString(R.string.build_log), readBuildLogTail(job));
+        }
+    }
+
+    private void confirmDeleteMessage(ChatMessage message) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.delete_message_title)
+                .setMessage(R.string.delete_message_message)
+                .setPositiveButton(R.string.delete, (dialog, which) -> {
+                    repository.deleteMessage(message.id);
+                    refresh();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void copyText(String label, String text) {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text == null ? "" : text));
+        Toast.makeText(this, getString(R.string.copied, label), Toast.LENGTH_SHORT).show();
     }
 
     private void generate() {
@@ -169,13 +207,26 @@ public class ProjectActivity extends BaseActivity {
             return;
         }
         BuildBackend backend = BuildBackendFactory.create(this, repository, buildServer);
-        repository.updateBuildJob(job.id, "building", backend.id() + "_start", job.logsPath, job.apkPath, null, job.retryCount);
-        backend.build(job, (p, j) -> runOnUiThread(() -> {
+        buildLogVisible = true;
+        String logsPath = resetBuildLog(job);
+        repository.updateBuildJob(job.id, "building", backend.id() + "_start", logsPath, null, null, job.retryCount);
+        BuildJobRecord buildJob = repository.getBuildJob(job.id);
+        backend.build(buildJob == null ? job : buildJob, (p, j) -> runOnUiThread(() -> {
             refresh();
             maybeAutoRepair(j);
         }));
         refresh();
         Toast.makeText(this, BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started, Toast.LENGTH_SHORT).show();
+    }
+
+    private String resetBuildLog(BuildJobRecord job) {
+        File log = new File(repository.jobDir(job.projectId, job.id), "build.log");
+        try {
+            FileUtils.writeText(log, "");
+        } catch (Exception error) {
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+        return log.getAbsolutePath();
     }
 
     private void installLatest() {
@@ -188,22 +239,6 @@ public class ProjectActivity extends BaseActivity {
             new ApkInstaller(this).install(new File(job.apkPath));
         } catch (Exception error) {
             Toast.makeText(this, "Install failed: " + error.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void copyLatestLog() {
-        BuildJobRecord job = repository.latestBuildJob(projectId);
-        if (job == null || job.logsPath == null) {
-            Toast.makeText(this, R.string.no_build_log, Toast.LENGTH_SHORT).show();
-            return;
-        }
-        try {
-            String logs = FileUtils.readText(new File(job.logsPath));
-            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.build_log), logs));
-            Toast.makeText(this, getString(R.string.copied, getString(R.string.build_log)), Toast.LENGTH_SHORT).show();
-        } catch (Exception error) {
-            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -286,17 +321,51 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private class MessageAdapter extends BaseAdapter {
-        @Override public int getCount() { return messages.size(); }
-        @Override public Object getItem(int position) { return messages.get(position); }
-        @Override public long getItemId(int position) { return messages.get(position).id; }
+        private static final int TYPE_MESSAGE = 0;
+        private static final int TYPE_BUILD = 1;
+
+        @Override public int getCount() { return messages.size() + (showBuildMessage() ? 1 : 0); }
+        @Override public Object getItem(int position) { return position < messages.size() ? messages.get(position) : latestJob; }
+        @Override public long getItemId(int position) { return position < messages.size() ? messages.get(position).id : -latestJob.id; }
+        @Override public int getViewTypeCount() { return 2; }
+        @Override public int getItemViewType(int position) { return position < messages.size() ? TYPE_MESSAGE : TYPE_BUILD; }
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
+            if (getItemViewType(position) == TYPE_BUILD) {
+                View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_build_message, parent, false) : convertView;
+                bindBuildMessage(view);
+                return view;
+            }
             View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_message, parent, false) : convertView;
             ChatMessage message = messages.get(position);
             ((TextView) view.findViewById(R.id.messageRole)).setText(message.role.toUpperCase());
+            ((TextView) view.findViewById(R.id.messageTime)).setText(timeFormat.format(new Date(message.createdAt)));
             ((TextView) view.findViewById(R.id.messageContent)).setText(message.content);
             return view;
         }
+
+        private boolean showBuildMessage() {
+            return buildLogVisible && latestJob != null && latestJob.logsPath != null;
+        }
+
+        private void bindBuildMessage(View view) {
+            boolean running = "building".equals(latestJob.status) || "queued".equals(latestJob.status);
+            ((ProgressBar) view.findViewById(R.id.buildProgress)).setVisibility(running ? View.VISIBLE : View.GONE);
+            ((TextView) view.findViewById(R.id.buildTime)).setText(timeFormat.format(new Date(latestJob.createdAt)));
+            ((TextView) view.findViewById(R.id.buildContent)).setText(readBuildLogTail(latestJob));
+        }
+    }
+
+    private String readBuildLogTail(BuildJobRecord job) {
+        String logs = "";
+        try {
+            logs = FileUtils.readText(new File(job.logsPath));
+        } catch (Exception ignored) {
+        }
+        if (logs.trim().isEmpty()) {
+            return getString(R.string.build_waiting);
+        }
+        return logs.length() > 5000 ? logs.substring(logs.length() - 5000) : logs;
     }
 }

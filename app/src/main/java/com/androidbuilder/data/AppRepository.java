@@ -114,6 +114,14 @@ public class AppRepository {
         return rows;
     }
 
+    public synchronized void deleteMessage(long messageId) {
+        ChatMessage message = getMessage(messageId);
+        helper.getWritableDatabase().delete(DatabaseHelper.TABLE_MESSAGES, "id = ?", new String[]{String.valueOf(messageId)});
+        if (message != null) {
+            touchProject(message.projectId);
+        }
+    }
+
     public synchronized BuildJobRecord createBuildJob(long projectId) {
         ContentValues values = new ContentValues();
         values.put("project_id", projectId);

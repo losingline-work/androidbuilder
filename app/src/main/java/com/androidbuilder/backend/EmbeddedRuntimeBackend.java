@@ -18,8 +18,6 @@ import java.util.List;
 import java.util.Map;
 
 public class EmbeddedRuntimeBackend implements BuildBackend {
-    private static final String PROCESS_LAUNCH_OPTION = "-Djdk.lang.Process.launchMechanism=VFORK";
-
     private final Context context;
     private final AppRepository repository;
     private final EmbeddedRuntime runtime;
@@ -79,7 +77,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             }
 
             FileUtils.appendText(log, "Running embedded build with " + gradle.getAbsolutePath() + "\n");
-            ProcessResult version = runCommand(sourceWorkDir, log, gradle.getAbsolutePath(), "--version");
+            ProcessResult version = runCommand(sourceWorkDir, log, listener, job, gradle.getAbsolutePath(), "--version");
             if (version.exitCode != 0) {
                 String error = summarizeFailure("Gradle smoke test failed", version);
                 repository.updateBuildJob(job.id, "failed", "embedded_runtime_gradle_start_failed", log.getAbsolutePath(), null, error, job.retryCount);
@@ -88,7 +86,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 return;
             }
 
-            ProcessResult build = runCommand(sourceWorkDir, log, gradle.getAbsolutePath(), "--no-daemon", "assembleDebug", "--stacktrace");
+            ProcessResult build = runCommand(sourceWorkDir, log, listener, job, gradle.getAbsolutePath(), "--no-daemon", "assembleDebug", "--stacktrace");
             File apk = findApk(sourceWorkDir);
             if (build.exitCode == 0 && apk != null) {
                 File artifact = new File(jobDir, "app-debug.apk");
@@ -116,10 +114,16 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
     private void initializeLayout(File log) throws Exception {
         runtime.initializeLayout();
         runtime.ensureAndroidSdkWrappers();
+        runtime.ensureGradleLauncherWrapper();
         FileUtils.appendText(log, "Embedded runtime root: " + runtime.root().getAbsolutePath() + "\n");
     }
 
     private File gradleExecutable(File sourceWorkDir) {
+        File appGradle = runtime.androidBuilderGradle();
+        if (appGradle.exists()) {
+            appGradle.setExecutable(true);
+            return appGradle;
+        }
         File gradlew = new File(sourceWorkDir, "gradlew");
         if (gradlew.exists()) {
             gradlew.setExecutable(true);
@@ -156,6 +160,9 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         }
         next.append("org.gradle.daemon=false\n");
         next.append("org.gradle.workers.max=1\n");
+        next.append("org.gradle.jvmargs=-Djava.io.tmpdir=")
+                .append(runtime.tmp().getAbsolutePath())
+                .append(" -Djdk.lang.Process.launchMechanism=VFORK -Dfile.encoding=UTF-8\n");
         next.append("kotlin.compiler.execution.strategy=in-process\n");
         next.append("android.aapt2FromMavenOverride=")
                 .append(new File(runtime.bin(), "aapt2").getAbsolutePath())
@@ -163,7 +170,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         FileUtils.writeText(gradleProperties, next.toString());
     }
 
-    private ProcessResult runCommand(File sourceWorkDir, File log, String... command) throws Exception {
+    private ProcessResult runCommand(File sourceWorkDir, File log, Listener listener, BuildJobRecord job, String... command) throws Exception {
         List<String> shellCommand = new ArrayList<>();
         shellCommand.add("/system/bin/sh");
         shellCommand.addAll(Arrays.asList(command));
@@ -178,23 +185,25 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         env.put("ANDROID_SDK_ROOT", runtime.androidSdk().getAbsolutePath());
         env.put("JAVA_HOME", new File(runtime.usr(), "lib/jvm/java-21-openjdk").getAbsolutePath());
         env.put("GRADLE_USER_HOME", new File(runtime.home(), ".gradle").getAbsolutePath());
-        env.put("TMPDIR", new File(runtime.home(), "tmp").getAbsolutePath());
+        env.put("TMPDIR", runtime.tmp().getAbsolutePath());
         env.put("LANG", "C.UTF-8");
         env.put("TERM", "dumb");
-        env.put("JAVA_TOOL_OPTIONS", appendJvmOption(env.get("JAVA_TOOL_OPTIONS")));
-        env.put("JDK_JAVA_OPTIONS", appendJvmOption(env.get("JDK_JAVA_OPTIONS")));
-        env.put("JAVA_OPTS", appendJvmOption(env.get("JAVA_OPTS")));
-        env.put("GRADLE_OPTS", appendJvmOption(env.get("GRADLE_OPTS")));
+        env.remove("JAVA_TOOL_OPTIONS");
+        env.remove("JDK_JAVA_OPTIONS");
+        env.remove("JAVA_OPTS");
+        env.remove("GRADLE_OPTS");
+        env.remove("_JAVA_OPTIONS");
         env.put("LD_LIBRARY_PATH", new File(runtime.usr(), "lib").getAbsolutePath() + ":" +
                 new File(runtime.usr(), "lib/jvm/java-21-openjdk/lib").getAbsolutePath() + ":" +
                 new File(runtime.usr(), "lib/jvm/java-21-openjdk/lib/server").getAbsolutePath());
         env.put("PATH", runtime.bin().getAbsolutePath() + ":" + env.getOrDefault("PATH", ""));
         new File(runtime.home(), ".gradle").mkdirs();
-        new File(runtime.home(), "tmp").mkdirs();
+        runtime.tmp().mkdirs();
         builder.environment().clear();
         builder.environment().putAll(env);
         Process process = builder.start();
         StringBuilder tail = new StringBuilder();
+        long lastNotifyAt = 0;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -203,19 +212,16 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 if (tail.length() > 5000) {
                     tail.delete(0, tail.length() - 5000);
                 }
+                long now = System.currentTimeMillis();
+                if (now - lastNotifyAt > 600) {
+                    lastNotifyAt = now;
+                    listener.onJobChanged(job.projectId, job.id);
+                }
             }
         }
-        return new ProcessResult(process.waitFor(), tail.toString().trim());
-    }
-
-    private String appendJvmOption(String value) {
-        if (value == null || value.trim().isEmpty()) {
-            return PROCESS_LAUNCH_OPTION;
-        }
-        if (value.contains(PROCESS_LAUNCH_OPTION)) {
-            return value;
-        }
-        return value + " " + PROCESS_LAUNCH_OPTION;
+        int exitCode = process.waitFor();
+        listener.onJobChanged(job.projectId, job.id);
+        return new ProcessResult(exitCode, tail.toString().trim());
     }
 
     private String summarizeFailure(String prefix, ProcessResult result) {

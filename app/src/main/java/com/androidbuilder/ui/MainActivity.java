@@ -1,6 +1,5 @@
 package com.androidbuilder.ui;
 
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.Editable;
@@ -14,6 +13,8 @@ import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.model.ProjectRecord;
 import com.androidbuilder.util.NameUtils;
+import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,8 +42,15 @@ public class MainActivity extends BaseActivity {
             showProjectActions(projects.get(position));
             return true;
         });
+        MaterialToolbar toolbar = findViewById(R.id.mainToolbar);
+        toolbar.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == R.id.action_settings) {
+                startActivity(new Intent(this, SettingsActivity.class));
+                return true;
+            }
+            return false;
+        });
         findViewById(R.id.newProjectButton).setOnClickListener(v -> showNewProjectDialog());
-        findViewById(R.id.settingsButton).setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
         EditText search = findViewById(R.id.searchInput);
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -68,16 +76,17 @@ public class MainActivity extends BaseActivity {
 
     private void showNewProjectDialog() {
         if (!new OpenAiClient(this).isConfigured()) {
-            new AlertDialog.Builder(this)
+            new MaterialAlertDialogBuilder(this)
                     .setTitle(R.string.api_required_title)
                     .setMessage(R.string.api_required_message)
-                    .setPositiveButton(R.string.open_settings, (dialog, which) -> startActivity(new Intent(this, SettingsActivity.class)))
+                    .setPositiveButton(R.string.open_settings, (dialog, which) ->
+                            startActivity(new Intent(this, SettingsActivity.class)))
                     .setNegativeButton(R.string.cancel, null)
                     .show();
             return;
         }
         LinearInputs inputs = new LinearInputs(this, getString(R.string.project_name), getString(R.string.initial_requirement));
-        new AlertDialog.Builder(this)
+        new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.new_project)
                 .setView(inputs.view)
                 .setPositiveButton(R.string.create, (dialog, which) -> {
@@ -98,7 +107,7 @@ public class MainActivity extends BaseActivity {
     }
 
     private void showProjectActions(ProjectRecord project) {
-        new AlertDialog.Builder(this)
+        new MaterialAlertDialogBuilder(this)
                 .setTitle(project.name)
                 .setItems(new CharSequence[]{getString(R.string.rename), getString(R.string.delete)}, (dialog, which) -> {
                     if (which == 0) {
@@ -113,7 +122,7 @@ public class MainActivity extends BaseActivity {
     private void showRenameDialog(ProjectRecord project) {
         EditText input = new EditText(this);
         input.setText(project.name);
-        new AlertDialog.Builder(this)
+        new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.rename_project)
                 .setView(input)
                 .setPositiveButton(R.string.save, (dialog, which) -> {
@@ -128,7 +137,7 @@ public class MainActivity extends BaseActivity {
     }
 
     private void confirmDelete(ProjectRecord project) {
-        new AlertDialog.Builder(this)
+        new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.delete_project)
                 .setMessage(getString(R.string.delete_project_message, project.name))
                 .setPositiveButton(R.string.delete, (dialog, which) -> {

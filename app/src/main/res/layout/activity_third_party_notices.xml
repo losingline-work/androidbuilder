@@ -1,51 +1,42 @@
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/surface">
+    android:background="?attr/colorSurface"
+    android:orientation="vertical">
 
-    <LinearLayout
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/noticesToolbar"
+        style="@style/Widget.AndroidBuilder.Toolbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
+        android:minHeight="?attr/actionBarSize"
+        app:navigationContentDescription="@string/back"
+        app:navigationIcon="@drawable/ic_back"
+        app:title="@string/third_party_notices" />
 
-        <LinearLayout
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp">
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.AndroidBuilder.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_card"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:padding="14dp">
-
-            <ImageButton
-                android:id="@+id/backButton"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:background="@drawable/bg_icon_button"
-                android:contentDescription="@string/back"
-                android:padding="10dp"
-                android:src="@drawable/ic_back" />
+            android:layout_marginTop="8dp">
 
             <TextView
-                android:layout_width="0dp"
+                android:id="@+id/noticesText"
+                style="@style/TextBodyMedium"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:layout_weight="1"
-                android:text="@string/third_party_notices"
-                android:textColor="@color/ink"
-                android:textSize="23sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/noticesText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:background="@drawable/bg_card"
-            android:lineSpacingExtra="2dp"
-            android:padding="14dp"
-            android:textColor="@color/ink"
-            android:textSize="14sp" />
-    </LinearLayout>
-</ScrollView>
+                android:lineSpacingExtra="2dp"
+                android:padding="16dp" />
+        </com.google.android.material.card.MaterialCardView>
+    </ScrollView>
+</LinearLayout>

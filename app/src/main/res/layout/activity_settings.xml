@@ -1,277 +1,341 @@
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/surface">
+    android:background="?attr/colorSurface"
+    android:orientation="vertical">
 
-    <LinearLayout
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/settingsToolbar"
+        style="@style/Widget.AndroidBuilder.Toolbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
+        android:minHeight="?attr/actionBarSize"
+        app:navigationContentDescription="@string/back"
+        app:navigationIcon="@drawable/ic_back"
+        app:subtitle="@string/app_tagline"
+        app:title="@string/settings" />
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="20dp">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_header"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:padding="16dp">
+            android:orientation="vertical">
 
-            <ImageButton
-                android:id="@+id/backButton"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:background="@drawable/bg_icon_button"
-                android:contentDescription="@string/back"
-                android:padding="10dp"
-                android:src="@drawable/ic_back" />
-
-            <ImageView
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:layout_marginStart="12dp"
-                android:contentDescription="@string/app_name"
-                android:src="@drawable/app_mark" />
-
-            <LinearLayout
-                android:layout_width="0dp"
+            <TextView
+                style="@style/TextSectionLabel"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="14dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:layout_marginTop="8dp"
+                android:text="@string/model_configuration" />
 
-                <TextView
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Widget.AndroidBuilder.Card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/settings"
-                    android:textColor="@android:color/white"
-                    android:textSize="24sp"
-                    android:textStyle="bold" />
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
-                <TextView
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="@string/language"
+                        app:endIconMode="dropdown_menu">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/languageSpinner"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="@string/provider"
+                        app:endIconMode="dropdown_menu">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/providerSpinner"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="@string/api_key_hint">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/apiKeyInput"
+                            style="@style/InputField"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textPassword" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="@string/endpoint">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/endpointInput"
+                            style="@style/InputField"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textUri" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <TextView
+                        android:id="@+id/modelLabel"
+                        style="@style/TextSectionLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/model" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/deepseekModelLayout"
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:hint="@string/model"
+                        android:visibility="gone"
+                        app:endIconMode="dropdown_menu">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/deepseekModelSpinner"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/minimaxModelLayout"
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:hint="@string/model"
+                        android:visibility="gone"
+                        app:endIconMode="dropdown_menu">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/minimaxModelSpinner"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/modelInputLayout"
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:hint="@string/model">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/modelInput"
+                            style="@style/InputField"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="text" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/saveSettingsButton"
+                        style="@style/Widget.AndroidBuilder.Button.Filled"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="14dp"
+                        android:text="@string/save_settings" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <TextView
+                style="@style/TextSectionLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:text="@string/runtime_configuration" />
+
+            <com.google.android.material.card.MaterialCardView
+                style="@style/Widget.AndroidBuilder.Card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:text="@string/app_tagline"
-                    android:textColor="#CDE7E2"
-                    android:textSize="13sp" />
-            </LinearLayout>
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="@string/build_backend"
+                        app:endIconMode="dropdown_menu">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/backendSpinner"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="@string/runtime_bootstrap_url">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/runtimeBootstrapUrlInput"
+                            style="@style/InputField"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textUri" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/installBundledRuntimeButton"
+                        style="@style/Widget.AndroidBuilder.Button.Filled"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="14dp"
+                        android:text="@string/install_bundled_runtime" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/downloadRuntimeButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/download_runtime" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/refreshRuntimeStatusButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/refresh_runtime_status" />
+
+                    <com.google.android.material.card.MaterialCardView
+                        style="@style/Widget.AndroidBuilder.Card.Filled"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp">
+
+                        <TextView
+                            android:id="@+id/runtimeStatusText"
+                            style="@style/TextBodyMedium"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:padding="12dp" />
+                    </com.google.android.material.card.MaterialCardView>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/thirdPartyNoticesButton"
+                style="@style/Widget.AndroidBuilder.Button.Outlined"
+                android:layout_width="match_parent"
+                android:layout_marginTop="14dp"
+                android:text="@string/third_party_notices" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/termuxSection"
+                style="@style/Widget.AndroidBuilder.Card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        style="@style/TextSectionLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/compatibility_mode" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/runTermuxSetupButton"
+                        style="@style/Widget.AndroidBuilder.Button.Filled"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="10dp"
+                        android:text="@string/run_termux_setup" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/requestTermuxPermissionButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/request_termux_permission" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/copyAdbGrantButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/copy_adb_grant" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/copyTermuxBasicsButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/copy_termux_basics" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/copyBuildScriptButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/copy_build_script" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/copySetupScriptButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/copy_setup_script" />
+
+                    <TextView
+                        android:id="@+id/termuxHelp"
+                        style="@style/TextBodyMedium"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
-
-        <TextView
-            style="@style/TextSectionLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/model_configuration" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                style="@style/TextSectionLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/language" />
-
-            <Spinner
-                android:id="@+id/languageSpinner"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="5dp" />
-
-            <TextView
-                style="@style/TextSectionLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="@string/provider" />
-
-            <Spinner
-                android:id="@+id/providerSpinner"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="5dp" />
-
-            <EditText
-                android:id="@+id/apiKeyInput"
-                style="@style/InputField"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="12dp"
-                android:hint="@string/api_key_hint"
-                android:inputType="textPassword" />
-
-            <EditText
-                android:id="@+id/endpointInput"
-                style="@style/InputField"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="9dp"
-                android:hint="@string/endpoint"
-                android:inputType="textUri" />
-
-            <EditText
-                android:id="@+id/modelInput"
-                style="@style/InputField"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="9dp"
-                android:hint="@string/model"
-                android:inputType="text" />
-
-            <Button
-                android:id="@+id/saveSettingsButton"
-                style="@style/ButtonPrimary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="12dp"
-                android:text="@string/save_settings" />
-        </LinearLayout>
-
-        <TextView
-            style="@style/TextSectionLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/runtime_configuration" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                style="@style/TextSectionLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/build_backend" />
-
-            <Spinner
-                android:id="@+id/backendSpinner"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="5dp" />
-
-            <EditText
-                android:id="@+id/runtimeBootstrapUrlInput"
-                style="@style/InputField"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="12dp"
-                android:hint="@string/runtime_bootstrap_url"
-                android:inputType="textUri" />
-
-            <Button
-                android:id="@+id/installBundledRuntimeButton"
-                style="@style/ButtonPrimary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="12dp"
-                android:text="@string/install_bundled_runtime" />
-
-            <Button
-                android:id="@+id/downloadRuntimeButton"
-                style="@style/ButtonSecondary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="8dp"
-                android:text="@string/download_runtime" />
-
-            <Button
-                android:id="@+id/refreshRuntimeStatusButton"
-                style="@style/ButtonSecondary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="8dp"
-                android:text="@string/refresh_runtime_status" />
-
-            <TextView
-                android:id="@+id/runtimeStatusText"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/bg_status"
-                android:padding="10dp"
-                android:textColor="@color/brandDark"
-                android:textSize="13sp" />
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/thirdPartyNoticesButton"
-            style="@style/ButtonSecondary"
-            android:layout_width="match_parent"
-            android:layout_marginTop="14dp"
-            android:text="@string/third_party_notices" />
-
-        <LinearLayout
-            android:id="@+id/termuxSection"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                style="@style/TextSectionLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/compatibility_mode" />
-
-            <Button
-                android:id="@+id/runTermuxSetupButton"
-                style="@style/ButtonPrimary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="10dp"
-                android:text="@string/run_termux_setup" />
-
-            <Button
-                android:id="@+id/requestTermuxPermissionButton"
-                style="@style/ButtonSecondary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="8dp"
-                android:text="@string/request_termux_permission" />
-
-            <Button
-                android:id="@+id/copyAdbGrantButton"
-                style="@style/ButtonSecondary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="8dp"
-                android:text="@string/copy_adb_grant" />
-
-            <Button
-                android:id="@+id/copyTermuxBasicsButton"
-                style="@style/ButtonSecondary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="8dp"
-                android:text="@string/copy_termux_basics" />
-
-            <Button
-                android:id="@+id/copyBuildScriptButton"
-                style="@style/ButtonSecondary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="8dp"
-                android:text="@string/copy_build_script" />
-
-            <Button
-                android:id="@+id/copySetupScriptButton"
-                style="@style/ButtonSecondary"
-                android:layout_width="match_parent"
-                android:layout_marginTop="8dp"
-                android:text="@string/copy_setup_script" />
-
-            <TextView
-                android:id="@+id/termuxHelp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:textColor="@color/muted"
-                android:textSize="14sp" />
-        </LinearLayout>
-    </LinearLayout>
-</ScrollView>
+    </androidx.core.widget.NestedScrollView>
+</LinearLayout>

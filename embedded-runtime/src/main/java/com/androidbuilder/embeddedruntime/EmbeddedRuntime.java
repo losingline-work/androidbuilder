@@ -27,6 +27,10 @@ public class EmbeddedRuntime {
         return new File(root, "home");
     }
 
+    public File tmp() {
+        return new File(home(), "tmp");
+    }
+
     public File usr() {
         return new File(root, "usr");
     }
@@ -54,6 +58,7 @@ public class EmbeddedRuntime {
     public void initializeLayout() throws IOException {
         mkdir(root());
         mkdir(home());
+        mkdir(tmp());
         mkdir(usr());
         mkdir(bin());
         mkdir(androidSdk());
@@ -63,6 +68,7 @@ public class EmbeddedRuntime {
         if (!notice.exists()) {
             writeText(notice, "This runtime is prepared for GPLv3-compatible Termux components. If GPLv3 code or binaries are bundled or distributed, provide corresponding source and preserve license notices.\n");
         }
+        ensureGradleLauncherWrapper();
     }
 
     public void installBootstrap(InputStream zipStream) throws IOException {
@@ -94,6 +100,7 @@ public class EmbeddedRuntime {
             }
         }
         ensureAndroidSdkWrappers();
+        ensureGradleLauncherWrapper();
     }
 
     public boolean hasMinimumTools() {
@@ -133,6 +140,49 @@ public class EmbeddedRuntime {
         writeWrapperIfToolExists("aapt2");
         writeWrapperIfToolExists("d8");
         writeWrapperIfToolExists("apksigner");
+    }
+
+    public File androidBuilderGradle() {
+        return new File(bin(), "androidbuilder-gradle");
+    }
+
+    public void ensureGradleLauncherWrapper() throws IOException {
+        File launcher = findGradleLauncherJar();
+        if (launcher == null) {
+            return;
+        }
+        File wrapper = androidBuilderGradle();
+        writeText(wrapper, "#!/system/bin/sh\n" +
+                "PREFIX=\"${PREFIX:-" + usr().getAbsolutePath() + "}\"\n" +
+                "JAVA_HOME=\"$PREFIX/lib/jvm/java-21-openjdk\"\n" +
+                "TMPDIR=\"" + tmp().getAbsolutePath() + "\"\n" +
+                "export JAVA_HOME\n" +
+                "export TMPDIR\n" +
+                "export LD_LIBRARY_PATH=\"$JAVA_HOME/lib/server:$JAVA_HOME/lib:$PREFIX/lib:${LD_LIBRARY_PATH:-}\"\n" +
+                "unset JAVA_TOOL_OPTIONS\n" +
+                "unset JDK_JAVA_OPTIONS\n" +
+                "unset JAVA_OPTS\n" +
+                "unset _JAVA_OPTIONS\n" +
+                "exec \"$JAVA_HOME/bin/java\" -Djava.io.tmpdir=\"$TMPDIR\" -Djdk.lang.Process.launchMechanism=VFORK -classpath \"" + launcher.getAbsolutePath() + "\" org.gradle.launcher.GradleMain \"$@\"\n");
+        wrapper.setExecutable(true, false);
+    }
+
+    private File findGradleLauncherJar() {
+        File opt = new File(usr(), "opt");
+        File[] gradleDirs = opt.listFiles(file -> file.isDirectory() && file.getName().startsWith("gradle-"));
+        if (gradleDirs == null) {
+            return null;
+        }
+        for (File gradleDir : gradleDirs) {
+            File lib = new File(gradleDir, "lib");
+            File[] launchers = lib.listFiles(file -> file.isFile() &&
+                    file.getName().startsWith("gradle-launcher-") &&
+                    file.getName().endsWith(".jar"));
+            if (launchers != null && launchers.length > 0) {
+                return launchers[0];
+            }
+        }
+        return null;
     }
 
     private void mkdir(File dir) throws IOException {

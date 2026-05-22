@@ -24,9 +24,13 @@ public class OpenAiClient {
     public static final String KEY_PROVIDER = "provider";
     public static final String PROVIDER_OPENAI = "openai";
     public static final String PROVIDER_DEEPSEEK = "deepseek";
+    public static final String PROVIDER_MINIMAX = "minimax";
     public static final String PROVIDER_CUSTOM = "custom";
     public static final String DEEPSEEK_MODEL_FLASH = "deepseek-v4-flash";
     public static final String DEEPSEEK_MODEL_PRO = "deepseek-v4-pro";
+    public static final String MINIMAX_MODEL_M2 = "MiniMax-M2";
+    public static final String MINIMAX_MODEL_M1 = "MiniMax-M1";
+    public static final String MINIMAX_MODEL_TEXT_01 = "MiniMax-Text-01";
 
     private final SharedPreferences prefs;
 
@@ -47,6 +51,9 @@ public class OpenAiClient {
         String model = normalizedModel(provider, prefs.getString(KEY_MODEL, defaultModel(provider)));
         if (PROVIDER_DEEPSEEK.equals(provider) && !isSupportedDeepSeekModel(model)) {
             throw new IllegalStateException(chinese ? "DeepSeek 仅支持 deepseek-v4-flash 和 deepseek-v4-pro。" : "DeepSeek supports only deepseek-v4-flash and deepseek-v4-pro.");
+        }
+        if (PROVIDER_MINIMAX.equals(provider) && !isSupportedMiniMaxModel(model)) {
+            throw new IllegalStateException(chinese ? "MiniMax 仅支持 MiniMax-M2、MiniMax-M1 和 MiniMax-Text-01。" : "MiniMax supports only MiniMax-M2, MiniMax-M1, and MiniMax-Text-01.");
         }
         JSONObject body = new JSONObject();
         body.put("model", model);
@@ -91,12 +98,18 @@ public class OpenAiClient {
         if (PROVIDER_DEEPSEEK.equals(provider)) {
             return "https://api.deepseek.com/chat/completions";
         }
+        if (PROVIDER_MINIMAX.equals(provider)) {
+            return "https://api.minimax.io/v1/text/chatcompletion_v2";
+        }
         return "https://api.openai.com/v1/chat/completions";
     }
 
     public static String defaultModel(String provider) {
         if (PROVIDER_DEEPSEEK.equals(provider)) {
             return DEEPSEEK_MODEL_FLASH;
+        }
+        if (PROVIDER_MINIMAX.equals(provider)) {
+            return MINIMAX_MODEL_M2;
         }
         return "gpt-4.1-mini";
     }
@@ -112,6 +125,11 @@ public class OpenAiClient {
     public static boolean isSupportedDeepSeekModel(String model) {
         String value = model == null ? "" : model.trim();
         return DEEPSEEK_MODEL_FLASH.equals(value) || DEEPSEEK_MODEL_PRO.equals(value);
+    }
+
+    public static boolean isSupportedMiniMaxModel(String model) {
+        String value = model == null ? "" : model.trim();
+        return MINIMAX_MODEL_M2.equals(value) || MINIMAX_MODEL_M1.equals(value) || MINIMAX_MODEL_TEXT_01.equals(value);
     }
 
     public static String deepSeekModelsText() {
