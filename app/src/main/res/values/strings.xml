@@ -36,6 +36,8 @@
     <string name="api_key_hint">API key</string>
     <string name="endpoint">Endpoint</string>
     <string name="model">Model</string>
+    <string name="deepseek_model_hint">deepseek-v4-flash or deepseek-v4-pro</string>
+    <string name="deepseek_model_invalid">DeepSeek supports only deepseek-v4-flash and deepseek-v4-pro.</string>
     <string name="save_settings">Save Settings</string>
     <string name="embedded_runtime">Embedded Runtime</string>
     <string name="runtime_bootstrap_url">Bootstrap zip URL</string>

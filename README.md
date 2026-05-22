@@ -189,7 +189,7 @@ DeepSeek 默认配置：
 
 ```text
 Endpoint: https://api.deepseek.com/chat/completions
-Model: deepseek-v4-flash
+Models: deepseek-v4-flash, deepseek-v4-pro
 ```
 
 ## 数据存储

@@ -36,6 +36,8 @@
     <string name="api_key_hint">API Key</string>
     <string name="endpoint">接口地址</string>
     <string name="model">模型</string>
+    <string name="deepseek_model_hint">deepseek-v4-flash 或 deepseek-v4-pro</string>
+    <string name="deepseek_model_invalid">DeepSeek 仅支持 deepseek-v4-flash 和 deepseek-v4-pro。</string>
     <string name="save_settings">保存设置</string>
     <string name="embedded_runtime">内置运行环境</string>
     <string name="runtime_bootstrap_url">Bootstrap zip 下载地址</string>

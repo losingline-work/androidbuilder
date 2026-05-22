@@ -94,7 +94,18 @@ public class SettingsActivity extends BaseActivity {
                 String provider = providerAt(position);
                 if (!OpenAiClient.PROVIDER_CUSTOM.equals(provider)) {
                     endpoint.setText(OpenAiClient.defaultEndpoint(provider));
-                    model.setText(OpenAiClient.defaultModel(provider));
+                    if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
+                        model.setHint(R.string.deepseek_model_hint);
+                        String currentModel = model.getText().toString().trim();
+                        if (!OpenAiClient.isSupportedDeepSeekModel(currentModel)) {
+                            model.setText(OpenAiClient.defaultModel(provider));
+                        }
+                    } else {
+                        model.setHint(R.string.model);
+                        model.setText(OpenAiClient.defaultModel(provider));
+                    }
+                } else {
+                    model.setHint(R.string.model);
                 }
             }
 
@@ -116,12 +127,18 @@ public class SettingsActivity extends BaseActivity {
 
     private void save() {
         String provider = providerAt(providerSpinner.getSelectedItemPosition());
+        String selectedModel = OpenAiClient.normalizedModel(provider, model.getText().toString());
+        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider) && !OpenAiClient.isSupportedDeepSeekModel(selectedModel)) {
+            Toast.makeText(this, R.string.deepseek_model_invalid, Toast.LENGTH_LONG).show();
+            model.setText(OpenAiClient.defaultModel(provider));
+            return;
+        }
         getSharedPreferences(OpenAiClient.PREFS, MODE_PRIVATE)
                 .edit()
                 .putString(OpenAiClient.KEY_PROVIDER, provider)
                 .putString(OpenAiClient.KEY_API_KEY, apiKey.getText().toString().trim())
                 .putString(OpenAiClient.KEY_ENDPOINT, endpoint.getText().toString().trim())
-                .putString(OpenAiClient.KEY_MODEL, model.getText().toString().trim())
+                .putString(OpenAiClient.KEY_MODEL, selectedModel)
                 .apply();
         AppSettings.prefs(this).edit().putString(AppSettings.KEY_LANGUAGE, languageAt(languageSpinner.getSelectedItemPosition())).apply();
         BuildBackendSettings.setSelected(this, backendAt(backendSpinner.getSelectedItemPosition()));

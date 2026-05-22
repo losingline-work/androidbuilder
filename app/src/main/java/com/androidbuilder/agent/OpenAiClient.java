@@ -25,6 +25,8 @@ public class OpenAiClient {
     public static final String PROVIDER_OPENAI = "openai";
     public static final String PROVIDER_DEEPSEEK = "deepseek";
     public static final String PROVIDER_CUSTOM = "custom";
+    public static final String DEEPSEEK_MODEL_FLASH = "deepseek-v4-flash";
+    public static final String DEEPSEEK_MODEL_PRO = "deepseek-v4-pro";
 
     private final SharedPreferences prefs;
 
@@ -42,7 +44,10 @@ public class OpenAiClient {
         }
         String provider = prefs.getString(KEY_PROVIDER, PROVIDER_OPENAI);
         String endpoint = prefs.getString(KEY_ENDPOINT, defaultEndpoint(provider));
-        String model = prefs.getString(KEY_MODEL, defaultModel(provider));
+        String model = normalizedModel(provider, prefs.getString(KEY_MODEL, defaultModel(provider)));
+        if (PROVIDER_DEEPSEEK.equals(provider) && !isSupportedDeepSeekModel(model)) {
+            throw new IllegalStateException(chinese ? "DeepSeek 仅支持 deepseek-v4-flash 和 deepseek-v4-pro。" : "DeepSeek supports only deepseek-v4-flash and deepseek-v4-pro.");
+        }
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("temperature", 0.2);
@@ -91,9 +96,26 @@ public class OpenAiClient {
 
     public static String defaultModel(String provider) {
         if (PROVIDER_DEEPSEEK.equals(provider)) {
-            return "deepseek-v4-flash";
+            return DEEPSEEK_MODEL_FLASH;
         }
         return "gpt-4.1-mini";
+    }
+
+    public static String normalizedModel(String provider, String model) {
+        String value = model == null ? "" : model.trim();
+        if (value.isEmpty()) {
+            return defaultModel(provider);
+        }
+        return value;
+    }
+
+    public static boolean isSupportedDeepSeekModel(String model) {
+        String value = model == null ? "" : model.trim();
+        return DEEPSEEK_MODEL_FLASH.equals(value) || DEEPSEEK_MODEL_PRO.equals(value);
+    }
+
+    public static String deepSeekModelsText() {
+        return DEEPSEEK_MODEL_FLASH + " / " + DEEPSEEK_MODEL_PRO;
     }
 
     private String systemPrompt(boolean chinese) {
