@@ -82,7 +82,7 @@ public class AgentService {
         File projectZip = new File(jobDir, "project.zip");
         FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
         File logs = new File(jobDir, "build.log");
-        FileUtils.writeText(logs, "Generated project for " + spec.appName + "\nWaiting for Termux build.\n");
+        FileUtils.writeText(logs, "Generated project for " + spec.appName + "\nWaiting for build.\n");
 
         if (announceGenerated) {
             repository.addMessage(projectId, "assistant", chinese ? "已生成项目源码：" + spec.appName + "。可以点击 Build 开始构建。" : "Generated source for " + spec.appName + ". Tap Build to start the build.", job.id);

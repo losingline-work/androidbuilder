@@ -176,6 +176,7 @@ public class ProjectActivity extends BaseActivity {
             return;
         }
         if (!isRepairableFailure(failed)) {
+            autoRepairing.add(failedJobId);
             repository.addMessage(projectId, "assistant", "构建失败，但这类错误需要先修复本机运行环境或构建后端配置，不自动重试。", failedJobId);
             refresh();
             return;
