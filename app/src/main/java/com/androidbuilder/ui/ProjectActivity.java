@@ -1,6 +1,7 @@
 package com.androidbuilder.ui;
 
 import android.os.Bundle;
+import android.text.method.ScrollingMovementMethod;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
@@ -54,6 +55,7 @@ public class ProjectActivity extends BaseActivity {
         title = findViewById(R.id.projectTitle);
         status = findViewById(R.id.statusText);
         logText = findViewById(R.id.logText);
+        logText.setMovementMethod(new ScrollingMovementMethod());
         promptInput = findViewById(R.id.promptInput);
         adapter = new MessageAdapter();
         ((ListView) findViewById(R.id.messageList)).setAdapter(adapter);
@@ -101,6 +103,12 @@ public class ProjectActivity extends BaseActivity {
             try {
                 String logs = FileUtils.readText(new File(job.logsPath));
                 logText.setText(logs.length() > 5000 ? logs.substring(logs.length() - 5000) : logs);
+                logText.post(() -> {
+                    if (logText.getLayout() != null) {
+                        int scrollY = logText.getLayout().getLineTop(logText.getLineCount()) - logText.getHeight();
+                        logText.scrollTo(0, Math.max(scrollY, 0));
+                    }
+                });
             } catch (Exception ignored) {
                 logText.setText("");
             }

@@ -11,7 +11,10 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class EmbeddedRuntimeBackend implements BuildBackend {
@@ -74,19 +77,28 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             }
 
             FileUtils.appendText(log, "Running embedded build with " + gradle.getAbsolutePath() + "\n");
-            int exitCode = runGradle(gradle, sourceWorkDir, log);
+            ProcessResult version = runCommand(sourceWorkDir, log, gradle.getAbsolutePath(), "--version");
+            if (version.exitCode != 0) {
+                String error = summarizeFailure("Gradle smoke test failed", version);
+                repository.updateBuildJob(job.id, "failed", "embedded_runtime_gradle_start_failed", log.getAbsolutePath(), null, error, job.retryCount);
+                repository.addMessage(job.projectId, "assistant", "Build failed before Gradle could start:\n" + error, job.id);
+                listener.onJobChanged(job.projectId, job.id);
+                return;
+            }
+
+            ProcessResult build = runCommand(sourceWorkDir, log, gradle.getAbsolutePath(), "--no-daemon", "assembleDebug", "--stacktrace");
             File apk = findApk(sourceWorkDir);
-            if (exitCode == 0 && apk != null) {
+            if (build.exitCode == 0 && apk != null) {
                 File artifact = new File(jobDir, "app-debug.apk");
                 FileUtils.copyRecursively(apk, artifact);
                 repository.addArtifact(job.projectId, job.id, "apk", artifact.getAbsolutePath());
                 repository.updateBuildJob(job.id, "success", "embedded_runtime_finished", log.getAbsolutePath(), artifact.getAbsolutePath(), null, job.retryCount);
                 repository.addMessage(job.projectId, "assistant", "Build result: success: APK built with embedded runtime", job.id);
             } else {
-                String error = "failed: embedded runtime build exited with " + exitCode + (apk == null ? " and did not produce an APK" : "");
+                String error = summarizeFailure("embedded runtime build exited with " + build.exitCode + (apk == null ? " and did not produce an APK" : ""), build);
                 FileUtils.appendText(log, error + "\n");
                 repository.updateBuildJob(job.id, "failed", "embedded_runtime_finished", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", "Build result: " + error, job.id);
+                repository.addMessage(job.projectId, "assistant", "Build result: failed\n" + error, job.id);
             }
         } catch (Exception error) {
             try {
@@ -137,8 +149,12 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         FileUtils.writeText(gradleProperties, next.toString());
     }
 
-    private int runGradle(File gradle, File sourceWorkDir, File log) throws Exception {
-        ProcessBuilder builder = new ProcessBuilder(gradle.getAbsolutePath(), "assembleDebug");
+    private ProcessResult runCommand(File sourceWorkDir, File log, String... command) throws Exception {
+        List<String> shellCommand = new ArrayList<>();
+        shellCommand.add("/system/bin/sh");
+        shellCommand.addAll(Arrays.asList(command));
+        FileUtils.appendText(log, "\n$ " + join(shellCommand) + "\n");
+        ProcessBuilder builder = new ProcessBuilder(shellCommand);
         builder.directory(sourceWorkDir);
         builder.redirectErrorStream(true);
         Map<String, String> env = new HashMap<>(builder.environment());
@@ -146,17 +162,51 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         env.put("PREFIX", runtime.usr().getAbsolutePath());
         env.put("ANDROID_HOME", runtime.androidSdk().getAbsolutePath());
         env.put("ANDROID_SDK_ROOT", runtime.androidSdk().getAbsolutePath());
+        env.put("JAVA_HOME", new File(runtime.usr(), "lib/jvm/java-21-openjdk").getAbsolutePath());
+        env.put("GRADLE_USER_HOME", new File(runtime.home(), ".gradle").getAbsolutePath());
+        env.put("TMPDIR", new File(runtime.home(), "tmp").getAbsolutePath());
+        env.put("LANG", "C.UTF-8");
+        env.put("TERM", "dumb");
+        env.put("LD_LIBRARY_PATH", new File(runtime.usr(), "lib").getAbsolutePath() + ":" +
+                new File(runtime.usr(), "lib/jvm/java-21-openjdk/lib").getAbsolutePath() + ":" +
+                new File(runtime.usr(), "lib/jvm/java-21-openjdk/lib/server").getAbsolutePath());
         env.put("PATH", runtime.bin().getAbsolutePath() + ":" + env.getOrDefault("PATH", ""));
+        new File(runtime.home(), ".gradle").mkdirs();
+        new File(runtime.home(), "tmp").mkdirs();
         builder.environment().clear();
         builder.environment().putAll(env);
         Process process = builder.start();
+        StringBuilder tail = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 FileUtils.appendText(log, line + "\n");
+                tail.append(line).append('\n');
+                if (tail.length() > 5000) {
+                    tail.delete(0, tail.length() - 5000);
+                }
             }
         }
-        return process.waitFor();
+        return new ProcessResult(process.waitFor(), tail.toString().trim());
+    }
+
+    private String summarizeFailure(String prefix, ProcessResult result) {
+        String tail = result.tail == null ? "" : result.tail.trim();
+        if (tail.length() > 1800) {
+            tail = tail.substring(tail.length() - 1800);
+        }
+        return prefix + (tail.isEmpty() ? "" : "\n\nLast log:\n" + tail);
+    }
+
+    private String join(List<String> command) {
+        StringBuilder value = new StringBuilder();
+        for (String part : command) {
+            if (value.length() > 0) {
+                value.append(' ');
+            }
+            value.append(part);
+        }
+        return value.toString();
     }
 
     private File findApk(File dir) {
@@ -177,5 +227,15 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             }
         }
         return null;
+    }
+
+    private static class ProcessResult {
+        final int exitCode;
+        final String tail;
+
+        ProcessResult(int exitCode, String tail) {
+            this.exitCode = exitCode;
+            this.tail = tail;
+        }
     }
 }
