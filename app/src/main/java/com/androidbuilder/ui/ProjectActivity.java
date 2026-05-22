@@ -12,6 +12,7 @@ import android.widget.Toast;
 import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
 import com.androidbuilder.agent.AgentService;
+import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.backend.BuildBackend;
 import com.androidbuilder.backend.BuildBackendFactory;
 import com.androidbuilder.backend.BuildBackendSettings;
@@ -107,6 +108,11 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void generate() {
+        if (!new OpenAiClient(this).isConfigured()) {
+            Toast.makeText(this, R.string.api_required_short, Toast.LENGTH_LONG).show();
+            startActivity(new android.content.Intent(this, SettingsActivity.class));
+            return;
+        }
         String prompt = promptInput.getText().toString().trim();
         if (prompt.isEmpty()) {
             Toast.makeText(this, R.string.write_requirement_first, Toast.LENGTH_SHORT).show();

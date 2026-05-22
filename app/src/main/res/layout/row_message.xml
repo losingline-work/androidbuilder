@@ -1,22 +1,24 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:background="@drawable/bg_card"
     android:orientation="vertical"
-    android:padding="10dp">
+    android:padding="12dp">
 
     <TextView
         android:id="@+id/messageRole"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textColor="@color/colorPrimary"
-        android:textSize="12sp"
+        android:textSize="11sp"
         android:textStyle="bold" />
 
     <TextView
         android:id="@+id/messageContent"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="3dp"
+        android:layout_marginTop="5dp"
+        android:lineSpacingExtra="2dp"
         android:textColor="@color/ink"
         android:textSize="15sp" />
 </LinearLayout>

@@ -9,129 +9,193 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <TextView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/settings"
-            android:textColor="@color/ink"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:background="@drawable/bg_header"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/language"
-            android:textColor="@color/ink"
-            android:textStyle="bold" />
+            <ImageView
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:contentDescription="@string/app_name"
+                android:src="@drawable/app_mark" />
 
-        <Spinner
-            android:id="@+id/languageSpinner"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="14dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/provider"
-            android:textColor="@color/ink"
-            android:textStyle="bold" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings"
+                    android:textColor="@android:color/white"
+                    android:textSize="24sp"
+                    android:textStyle="bold" />
 
-        <Spinner
-            android:id="@+id/providerSpinner"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/build_backend"
-            android:textColor="@color/ink"
-            android:textStyle="bold" />
-
-        <Spinner
-            android:id="@+id/backendSpinner"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-
-        <EditText
-            android:id="@+id/apiKeyInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:hint="@string/api_key_hint"
-            android:inputType="textPassword" />
-
-        <EditText
-            android:id="@+id/endpointInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/endpoint"
-            android:inputType="textUri" />
-
-        <EditText
-            android:id="@+id/modelInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/model"
-            android:inputType="text" />
-
-        <Button
-            android:id="@+id/saveSettingsButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/save_settings" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:text="@string/app_tagline"
+                    android:textColor="#CDE7E2"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
 
         <TextView
+            style="@style/TextSectionLabel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
-            android:text="@string/embedded_runtime"
-            android:textColor="@color/ink"
-            android:textStyle="bold" />
+            android:text="@string/model_configuration" />
 
-        <EditText
-            android:id="@+id/runtimeBootstrapUrlInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/runtime_bootstrap_url"
-            android:inputType="textUri" />
-
-        <Button
-            android:id="@+id/installBundledRuntimeButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/install_bundled_runtime" />
-
-        <Button
-            android:id="@+id/downloadRuntimeButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/download_runtime" />
-
-        <Button
-            android:id="@+id/refreshRuntimeStatusButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/refresh_runtime_status" />
-
-        <TextView
-            android:id="@+id/runtimeStatusText"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:background="#FFFFFF"
-            android:padding="8dp"
-            android:textColor="#3C4043"
-            android:textSize="13sp" />
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
 
-        <Button
-            android:id="@+id/thirdPartyNoticesButton"
+            <TextView
+                style="@style/TextSectionLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/language" />
+
+            <Spinner
+                android:id="@+id/languageSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="5dp" />
+
+            <TextView
+                style="@style/TextSectionLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/provider" />
+
+            <Spinner
+                android:id="@+id/providerSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="5dp" />
+
+            <EditText
+                android:id="@+id/apiKeyInput"
+                style="@style/InputField"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="12dp"
+                android:hint="@string/api_key_hint"
+                android:inputType="textPassword" />
+
+            <EditText
+                android:id="@+id/endpointInput"
+                style="@style/InputField"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="9dp"
+                android:hint="@string/endpoint"
+                android:inputType="textUri" />
+
+            <EditText
+                android:id="@+id/modelInput"
+                style="@style/InputField"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="9dp"
+                android:hint="@string/model"
+                android:inputType="text" />
+
+            <Button
+                android:id="@+id/saveSettingsButton"
+                style="@style/ButtonPrimary"
+                android:layout_width="match_parent"
+                android:layout_marginTop="12dp"
+                android:text="@string/save_settings" />
+        </LinearLayout>
+
+        <TextView
+            style="@style/TextSectionLabel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
+            android:text="@string/runtime_configuration" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                style="@style/TextSectionLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/build_backend" />
+
+            <Spinner
+                android:id="@+id/backendSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="5dp" />
+
+            <EditText
+                android:id="@+id/runtimeBootstrapUrlInput"
+                style="@style/InputField"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="12dp"
+                android:hint="@string/runtime_bootstrap_url"
+                android:inputType="textUri" />
+
+            <Button
+                android:id="@+id/installBundledRuntimeButton"
+                style="@style/ButtonPrimary"
+                android:layout_width="match_parent"
+                android:layout_marginTop="12dp"
+                android:text="@string/install_bundled_runtime" />
+
+            <Button
+                android:id="@+id/downloadRuntimeButton"
+                style="@style/ButtonSecondary"
+                android:layout_width="match_parent"
+                android:layout_marginTop="8dp"
+                android:text="@string/download_runtime" />
+
+            <Button
+                android:id="@+id/refreshRuntimeStatusButton"
+                style="@style/ButtonSecondary"
+                android:layout_width="match_parent"
+                android:layout_marginTop="8dp"
+                android:text="@string/refresh_runtime_status" />
+
+            <TextView
+                android:id="@+id/runtimeStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_status"
+                android:padding="10dp"
+                android:textColor="@color/brandDark"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/thirdPartyNoticesButton"
+            style="@style/ButtonSecondary"
+            android:layout_width="match_parent"
+            android:layout_marginTop="14dp"
             android:text="@string/third_party_notices" />
 
         <LinearLayout
@@ -139,50 +203,64 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:orientation="vertical">
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                style="@style/TextSectionLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/compatibility_mode" />
 
             <Button
                 android:id="@+id/runTermuxSetupButton"
+                style="@style/ButtonPrimary"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
                 android:text="@string/run_termux_setup" />
 
             <Button
                 android:id="@+id/requestTermuxPermissionButton"
+                style="@style/ButtonSecondary"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:text="@string/request_termux_permission" />
 
             <Button
                 android:id="@+id/copyAdbGrantButton"
+                style="@style/ButtonSecondary"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:text="@string/copy_adb_grant" />
 
             <Button
                 android:id="@+id/copyTermuxBasicsButton"
+                style="@style/ButtonSecondary"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:text="@string/copy_termux_basics" />
 
             <Button
                 android:id="@+id/copyBuildScriptButton"
+                style="@style/ButtonSecondary"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:text="@string/copy_build_script" />
 
             <Button
                 android:id="@+id/copySetupScriptButton"
+                style="@style/ButtonSecondary"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:text="@string/copy_setup_script" />
 
             <TextView
                 android:id="@+id/termuxHelp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:textColor="#3C4043"
+                android:layout_marginTop="12dp"
+                android:textColor="@color/muted"
                 android:textSize="14sp" />
         </LinearLayout>
     </LinearLayout>

@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.net.Uri;
 import android.provider.Settings;
 import android.util.Base64;
@@ -62,7 +63,12 @@ public class TermuxBridge {
         try {
             ApplicationInfo info = context.getPackageManager().getApplicationInfo(TERMUX_PACKAGE, 0);
             AppOpsManager appOps = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
-            int mode = appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, info.uid, TERMUX_PACKAGE);
+            int mode;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                mode = appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, info.uid, TERMUX_PACKAGE);
+            } else {
+                mode = appOps.checkOpNoThrow(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, info.uid, TERMUX_PACKAGE);
+            }
             return mode == AppOpsManager.MODE_ALLOWED;
         } catch (Exception error) {
             return false;

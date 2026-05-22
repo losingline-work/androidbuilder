@@ -10,6 +10,7 @@ import android.view.ViewGroup;
 import android.widget.*;
 import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
+import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.model.ProjectRecord;
 import com.androidbuilder.util.NameUtils;
@@ -66,6 +67,15 @@ public class MainActivity extends BaseActivity {
     }
 
     private void showNewProjectDialog() {
+        if (!new OpenAiClient(this).isConfigured()) {
+            new AlertDialog.Builder(this)
+                    .setTitle(R.string.api_required_title)
+                    .setMessage(R.string.api_required_message)
+                    .setPositiveButton(R.string.open_settings, (dialog, which) -> startActivity(new Intent(this, SettingsActivity.class)))
+                    .setNegativeButton(R.string.cancel, null)
+                    .show();
+            return;
+        }
         LinearInputs inputs = new LinearInputs(this, getString(R.string.project_name), getString(R.string.initial_requirement));
         new AlertDialog.Builder(this)
                 .setTitle(R.string.new_project)

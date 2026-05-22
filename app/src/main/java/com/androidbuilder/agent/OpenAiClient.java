@@ -38,7 +38,7 @@ public class OpenAiClient {
 
     public String createSpecJson(List<ChatMessage> messages, String latestPrompt, boolean chinese) throws Exception {
         if (!isConfigured()) {
-            return null;
+            throw new IllegalStateException(chinese ? "请先在设置里填写模型 API Key。" : "Configure a model API key in Settings first.");
         }
         String provider = prefs.getString(KEY_PROVIDER, PROVIDER_OPENAI);
         String endpoint = prefs.getString(KEY_ENDPOINT, defaultEndpoint(provider));

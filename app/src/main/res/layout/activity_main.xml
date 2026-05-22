@@ -8,30 +8,61 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:background="@drawable/bg_header"
         android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:padding="16dp">
 
-        <TextView
+        <ImageView
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/app_mark" />
+
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
             android:layout_weight="1"
-            android:text="@string/app_name"
-            android:textColor="@color/ink"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textColor="@android:color/white"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="@string/app_tagline"
+                android:textColor="#CDE7E2"
+                android:textSize="13sp" />
+        </LinearLayout>
 
         <Button
             android:id="@+id/settingsButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            style="@style/ButtonSecondary"
+            android:layout_width="92dp"
             android:text="@string/settings" />
     </LinearLayout>
 
-    <EditText
-        android:id="@+id/searchInput"
+    <TextView
+        style="@style/TextSectionLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="18dp"
+        android:text="@string/project_workspace" />
+
+    <EditText
+        android:id="@+id/searchInput"
+        style="@style/InputField"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="8dp"
         android:hint="@string/search_projects"
         android:inputType="text" />
 
@@ -41,12 +72,14 @@
         android:layout_height="0dp"
         android:layout_marginTop="10dp"
         android:layout_weight="1"
-        android:divider="#DADCE0"
-        android:dividerHeight="1dp" />
+        android:clipToPadding="false"
+        android:divider="@android:color/transparent"
+        android:dividerHeight="8dp"
+        android:paddingBottom="8dp" />
 
     <Button
         android:id="@+id/newProjectButton"
+        style="@style/ButtonPrimary"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
         android:text="@string/new_project" />
 </LinearLayout>

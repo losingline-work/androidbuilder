@@ -5,20 +5,31 @@
     android:orientation="vertical"
     android:padding="14dp">
 
-    <TextView
-        android:id="@+id/projectTitle"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="@color/ink"
-        android:textSize="22sp"
-        android:textStyle="bold" />
+        android:background="@drawable/bg_card"
+        android:orientation="vertical"
+        android:padding="14dp">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:textColor="#5F6368" />
+        <TextView
+            android:id="@+id/projectTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/ink"
+            android:textSize="23sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:background="@drawable/bg_status"
+            android:padding="8dp"
+            android:textColor="@color/brandDark"
+            android:textSize="13sp" />
+    </LinearLayout>
 
     <ListView
         android:id="@+id/messageList"
@@ -26,24 +37,35 @@
         android:layout_height="0dp"
         android:layout_marginTop="10dp"
         android:layout_weight="1"
-        android:divider="#DADCE0"
-        android:dividerHeight="1dp" />
+        android:clipToPadding="false"
+        android:divider="@android:color/transparent"
+        android:dividerHeight="8dp"
+        android:paddingBottom="6dp" />
+
+    <TextView
+        style="@style/TextSectionLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/build_log" />
 
     <TextView
         android:id="@+id/logText"
         android:layout_width="match_parent"
-        android:layout_height="96dp"
-        android:background="#FFFFFF"
-        android:padding="8dp"
+        android:layout_height="104dp"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/bg_log"
+        android:fontFamily="monospace"
+        android:padding="10dp"
         android:scrollbars="vertical"
-        android:textColor="#3C4043"
+        android:textColor="#D9E7E3"
         android:textSize="12sp" />
 
     <EditText
         android:id="@+id/promptInput"
+        style="@style/InputField"
         android:layout_width="match_parent"
-        android:layout_height="96dp"
-        android:layout_marginTop="8dp"
+        android:layout_height="92dp"
+        android:layout_marginTop="10dp"
         android:gravity="top"
         android:hint="@string/prompt_hint"
         android:inputType="textMultiLine|textCapSentences" />
@@ -51,29 +73,31 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="9dp"
         android:orientation="horizontal">
 
         <Button
             android:id="@+id/sendButton"
+            style="@style/ButtonPrimary"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_marginEnd="7dp"
             android:layout_weight="1"
             android:text="@string/generate" />
 
         <Button
             android:id="@+id/buildButton"
+            style="@style/ButtonSecondary"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="1dp"
+            android:layout_marginEnd="7dp"
             android:layout_weight="1"
             android:text="@string/build" />
 
         <Button
             android:id="@+id/installButton"
+            style="@style/ButtonSecondary"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="1dp"
             android:layout_weight="1"
             android:text="@string/install" />
     </LinearLayout>
