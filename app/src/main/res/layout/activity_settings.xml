@@ -58,10 +58,41 @@
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/languageSpinner"
+                            style="@style/DropdownField"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="none" />
                     </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="@string/dependency_mode"
+                        app:endIconMode="dropdown_menu">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/dependencyModeSpinner"
+                            style="@style/DropdownField"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/importOfflineMavenButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="10dp"
+                        android:text="@string/import_offline_maven" />
+
+                    <TextView
+                        android:id="@+id/offlineMavenStatusText"
+                        style="@style/TextBodyMedium"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp" />
 
                     <com.google.android.material.textfield.TextInputLayout
                         style="@style/Widget.AndroidBuilder.TextInput"
@@ -73,6 +104,7 @@
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/providerSpinner"
+                            style="@style/DropdownField"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="none" />
@@ -128,6 +160,7 @@
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/deepseekModelSpinner"
+                            style="@style/DropdownField"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="none" />
@@ -145,6 +178,7 @@
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/minimaxModelSpinner"
+                            style="@style/DropdownField"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="none" />
@@ -203,6 +237,7 @@
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/backendSpinner"
+                            style="@style/DropdownField"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="none" />

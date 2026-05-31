@@ -32,9 +32,11 @@ import java.nio.charset.StandardCharsets;
 
 public class SettingsActivity extends BaseActivity {
     private static final int REQUEST_TERMUX_RUN_COMMAND = 8001;
+    private static final int REQUEST_OFFLINE_MAVEN_ZIP = 8002;
     private String[] providerLabels;
     private String[] languageLabels;
     private String[] backendLabels;
+    private String[] dependencyModeLabels;
     private String[] deepseekModelLabels;
     private String[] minimaxModelLabels;
 
@@ -46,12 +48,14 @@ public class SettingsActivity extends BaseActivity {
     private AutoCompleteTextView providerSpinner;
     private AutoCompleteTextView languageSpinner;
     private AutoCompleteTextView backendSpinner;
+    private AutoCompleteTextView dependencyModeSpinner;
     private View termuxSection;
     private View deepseekModelLayout;
     private View minimaxModelLayout;
     private View modelInputLayout;
     private EditText runtimeBootstrapUrlInput;
     private TextView runtimeStatusText;
+    private TextView offlineMavenStatusText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,9 +75,11 @@ public class SettingsActivity extends BaseActivity {
         providerSpinner = findViewById(R.id.providerSpinner);
         languageSpinner = findViewById(R.id.languageSpinner);
         backendSpinner = findViewById(R.id.backendSpinner);
+        dependencyModeSpinner = findViewById(R.id.dependencyModeSpinner);
         termuxSection = findViewById(R.id.termuxSection);
         runtimeBootstrapUrlInput = findViewById(R.id.runtimeBootstrapUrlInput);
         runtimeStatusText = findViewById(R.id.runtimeStatusText);
+        offlineMavenStatusText = findViewById(R.id.offlineMavenStatusText);
         configureSpinners();
         SharedPreferences prefs = getSharedPreferences(OpenAiClient.PREFS, MODE_PRIVATE);
         apiKey.setText(prefs.getString(OpenAiClient.KEY_API_KEY, ""));
@@ -85,8 +91,10 @@ public class SettingsActivity extends BaseActivity {
         select(minimaxModelSpinner, minimaxModelLabels, minimaxModelIndex(prefs.getString(OpenAiClient.KEY_MODEL, OpenAiClient.defaultModel(provider))));
         select(languageSpinner, languageLabels, languageIndex(AppSettings.language(this)));
         select(backendSpinner, backendLabels, backendIndex(BuildBackendSettings.selected(this)));
+        select(dependencyModeSpinner, dependencyModeLabels, dependencyModeIndex(BuildBackendSettings.dependencyMode(this)));
         runtimeBootstrapUrlInput.setText(BuildBackendSettings.prefs(this).getString(BuildBackendSettings.KEY_BOOTSTRAP_URL, ""));
         findViewById(R.id.saveSettingsButton).setOnClickListener(v -> save());
+        findViewById(R.id.importOfflineMavenButton).setOnClickListener(v -> importOfflineMaven());
         findViewById(R.id.refreshRuntimeStatusButton).setOnClickListener(v -> refreshRuntimeStatus());
         findViewById(R.id.installBundledRuntimeButton).setOnClickListener(v -> installBundledRuntime());
         findViewById(R.id.downloadRuntimeButton).setOnClickListener(v -> downloadRuntime());
@@ -101,6 +109,7 @@ public class SettingsActivity extends BaseActivity {
         ((TextView) findViewById(R.id.appVersionText)).setText(getString(R.string.app_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE));
         updateTermuxSectionVisibility();
         updateModelInputVisibility();
+        refreshOfflineMavenStatus();
         refreshRuntimeStatus();
     }
 
@@ -108,11 +117,13 @@ public class SettingsActivity extends BaseActivity {
         providerLabels = new String[]{getString(R.string.provider_openai), getString(R.string.provider_deepseek), getString(R.string.provider_minimax), getString(R.string.provider_custom)};
         languageLabels = new String[]{getString(R.string.language_system), "English", "中文"};
         backendLabels = new String[]{getString(R.string.backend_embedded), getString(R.string.backend_external_termux)};
+        dependencyModeLabels = new String[]{getString(R.string.dependency_mode_offline_safe), getString(R.string.dependency_mode_local_cache), getString(R.string.dependency_mode_online)};
         deepseekModelLabels = new String[]{getString(R.string.deepseek_model_v4_flash), getString(R.string.deepseek_model_v4_pro)};
         minimaxModelLabels = new String[]{getString(R.string.minimax_model_m2), getString(R.string.minimax_model_m1), getString(R.string.minimax_model_text_01)};
         configureDropdown(providerSpinner, providerLabels);
         configureDropdown(languageSpinner, languageLabels);
         configureDropdown(backendSpinner, backendLabels);
+        configureDropdown(dependencyModeSpinner, dependencyModeLabels);
         configureDropdown(deepseekModelSpinner, deepseekModelLabels);
         configureDropdown(minimaxModelSpinner, minimaxModelLabels);
         providerSpinner.setOnItemClickListener((parent, view, position, id) -> {
@@ -129,7 +140,7 @@ public class SettingsActivity extends BaseActivity {
     }
 
     private void configureDropdown(AutoCompleteTextView view, String[] labels) {
-        view.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, labels));
+        view.setAdapter(new ArrayAdapter<>(this, R.layout.row_dropdown_item, labels));
         view.setThreshold(0);
     }
 
@@ -161,6 +172,7 @@ public class SettingsActivity extends BaseActivity {
                 .apply();
         AppSettings.prefs(this).edit().putString(AppSettings.KEY_LANGUAGE, languageAt(selectedIndex(languageSpinner, languageLabels))).apply();
         BuildBackendSettings.setSelected(this, backendAt(selectedIndex(backendSpinner, backendLabels)));
+        BuildBackendSettings.setDependencyMode(this, dependencyModeAt(selectedIndex(dependencyModeSpinner, dependencyModeLabels)));
         BuildBackendSettings.prefs(this).edit().putString(BuildBackendSettings.KEY_BOOTSTRAP_URL, runtimeBootstrapUrlInput.getText().toString().trim()).apply();
         Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show();
         recreate();
@@ -274,10 +286,109 @@ public class SettingsActivity extends BaseActivity {
         findViewById(R.id.installBundledRuntimeButton).setEnabled(!busy);
         findViewById(R.id.downloadRuntimeButton).setEnabled(!busy);
         findViewById(R.id.refreshRuntimeStatusButton).setEnabled(!busy);
+        findViewById(R.id.importOfflineMavenButton).setEnabled(!busy);
     }
 
     private void setRuntimeStatus(String value) {
         runtimeStatusText.setText(value == null ? "" : value);
+    }
+
+    private void importOfflineMaven() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/zip");
+        startActivityForResult(intent, REQUEST_OFFLINE_MAVEN_ZIP);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_OFFLINE_MAVEN_ZIP && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            installOfflineMaven(data.getData());
+        }
+    }
+
+    private void installOfflineMaven(Uri uri) {
+        setRuntimeBusy(true);
+        new Thread(() -> {
+            try {
+                java.io.File target = BuildBackendSettings.offlineMavenDir(this);
+                FileUtils.deleteRecursively(target);
+                unzipOfflineMaven(uri, target);
+                runOnUiThread(() -> {
+                    setRuntimeBusy(false);
+                    refreshOfflineMavenStatus();
+                    Toast.makeText(this, R.string.offline_maven_imported, Toast.LENGTH_LONG).show();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    setRuntimeBusy(false);
+                    Toast.makeText(this, getString(R.string.offline_maven_import_failed, error.getMessage()), Toast.LENGTH_LONG).show();
+                    refreshOfflineMavenStatus();
+                });
+            }
+        }, "offline-maven-import").start();
+    }
+
+    private void unzipOfflineMaven(Uri uri, java.io.File targetDir) throws Exception {
+        String rootPath = targetDir.getCanonicalPath();
+        InputStream raw = getContentResolver().openInputStream(uri);
+        if (raw == null) {
+            throw new java.io.IOException("Cannot open selected zip.");
+        }
+        try (InputStream in = raw; java.util.zip.ZipInputStream zip = new java.util.zip.ZipInputStream(in)) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                java.io.File target = new java.io.File(targetDir, entry.getName());
+                String targetPath = target.getCanonicalPath();
+                if (!targetPath.equals(rootPath) && !targetPath.startsWith(rootPath + java.io.File.separator)) {
+                    throw new IllegalArgumentException("Unsafe zip entry: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    target.mkdirs();
+                } else {
+                    java.io.File parent = target.getParentFile();
+                    if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                        throw new java.io.IOException("Cannot create directory: " + parent);
+                    }
+                    try (java.io.FileOutputStream out = new java.io.FileOutputStream(target)) {
+                        FileUtils.copy(zip, out);
+                    }
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private void refreshOfflineMavenStatus() {
+        java.io.File dir = BuildBackendSettings.offlineMavenDir(this);
+        int artifacts = countFiles(dir, ".pom", ".aar", ".jar");
+        offlineMavenStatusText.setText(artifacts == 0
+                ? getString(R.string.offline_maven_empty)
+                : getString(R.string.offline_maven_ready, artifacts, dir.getAbsolutePath()));
+    }
+
+    private int countFiles(java.io.File dir, String... suffixes) {
+        if (dir == null || !dir.exists()) {
+            return 0;
+        }
+        if (dir.isFile()) {
+            String name = dir.getName().toLowerCase(java.util.Locale.ROOT);
+            for (String suffix : suffixes) {
+                if (name.endsWith(suffix)) {
+                    return 1;
+                }
+            }
+            return 0;
+        }
+        int count = 0;
+        java.io.File[] children = dir.listFiles();
+        if (children != null) {
+            for (java.io.File child : children) {
+                count += countFiles(child, suffixes);
+            }
+        }
+        return count;
     }
 
     private void runTermuxSetup() {
@@ -431,5 +542,25 @@ public class SettingsActivity extends BaseActivity {
 
     private String backendAt(int position) {
         return position == 1 ? BuildBackendSettings.EXTERNAL_TERMUX : BuildBackendSettings.EMBEDDED;
+    }
+
+    private int dependencyModeIndex(String mode) {
+        if (BuildBackendSettings.DEPENDENCY_LOCAL_CACHE.equals(mode)) {
+            return 1;
+        }
+        if (BuildBackendSettings.DEPENDENCY_ONLINE.equals(mode)) {
+            return 2;
+        }
+        return 0;
+    }
+
+    private String dependencyModeAt(int position) {
+        if (position == 1) {
+            return BuildBackendSettings.DEPENDENCY_LOCAL_CACHE;
+        }
+        if (position == 2) {
+            return BuildBackendSettings.DEPENDENCY_ONLINE;
+        }
+        return BuildBackendSettings.DEPENDENCY_OFFLINE_SAFE;
     }
 }

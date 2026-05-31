@@ -8,7 +8,9 @@ import android.database.sqlite.SQLiteDatabase;
 import com.androidbuilder.model.ArtifactRecord;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
+import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
+import com.androidbuilder.model.ProjectTaskRecord;
 import com.androidbuilder.util.FileUtils;
 
 import java.io.File;
@@ -122,12 +124,148 @@ public class AppRepository {
         }
     }
 
+    public synchronized ProjectPlanRecord latestProjectPlan(long projectId) {
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_PLANS, null, "project_id = ?", new String[]{String.valueOf(projectId)}, null, null, "updated_at DESC", "1")) {
+            if (cursor.moveToFirst()) {
+                return readProjectPlan(cursor);
+            }
+        }
+        return null;
+    }
+
+    public synchronized ProjectPlanRecord saveProjectPlan(long projectId, String content, String status, Long linkedBuildJobId) {
+        ProjectPlanRecord current = latestProjectPlan(projectId);
+        long now = System.currentTimeMillis();
+        ContentValues values = new ContentValues();
+        values.put("project_id", projectId);
+        values.put("content", content == null ? "" : content);
+        values.put("status", status == null ? "idle" : status);
+        if (linkedBuildJobId == null) {
+            values.putNull("linked_build_job_id");
+        } else {
+            values.put("linked_build_job_id", linkedBuildJobId);
+        }
+        values.put("updated_at", now);
+        if (current == null) {
+            values.put("created_at", now);
+            helper.getWritableDatabase().insertOrThrow(DatabaseHelper.TABLE_PROJECT_PLANS, null, values);
+        } else {
+            helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_PLANS, values, "id = ?", new String[]{String.valueOf(current.id)});
+        }
+        touchProject(projectId);
+        return latestProjectPlan(projectId);
+    }
+
+    public synchronized void updateProjectPlanStatus(long projectId, String status, Long linkedBuildJobId) {
+        ProjectPlanRecord current = latestProjectPlan(projectId);
+        saveProjectPlan(projectId, current == null ? "" : current.content, status, linkedBuildJobId);
+    }
+
+    public synchronized void replaceProjectTasks(long projectId, List<ProjectTaskRecord> tasks) {
+        SQLiteDatabase db = helper.getWritableDatabase();
+        long now = System.currentTimeMillis();
+        db.delete(DatabaseHelper.TABLE_PROJECT_TASKS, "project_id = ?", new String[]{String.valueOf(projectId)});
+        for (int i = 0; i < tasks.size(); i++) {
+            ProjectTaskRecord task = tasks.get(i);
+            ContentValues values = new ContentValues();
+            values.put("project_id", projectId);
+            values.put("sort_order", i);
+            values.put("title", task.title);
+            values.put("instruction", task.instruction);
+            values.put("status", "pending");
+            values.put("result_summary", "");
+            values.put("created_at", now);
+            values.put("updated_at", now);
+            values.put("started_at", 0);
+            values.put("completed_at", 0);
+            db.insertOrThrow(DatabaseHelper.TABLE_PROJECT_TASKS, null, values);
+        }
+        touchProject(projectId);
+    }
+
+    public synchronized void clearProjectTasks(long projectId) {
+        helper.getWritableDatabase().delete(DatabaseHelper.TABLE_PROJECT_TASKS, "project_id = ?", new String[]{String.valueOf(projectId)});
+        touchProject(projectId);
+    }
+
+    public synchronized List<ProjectTaskRecord> listProjectTasks(long projectId) {
+        List<ProjectTaskRecord> rows = new ArrayList<>();
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_TASKS, null, "project_id = ?", new String[]{String.valueOf(projectId)}, null, null, "sort_order ASC")) {
+            while (cursor.moveToNext()) {
+                rows.add(readProjectTask(cursor));
+            }
+        }
+        return rows;
+    }
+
+    public synchronized ProjectTaskRecord nextPendingProjectTask(long projectId) {
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_TASKS, null, "project_id = ? AND status IN (?, ?)", new String[]{String.valueOf(projectId), "failed", "pending"}, null, null, "CASE status WHEN 'failed' THEN 0 ELSE 1 END, sort_order ASC", "1")) {
+            if (cursor.moveToFirst()) {
+                return readProjectTask(cursor);
+            }
+        }
+        return null;
+    }
+
+    public synchronized void updateProjectTask(long id, String status, String resultSummary) {
+        ProjectTaskRecord current = getProjectTask(id);
+        long now = System.currentTimeMillis();
+        ContentValues values = new ContentValues();
+        values.put("status", status);
+        values.put("result_summary", resultSummary == null ? "" : resultSummary);
+        values.put("updated_at", now);
+        if ("running".equals(status)) {
+            values.put("started_at", now);
+            values.put("completed_at", 0);
+        } else if ("done".equals(status) || "failed".equals(status)) {
+            values.put("started_at", current == null || current.startedAt == 0 ? now : current.startedAt);
+            values.put("completed_at", now);
+        }
+        helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_TASKS, values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    public synchronized ProjectTaskRecord getProjectTask(long id) {
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_TASKS, null, "id = ?", new String[]{String.valueOf(id)}, null, null, null)) {
+            if (cursor.moveToFirst()) {
+                return readProjectTask(cursor);
+            }
+        }
+        return null;
+    }
+
+    public synchronized boolean recoverInterruptedWork(long projectId, String message) {
+        boolean recovered = false;
+        String summary = message == null ? "" : message;
+        ProjectPlanRecord plan = latestProjectPlan(projectId);
+        if (plan != null && "coding".equals(plan.status)) {
+            updateProjectPlanStatus(projectId, "planned", plan.linkedBuildJobId);
+            recovered = true;
+        } else if (plan != null && "planning".equals(plan.status)) {
+            updateProjectPlanStatus(projectId, "idle", null);
+            recovered = true;
+        }
+        for (ProjectTaskRecord task : listProjectTasks(projectId)) {
+            if ("running".equals(task.status)) {
+                updateProjectTask(task.id, "failed", summary);
+                recovered = true;
+            }
+        }
+        BuildJobRecord job = latestBuildJob(projectId);
+        if (job != null && ("queued".equals(job.status) || "generating".equals(job.status) || "building".equals(job.status))) {
+            updateBuildJob(job.id, "failed", "interrupted", job.logsPath, job.apkPath, summary, job.retryCount);
+            recovered = true;
+        }
+        return recovered;
+    }
+
     public synchronized BuildJobRecord createBuildJob(long projectId) {
         ContentValues values = new ContentValues();
         values.put("project_id", projectId);
         values.put("status", "queued");
         values.put("phase", "waiting");
-        values.put("created_at", System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        values.put("created_at", now);
+        values.put("updated_at", now);
         long id = helper.getWritableDatabase().insertOrThrow(DatabaseHelper.TABLE_BUILD_JOBS, null, values);
         updateProjectBuildStatus(projectId, "queued");
         return getBuildJob(id);
@@ -160,6 +298,7 @@ public class AppRepository {
         values.put("apk_path", apkPath);
         values.put("error_summary", errorSummary);
         values.put("retry_count", retryCount);
+        values.put("updated_at", System.currentTimeMillis());
         helper.getWritableDatabase().update(DatabaseHelper.TABLE_BUILD_JOBS, values, "id = ?", new String[]{String.valueOf(id)});
         if (current != null) {
             updateProjectBuildStatus(current.projectId, status);
@@ -240,7 +379,38 @@ public class AppRepository {
                 cursor.getString(cursor.getColumnIndexOrThrow("apk_path")),
                 cursor.getString(cursor.getColumnIndexOrThrow("error_summary")),
                 cursor.getInt(cursor.getColumnIndexOrThrow("retry_count")),
-                cursor.getLong(cursor.getColumnIndexOrThrow("created_at"))
+                cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("updated_at"))
+        );
+    }
+
+    private ProjectPlanRecord readProjectPlan(Cursor cursor) {
+        int linkedIndex = cursor.getColumnIndexOrThrow("linked_build_job_id");
+        Long linked = cursor.isNull(linkedIndex) ? null : cursor.getLong(linkedIndex);
+        return new ProjectPlanRecord(
+                cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("project_id")),
+                cursor.getString(cursor.getColumnIndexOrThrow("content")),
+                cursor.getString(cursor.getColumnIndexOrThrow("status")),
+                linked,
+                cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("updated_at"))
+        );
+    }
+
+    private ProjectTaskRecord readProjectTask(Cursor cursor) {
+        return new ProjectTaskRecord(
+                cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("project_id")),
+                cursor.getInt(cursor.getColumnIndexOrThrow("sort_order")),
+                cursor.getString(cursor.getColumnIndexOrThrow("title")),
+                cursor.getString(cursor.getColumnIndexOrThrow("instruction")),
+                cursor.getString(cursor.getColumnIndexOrThrow("status")),
+                cursor.getString(cursor.getColumnIndexOrThrow("result_summary")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("started_at")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("completed_at"))
         );
     }
 

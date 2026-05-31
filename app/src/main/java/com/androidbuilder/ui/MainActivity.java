@@ -7,6 +7,7 @@ import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.*;
+import androidx.appcompat.app.AlertDialog;
 import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
 import com.androidbuilder.agent.OpenAiClient;
@@ -85,25 +86,36 @@ public class MainActivity extends BaseActivity {
                     .show();
             return;
         }
-        LinearInputs inputs = new LinearInputs(this, getString(R.string.project_name), getString(R.string.initial_requirement));
-        new MaterialAlertDialogBuilder(this)
+        LinearInputs inputs = new LinearInputs(this, getString(R.string.project_name), getString(R.string.package_name_optional),
+                getString(R.string.initial_requirement));
+        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.new_project)
                 .setView(inputs.view)
-                .setPositiveButton(R.string.create, (dialog, which) -> {
-                    String prompt = inputs.second.getText().toString().trim();
-                    if (prompt.isEmpty()) {
-                        Toast.makeText(this, R.string.requirement_required, Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    String name = inputs.first.getText().toString().trim();
-                    if (name.isEmpty()) {
-                        name = NameUtils.projectNameFromPrompt(prompt);
-                    }
-                    ProjectRecord project = repository.createProject(name, NameUtils.packageNameFromProject(name), prompt);
-                    openProject(project, prompt);
-                })
+                .setPositiveButton(R.string.create, null)
                 .setNegativeButton(R.string.cancel, null)
-                .show();
+                .create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String prompt = inputs.third.getText().toString().trim();
+            if (prompt.isEmpty()) {
+                Toast.makeText(this, R.string.requirement_required, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String name = inputs.first.getText().toString().trim();
+            if (name.isEmpty()) {
+                name = NameUtils.projectNameFromPrompt(prompt);
+            }
+            String packageName = inputs.second.getText().toString().trim();
+            if (packageName.isEmpty()) {
+                packageName = NameUtils.packageNameFromProject(name);
+            } else if (!NameUtils.isPackageName(packageName)) {
+                inputs.second.setError(getString(R.string.invalid_package_name));
+                return;
+            }
+            ProjectRecord project = repository.createProject(name, packageName, prompt);
+            dialog.dismiss();
+            openProject(project, prompt);
+        }));
+        dialog.show();
     }
 
     private void showProjectActions(ProjectRecord project) {

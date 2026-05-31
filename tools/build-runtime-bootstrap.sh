@@ -173,13 +173,18 @@ chmod +x "$rootfs_dir/usr/bin/apksigner"
 cat > "$rootfs_dir/usr/bin/gradle" <<EOF
 #!/system/bin/sh
 PREFIX="\${PREFIX:-\$(cd "\$(dirname "\$0")/.." && pwd)}"
-exec "\$PREFIX/bin/java" \${GRADLE_OPTS:-} -classpath "\$PREFIX/opt/gradle-$GRADLE_VERSION/lib/gradle-launcher-$GRADLE_VERSION.jar" org.gradle.launcher.GradleMain "\$@"
+HOME="\${HOME:-\$PREFIX/../home}"
+TMPDIR="\${TMPDIR:-\$HOME/tmp}"
+mkdir -p "\$HOME" "\$TMPDIR"
+export HOME TMPDIR
+exec "\$PREFIX/bin/java" -Duser.home="\$HOME" -Djava.io.tmpdir="\$TMPDIR" -Djdk.lang.Process.launchMechanism=VFORK \${GRADLE_OPTS:-} -classpath "\$PREFIX/opt/gradle-$GRADLE_VERSION/lib/gradle-launcher-$GRADLE_VERSION.jar" org.gradle.launcher.GradleMain "\$@"
 EOF
 chmod +x "$rootfs_dir/usr/bin/gradle"
 
 echo "Installing Android SDK platform android-$ANDROID_API..."
 mkdir -p "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API"
 cp "$ANDROID_JAR" "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/android.jar"
+cp "$ANDROID_JAR" "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/core-for-system-modules.jar"
 cat > "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/source.properties" <<EOF
 Pkg.Desc=Android SDK Platform $ANDROID_API
 Pkg.UserSrc=false
@@ -187,15 +192,126 @@ Platform.Version=$ANDROID_API
 AndroidVersion.ApiLevel=$ANDROID_API
 Pkg.Revision=1
 EOF
+case "$ANDROID_API" in
+  34) android_release=14 ;;
+  35) android_release=15 ;;
+  36) android_release=16 ;;
+  *) android_release="$ANDROID_API" ;;
+esac
+cat > "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/build.prop" <<EOF
+ro.build.version.sdk=$ANDROID_API
+ro.build.version.codename=REL
+ro.build.version.release=$android_release
+ro.build.version.release_or_codename=$android_release
+ro.build.version.preview_sdk=0
+ro.build.version.preview_sdk_fingerprint=REL
+ro.build.version.all_codenames=REL
+ro.product.cpu.abi=arm64-v8a
+ro.product.cpu.abi2=
+ro.product.cpu.abilist=arm64-v8a,armeabi-v7a,armeabi
+ro.product.cpu.abilist32=armeabi-v7a,armeabi
+ro.product.cpu.abilist64=arm64-v8a
+ro.product.brand=Android
+ro.product.manufacturer=Android
+ro.product.device=generic
+ro.build.product=generic
+EOF
+cat > "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/package.xml" <<EOF
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns11="http://schemas.android.com/sdk/android/repo/repository2/03">
+  <localPackage path="platforms;android-$ANDROID_API" obsolete="false">
+    <type-details xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="ns11:platformDetailsType">
+      <api-level>$ANDROID_API</api-level>
+      <codename></codename>
+      <base-extension>true</base-extension>
+      <layoutlib api="15"/>
+    </type-details>
+    <revision>
+      <major>1</major>
+    </revision>
+    <display-name>Android SDK Platform $ANDROID_API</display-name>
+  </localPackage>
+</ns2:repository>
+EOF
 
-mkdir -p "$rootfs_dir/usr/android-sdk/build-tools/35.0.0"
-for tool in aapt2 d8 apksigner; do
-  cat > "$rootfs_dir/usr/android-sdk/build-tools/35.0.0/$tool" <<EOF
+mkdir -p "$rootfs_dir/usr/android-sdk/licenses"
+cat > "$rootfs_dir/usr/android-sdk/licenses/android-sdk-license" <<'EOF'
+24333f8a63b6825ea9c5514f83c2829b004d1fee
+8933bad161af4178b1185d1a37fbf41ea5269c55
+d56f5187479451eabf01fb78af6dfcb131a6481e
+EOF
+cat > "$rootfs_dir/usr/android-sdk/licenses/android-sdk-preview-license" <<'EOF'
+84831b9409646a918e30573bab4c9c91346d8abd
+EOF
+
+for build_tools_api in 35 "$ANDROID_API" 34; do
+  build_tools_dir="$rootfs_dir/usr/android-sdk/build-tools/$build_tools_api.0.0"
+  mkdir -p "$build_tools_dir"
+  cat > "$build_tools_dir/source.properties" <<EOF
+Pkg.Desc=Android SDK Build-Tools $build_tools_api
+Pkg.Revision=$build_tools_api.0.0
+EOF
+  cat > "$build_tools_dir/package.xml" <<EOF
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns5="http://schemas.android.com/repository/android/generic/02">
+  <localPackage path="build-tools;$build_tools_api.0.0" obsolete="false">
+    <type-details xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="ns5:genericDetailsType"/>
+    <revision>
+      <major>$build_tools_api</major>
+      <minor>0</minor>
+      <micro>0</micro>
+    </revision>
+    <display-name>Android SDK Build-Tools $build_tools_api</display-name>
+  </localPackage>
+</ns2:repository>
+EOF
+  for tool in aapt2 aapt aidl d8 dexdump zipalign apksigner split-select bcc_compat lld llvm-rs-cc; do
+    if [ -x "$rootfs_dir/usr/bin/$tool" ]; then
+      cat > "$build_tools_dir/$tool" <<EOF
 #!/system/bin/sh
 PREFIX="\${PREFIX:-\$(cd "\$(dirname "\$0")/../../.." && pwd)}"
 exec "\$PREFIX/bin/$tool" "\$@"
 EOF
-  chmod +x "$rootfs_dir/usr/android-sdk/build-tools/35.0.0/$tool"
+    else
+      cat > "$build_tools_dir/$tool" <<EOF
+#!/system/bin/sh
+echo "Android SDK tool $tool is not bundled in this runtime." >&2
+exit 127
+EOF
+    fi
+    chmod +x "$build_tools_dir/$tool"
+  done
+  printf '\120\113\005\006\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000' > "$build_tools_dir/core-lambda-stubs.jar"
+done
+
+for alias_api in 34; do
+  [ "$alias_api" = "$ANDROID_API" ] && continue
+  alias_dir="$rootfs_dir/usr/android-sdk/platforms/android-$alias_api"
+  mkdir -p "$alias_dir"
+  cp "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/android.jar" "$alias_dir/android.jar"
+  cp "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/core-for-system-modules.jar" "$alias_dir/core-for-system-modules.jar"
+  sed "s/ro.build.version.sdk=$ANDROID_API/ro.build.version.sdk=$alias_api/g; s/ro.build.version.release=$android_release/ro.build.version.release=14/g; s/ro.build.version.release_or_codename=$android_release/ro.build.version.release_or_codename=14/g" "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/build.prop" > "$alias_dir/build.prop"
+  sed "s/android-$ANDROID_API/android-$alias_api/g; s/Platform $ANDROID_API/Platform $alias_api/g; s/<api-level>$ANDROID_API<\\//<api-level>$alias_api<\\//g" "$rootfs_dir/usr/android-sdk/platforms/android-$ANDROID_API/package.xml" > "$alias_dir/package.xml"
+  cat > "$alias_dir/source.properties" <<EOF
+Pkg.Desc=Android SDK Platform $alias_api
+Pkg.UserSrc=false
+Platform.Version=$alias_api
+AndroidVersion.ApiLevel=$alias_api
+Pkg.Revision=1
+EOF
+done
+
+for build_tools_api in 35 "$ANDROID_API" 34; do
+  build_tools_dir="$rootfs_dir/usr/android-sdk/build-tools/$build_tools_api.0.0"
+  for tool in aapt2 aapt aidl d8 dexdump zipalign apksigner split-select bcc_compat lld llvm-rs-cc; do
+    [ -e "$build_tools_dir/$tool" ] && continue
+    cat > "$build_tools_dir/$tool" <<EOF
+#!/system/bin/sh
+echo "Android SDK tool $tool is not bundled in this runtime." >&2
+exit 127
+EOF
+    chmod +x "$build_tools_dir/$tool"
+  done
 done
 
 mkdir -p "$(dirname "$OUT_ZIP")"

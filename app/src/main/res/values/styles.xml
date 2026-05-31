@@ -48,6 +48,12 @@
         <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
     </style>
 
+    <style name="TextAppearance.AndroidBuilder.Input" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
     <style name="Widget.AndroidBuilder.Toolbar" parent="Widget.Material3.Toolbar">
         <item name="titleTextAppearance">@style/TextAppearance.AndroidBuilder.ToolbarTitle</item>
         <item name="subtitleTextAppearance">@style/TextAppearance.AndroidBuilder.ToolbarSubtitle</item>
@@ -108,11 +114,50 @@
         <item name="boxCornerRadiusTopEnd">16dp</item>
         <item name="boxCornerRadiusBottomStart">16dp</item>
         <item name="boxCornerRadiusBottomEnd">16dp</item>
+        <item name="boxStrokeColor">?attr/colorOutline</item>
+        <item name="hintTextColor">?attr/colorOnSurfaceVariant</item>
+        <item name="android:textColorHint">?attr/colorOnSurfaceVariant</item>
     </style>
 
     <style name="InputField" parent="Widget.Material3.TextInputEditText.OutlinedBox">
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:backgroundTint">@android:color/transparent</item>
+        <item name="backgroundTint">@android:color/transparent</item>
+        <item name="android:textColor">@color/colorOnSurface</item>
+        <item name="android:textColorHint">@color/colorOnSurfaceVariant</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textAppearance">@style/TextAppearance.AndroidBuilder.Input</item>
+        <item name="android:includeFontPadding">true</item>
+    </style>
+
+    <style name="PlainInputField" parent="@android:style/Widget.EditText">
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:backgroundTint">@android:color/transparent</item>
+        <item name="android:textColor">@color/colorOnSurface</item>
+        <item name="android:textColorHint">@color/colorOnSurfaceVariant</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:includeFontPadding">true</item>
+    </style>
+
+    <style name="DropdownField">
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:backgroundTint">@android:color/transparent</item>
+        <item name="backgroundTint">@android:color/transparent</item>
         <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:textColorHint">?attr/colorOnSurfaceVariant</item>
         <item name="android:textSize">16sp</item>
+        <item name="android:textAppearance">@style/TextAppearance.AndroidBuilder.Input</item>
+        <item name="android:gravity">center_vertical|start</item>
+        <item name="android:minHeight">56dp</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingEnd">48dp</item>
+        <item name="android:paddingBottom">8dp</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:includeFontPadding">true</item>
+        <item name="android:popupBackground">?attr/colorSurfaceContainer</item>
     </style>
 </resources>

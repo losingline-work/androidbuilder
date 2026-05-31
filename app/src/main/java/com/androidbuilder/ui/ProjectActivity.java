@@ -3,10 +3,14 @@ package com.androidbuilder.ui;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.method.ScrollingMovementMethod;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.ListView;
@@ -17,6 +21,7 @@ import android.widget.Toast;
 import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
 import com.androidbuilder.agent.AgentService;
+import com.androidbuilder.agent.BuildFailureClassifier;
 import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.backend.BuildBackend;
 import com.androidbuilder.backend.BuildBackendFactory;
@@ -25,15 +30,22 @@ import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.install.ApkInstaller;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
+import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
+import com.androidbuilder.model.ProjectTaskRecord;
 import com.androidbuilder.server.LocalBuildServer;
+import com.androidbuilder.util.ActiveWorkRegistry;
+import com.androidbuilder.util.AppSettings;
 import com.androidbuilder.util.FileUtils;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.tabs.TabLayout;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -41,34 +53,102 @@ import java.util.Locale;
 import java.util.Set;
 
 public class ProjectActivity extends BaseActivity {
+    private static final long MAX_PREVIEW_BYTES = 80 * 1024;
+    private static final int BUILD_LOG_INLINE_LIMIT = 9000;
+    private static final int BUILD_LOG_CONTEXT_RADIUS = 2500;
+    private static final int TAB_DESIGN = 0;
+    private static final int TAB_EXECUTE = 1;
+    private static final int TAB_BUILD = 2;
+    private static final String STATE_SELECTED_TAB = "selected_tab";
+
     private AppRepository repository;
     private AgentService agentService;
     private LocalBuildServer buildServer;
     private long projectId;
     private final List<ChatMessage> messages = new ArrayList<>();
+    private final List<FileItem> fileItems = new ArrayList<>();
+    private final List<ProjectTaskRecord> taskItems = new ArrayList<>();
     private MessageAdapter adapter;
+    private FileAdapter fileAdapter;
+    private TaskAdapter taskAdapter;
     private ListView messageList;
-    private TextView title;
+    private ListView fileList;
+    private ListView taskList;
+    private MaterialToolbar projectToolbar;
     private TextView status;
+    private TextView currentPathText;
+    private TextView buildLogContent;
+    private ProgressBar buildProgress;
     private EditText promptInput;
+    private EditText promptEditorInput;
+    private View designInputBlock;
+    private View promptEditorPanel;
+    private View projectContent;
+    private View designPanel;
+    private View executePanel;
+    private View buildPanel;
+    private View fileBrowserPanel;
+    private TextView showFilesButton;
     private boolean buildLogVisible;
+    private boolean busy;
+    private boolean autoExecutingPlan;
+    private int selectedTab = -1;
+    private long activeTaskStartedAt;
+    private String statusSummary = "";
+    private String operationStatus = "";
     private BuildJobRecord latestJob;
+    private ProjectPlanRecord latestPlan;
+    private File sourceRoot;
+    private File currentSourceDir;
     private final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.getDefault());
+    private final SimpleDateFormat fileTimeFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault());
     private final Set<Long> autoRepairing = new HashSet<>();
+    private final Handler elapsedHandler = new Handler(Looper.getMainLooper());
+    private final Runnable elapsedTicker = new Runnable() {
+        @Override
+        public void run() {
+            refreshLiveState();
+            if (shouldTickElapsed()) {
+                elapsedHandler.postDelayed(this, 1000);
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);
         setContentView(R.layout.activity_project);
         applySystemBarPadding();
-        MaterialToolbar toolbar = findViewById(R.id.projectToolbar);
-        toolbar.setNavigationOnClickListener(v -> finish());
+        projectToolbar = findViewById(R.id.projectToolbar);
+        projectToolbar.setNavigationOnClickListener(v -> finish());
         repository = ((AndroidBuilderApp) getApplication()).repository();
         agentService = new AgentService(this, repository);
         projectId = getIntent().getLongExtra(MainActivity.EXTRA_PROJECT_ID, -1);
-        title = findViewById(R.id.projectTitle);
+        sourceRoot = repository.sourceDir(projectId);
+        currentSourceDir = sourceRoot;
         status = findViewById(R.id.statusText);
         promptInput = findViewById(R.id.promptInput);
+        promptEditorInput = findViewById(R.id.promptEditorInput);
+        designInputBlock = findViewById(R.id.designInputBlock);
+        promptEditorPanel = findViewById(R.id.promptEditorPanel);
+        projectContent = findViewById(R.id.projectContent);
+        designPanel = findViewById(R.id.designPanel);
+        executePanel = findViewById(R.id.executePanel);
+        buildPanel = findViewById(R.id.buildPanel);
+        fileBrowserPanel = findViewById(R.id.fileBrowserPanel);
+        showFilesButton = findViewById(R.id.showFilesButton);
+        currentPathText = findViewById(R.id.currentPathText);
+        buildLogContent = findViewById(R.id.buildLogContent);
+        buildProgress = findViewById(R.id.buildProgress);
+        if (status.getParent() instanceof View) {
+            ((View) status.getParent()).setVisibility(View.GONE);
+        }
+        promptInput.setFocusable(false);
+        promptInput.setFocusableInTouchMode(false);
+        promptInput.setCursorVisible(false);
+        promptInput.setOnClickListener(v -> showPromptEditor());
+        designInputBlock.setOnClickListener(v -> showPromptEditor());
         adapter = new MessageAdapter();
         messageList = findViewById(R.id.messageList);
         messageList.setAdapter(adapter);
@@ -76,10 +156,22 @@ public class ProjectActivity extends BaseActivity {
             showMessageActions(position);
             return true;
         });
-        findViewById(R.id.sendButton).setOnClickListener(v -> generate());
+        taskAdapter = new TaskAdapter();
+        taskList = findViewById(R.id.taskList);
+        taskList.setAdapter(taskAdapter);
+        fileAdapter = new FileAdapter();
+        fileList = findViewById(R.id.fileList);
+        fileList.setAdapter(fileAdapter);
+        fileList.setOnItemClickListener((parent, view, position, id) -> openFileItem(fileItems.get(position)));
+        setupTabs(savedInstanceState);
+        findViewById(R.id.sendButton).setOnClickListener(v -> generatePlan());
+        findViewById(R.id.promptEditorCancelButton).setOnClickListener(v -> hidePromptEditor(false));
+        findViewById(R.id.promptEditorSubmitButton).setOnClickListener(v -> submitPromptEditor());
+        showFilesButton.setOnClickListener(v -> toggleFileBrowser());
+        findViewById(R.id.executePlanButton).setOnClickListener(v -> executePlan());
         findViewById(R.id.buildButton).setOnClickListener(v -> buildLatest());
         findViewById(R.id.installButton).setOnClickListener(v -> installLatest());
-        findViewById(R.id.sourceFilesButton).setOnClickListener(v -> openSourceFiles());
+        findViewById(R.id.copyLogButton).setOnClickListener(v -> copyText(getString(R.string.build_log), latestJob == null ? "" : readBuildLogPreview(latestJob)));
         buildServer = new LocalBuildServer(repository, (p, j) -> runOnUiThread(() -> {
             refresh();
             maybeAutoRepair(j);
@@ -89,11 +181,21 @@ public class ProjectActivity extends BaseActivity {
         } catch (Exception error) {
             Toast.makeText(this, getString(R.string.local_server_failed, error.getMessage()), Toast.LENGTH_LONG).show();
         }
+        recoverInterruptedWorkIfNeeded();
         refresh();
         String initialPrompt = getIntent().getStringExtra(MainActivity.EXTRA_INITIAL_PROMPT);
         if (initialPrompt != null && repository.listMessages(projectId).isEmpty()) {
             promptInput.setText(initialPrompt);
-            generate();
+            generatePlan();
+        }
+    }
+
+    private void recoverInterruptedWorkIfNeeded() {
+        if (ActiveWorkRegistry.isActive(projectId)) {
+            return;
+        }
+        if (repository.recoverInterruptedWork(projectId, getString(R.string.interrupted_work_error))) {
+            repository.addMessage(projectId, "assistant", getString(R.string.interrupted_work_recovered), null);
         }
     }
 
@@ -103,6 +205,31 @@ public class ProjectActivity extends BaseActivity {
         if (buildServer != null) {
             buildServer.stop();
         }
+        clearKeepScreenOn();
+        elapsedHandler.removeCallbacks(elapsedTicker);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt(STATE_SELECTED_TAB, selectedTab);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (promptEditorPanel != null && promptEditorPanel.getVisibility() == View.VISIBLE) {
+            hidePromptEditor(true);
+            return;
+        }
+        if (executePanel != null && executePanel.getVisibility() == View.VISIBLE && fileBrowserPanel != null && fileBrowserPanel.getVisibility() == View.VISIBLE) {
+            if (currentSourceDir != null && !sameFile(currentSourceDir, sourceRoot)) {
+                loadSourceDirectory(currentSourceDir.getParentFile(), false);
+                return;
+            }
+            toggleFileBrowser();
+            return;
+        }
+        super.onBackPressed();
     }
 
     private void refresh() {
@@ -111,20 +238,140 @@ public class ProjectActivity extends BaseActivity {
             finish();
             return;
         }
-        title.setText(project.name);
+        projectToolbar.setTitle(project.name);
         latestJob = repository.latestBuildJob(projectId);
-        status.setText(project.packageName + " · " + project.lastBuildStatus + (latestJob == null ? "" : " · job #" + latestJob.id));
+        latestPlan = repository.latestProjectPlan(projectId);
+        updateStatusSummary(project);
         messages.clear();
         messages.addAll(repository.listMessages(projectId));
         adapter.notifyDataSetChanged();
-        if (!messages.isEmpty() || buildLogVisible) {
-            messageList.post(() -> messageList.setSelection(Math.max(adapter.getCount() - 1, 0)));
+        taskItems.clear();
+        taskItems.addAll(repository.listProjectTasks(projectId));
+        taskAdapter.notifyDataSetChanged();
+        loadSourceDirectory(currentSourceDir == null ? sourceRoot : currentSourceDir, false);
+        updateFileBrowserButton();
+        updateBuildLogPanel();
+        updateActionButtons();
+        updateKeepScreenOn();
+        if (!messages.isEmpty() || buildLogVisible || shouldShowOperationStatus()) {
+            scrollMessagesToBottom();
+        }
+        updateElapsedTicker();
+    }
+
+    private void refreshLiveState() {
+        ProjectRecord project = repository.getProject(projectId);
+        if (project == null || isFinishing()) {
+            return;
+        }
+        latestJob = repository.latestBuildJob(projectId);
+        latestPlan = repository.latestProjectPlan(projectId);
+        updateStatusSummary(project);
+
+        messages.clear();
+        messages.addAll(repository.listMessages(projectId));
+        if (adapter != null) {
+            adapter.notifyDataSetChanged();
+        }
+
+        List<ProjectTaskRecord> latestTasks = repository.listProjectTasks(projectId);
+        if (ProjectLiveState.tasksChanged(taskItems, latestTasks)) {
+            taskItems.clear();
+            taskItems.addAll(latestTasks);
+            if (taskAdapter != null) {
+                taskAdapter.notifyDataSetChanged();
+            }
+            scrollToCurrentTask();
+        } else if (taskAdapter != null) {
+            taskAdapter.notifyDataSetChanged();
+        }
+
+        updateBuildLogPanel();
+        updateActionButtons();
+        updateKeepScreenOn();
+        if (!shouldShowOperationStatus()) {
+            operationStatus = "";
+        }
+    }
+
+    private void updateStatusSummary(ProjectRecord project) {
+        String planStatus = latestPlan == null ? "idle" : latestPlan.status;
+        statusSummary = project.packageName + " · " + project.lastBuildStatus + " · " + getString(R.string.plan_status, planStatusText(planStatus)) + (latestJob == null ? "" : " · job #" + latestJob.id);
+        status.setText(statusSummary);
+    }
+
+    private void setupTabs(Bundle savedInstanceState) {
+        TabLayout tabs = findViewById(R.id.projectTabs);
+        tabs.addTab(tabs.newTab().setText(R.string.tab_design));
+        tabs.addTab(tabs.newTab().setText(R.string.tab_execute));
+        tabs.addTab(tabs.newTab().setText(R.string.tab_build));
+        tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
+            @Override
+            public void onTabSelected(TabLayout.Tab tab) {
+                showTab(tab.getPosition());
+            }
+
+            @Override public void onTabUnselected(TabLayout.Tab tab) {}
+            @Override public void onTabReselected(TabLayout.Tab tab) {}
+        });
+        int savedTab = savedInstanceState == null ? -1 : savedInstanceState.getInt(STATE_SELECTED_TAB, -1);
+        int initialTab = ProjectTabPolicy.initialTab(
+                savedTab,
+                repository.latestProjectPlan(projectId),
+                repository.listProjectTasks(projectId),
+                repository.latestBuildJob(projectId));
+        selectTab(initialTab);
+        showTab(initialTab);
+    }
+
+    private void showTab(int position) {
+        selectedTab = position;
+        designPanel.setVisibility(position == TAB_DESIGN ? View.VISIBLE : View.GONE);
+        executePanel.setVisibility(position == TAB_EXECUTE ? View.VISIBLE : View.GONE);
+        buildPanel.setVisibility(position == TAB_BUILD ? View.VISIBLE : View.GONE);
+        if (position == TAB_EXECUTE) {
+            taskItems.clear();
+            taskItems.addAll(repository.listProjectTasks(projectId));
+            taskAdapter.notifyDataSetChanged();
+            loadSourceDirectory(currentSourceDir == null ? sourceRoot : currentSourceDir, false);
+            updateFileBrowserButton();
+        } else if (position == TAB_BUILD) {
+            updateBuildLogPanel();
+        }
+    }
+
+    private void toggleFileBrowser() {
+        if (fileBrowserPanel == null) {
+            return;
+        }
+        boolean show = fileBrowserPanel.getVisibility() != View.VISIBLE;
+        fileBrowserPanel.setVisibility(show ? View.VISIBLE : View.GONE);
+        updateFileBrowserButton();
+    }
+
+    private void updateFileBrowserButton() {
+        if (showFilesButton == null || fileBrowserPanel == null) {
+            return;
+        }
+        showFilesButton.setText(fileBrowserPanel.getVisibility() == View.VISIBLE ? R.string.hide_source_files : R.string.show_source_files);
+    }
+
+    private void selectTab(int position) {
+        TabLayout tabs = findViewById(R.id.projectTabs);
+        TabLayout.Tab tab = tabs.getTabAt(position);
+        if (tab != null) {
+            tab.select();
         }
     }
 
     private void showMessageActions(int position) {
-        if (position < messages.size()) {
-            ChatMessage message = messages.get(position);
+        if (shouldShowOperationStatus() && position == messages.size()) {
+            copyText(getString(R.string.message), operationStatus);
+            return;
+        }
+        int messageIndex = position;
+        if (messageIndex >= 0 && messageIndex < messages.size()) {
+            ChatMessage message = messages.get(messageIndex);
             new MaterialAlertDialogBuilder(this)
                     .setItems(new CharSequence[]{getString(R.string.copy_message), getString(R.string.delete_message)}, (dialog, which) -> {
                         if (which == 0) {
@@ -138,7 +385,7 @@ public class ProjectActivity extends BaseActivity {
         }
         BuildJobRecord job = latestJob;
         if (job != null) {
-            copyText(getString(R.string.build_log), readBuildLogTail(job));
+            copyText(getString(R.string.build_log), readBuildLogPreview(job));
         }
     }
 
@@ -160,27 +407,79 @@ public class ProjectActivity extends BaseActivity {
         Toast.makeText(this, getString(R.string.copied, label), Toast.LENGTH_SHORT).show();
     }
 
-    private void generate() {
+    private void showPromptEditor() {
+        if (promptEditorPanel == null || promptEditorInput == null || projectContent == null) {
+            return;
+        }
+        promptEditorInput.setText(promptInput.getText());
+        promptEditorInput.setSelection(promptEditorInput.getText().length());
+        projectContent.setVisibility(View.GONE);
+        promptEditorPanel.setVisibility(View.VISIBLE);
+        promptEditorPanel.bringToFront();
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        promptEditorInput.requestFocus();
+        promptEditorInput.postDelayed(() -> {
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.showSoftInput(promptEditorInput, InputMethodManager.SHOW_IMPLICIT);
+            }
+        }, 150);
+    }
+
+    private void hidePromptEditor(boolean keepDraft) {
+        if (promptEditorPanel == null || promptEditorInput == null || projectContent == null) {
+            return;
+        }
+        if (keepDraft) {
+            promptInput.setText(promptEditorInput.getText());
+        }
+        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.hideSoftInputFromWindow(promptEditorInput.getWindowToken(), 0);
+        }
+        promptEditorInput.clearFocus();
+        promptEditorPanel.setVisibility(View.GONE);
+        projectContent.setVisibility(View.VISIBLE);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);
+    }
+
+    private void submitPromptEditor() {
+        if (promptEditorInput == null) {
+            return;
+        }
+        String text = promptEditorInput.getText().toString().trim();
+        if (text.isEmpty()) {
+            Toast.makeText(this, R.string.write_requirement_first, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        promptInput.setText(text);
+        hidePromptEditor(false);
+        generatePlan();
+    }
+
+    private void generatePlan() {
+        String prompt = promptInput.getText().toString().trim();
+        if (prompt.isEmpty()) {
+            showPromptEditor();
+            return;
+        }
         if (!new OpenAiClient(this).isConfigured()) {
             Toast.makeText(this, R.string.api_required_short, Toast.LENGTH_LONG).show();
             startActivity(new android.content.Intent(this, SettingsActivity.class));
             return;
         }
-        String prompt = promptInput.getText().toString().trim();
-        if (prompt.isEmpty()) {
-            Toast.makeText(this, R.string.write_requirement_first, Toast.LENGTH_SHORT).show();
-            return;
-        }
         promptInput.setText("");
         setBusy(true);
-        status.setText("Generating...");
-        agentService.generateAsync(projectId, prompt, new AgentService.Callback() {
+        setOperationStatus(getString(R.string.plan_generating));
+        adapter.notifyDataSetChanged();
+        agentService.planAsync(projectId, prompt, new AgentService.PlanCallback() {
             @Override
-            public void onComplete(BuildJobRecord job) {
+            public void onComplete(String plan) {
                 runOnUiThread(() -> {
                     setBusy(false);
                     refresh();
-                    Toast.makeText(ProjectActivity.this, R.string.source_generated, Toast.LENGTH_SHORT).show();
+                    selectTab(TAB_DESIGN);
+                    Toast.makeText(ProjectActivity.this, R.string.plan_generated, Toast.LENGTH_SHORT).show();
                 });
             }
 
@@ -188,7 +487,7 @@ public class ProjectActivity extends BaseActivity {
             public void onError(Exception error) {
                 runOnUiThread(() -> {
                     setBusy(false);
-                    repository.addMessage(projectId, "assistant", "生成失败：" + error.getMessage(), null);
+                    repository.addMessage(projectId, "assistant", getString(R.string.plan_failed, error.getMessage()), null);
                     refresh();
                     Toast.makeText(ProjectActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
                 });
@@ -196,9 +495,102 @@ public class ProjectActivity extends BaseActivity {
         });
     }
 
+    private void executePlan() {
+        latestPlan = repository.latestProjectPlan(projectId);
+        if (latestPlan == null || latestPlan.content.trim().isEmpty() || !"planned".equals(latestPlan.status)) {
+            Toast.makeText(this, R.string.plan_required, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!new OpenAiClient(this).isConfigured()) {
+            Toast.makeText(this, R.string.api_required_short, Toast.LENGTH_LONG).show();
+            startActivity(new android.content.Intent(this, SettingsActivity.class));
+            return;
+        }
+        setBusy(true);
+        setOperationStatus(getString(R.string.plan_executing));
+        adapter.notifyDataSetChanged();
+        autoExecutingPlan = true;
+        updateKeepScreenOn();
+        executePlanStep();
+    }
+
+    private void executePlanStep() {
+        activeTaskStartedAt = System.currentTimeMillis();
+        if (taskAdapter != null) {
+            taskAdapter.notifyDataSetChanged();
+        }
+        scrollToCurrentTask();
+        updateElapsedTicker();
+        agentService.executePlanAsync(projectId, new AgentService.Callback() {
+            @Override
+            public void onComplete(BuildJobRecord job) {
+                runOnUiThread(() -> {
+                    refresh();
+                    latestPlan = repository.latestProjectPlan(projectId);
+                    if (autoExecutingPlan && latestPlan != null && "planned".equals(latestPlan.status)) {
+                        executePlanStep();
+                    } else {
+                        autoExecutingPlan = false;
+                        setBusy(false);
+                        Toast.makeText(ProjectActivity.this, R.string.source_generated_from_plan, Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                runOnUiThread(() -> {
+                    autoExecutingPlan = false;
+                    setBusy(false);
+                    repository.addMessage(projectId, "assistant", getString(R.string.execute_plan_failed, error.getMessage()), null);
+                    refresh();
+                    Toast.makeText(ProjectActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void scrollToCurrentTask() {
+        if (taskList == null || taskItems.isEmpty()) {
+            return;
+        }
+        int index = currentTaskIndex();
+        if (index < 0) {
+            return;
+        }
+        taskList.postDelayed(() -> taskList.smoothScrollToPositionFromTop(index, dp(8)), 80);
+    }
+
+    private int currentTaskIndex() {
+        for (int i = 0; i < taskItems.size(); i++) {
+            String status = taskItems.get(i).status == null ? "pending" : taskItems.get(i).status;
+            if ("running".equals(status)) {
+                return i;
+            }
+        }
+        for (int i = 0; i < taskItems.size(); i++) {
+            String status = taskItems.get(i).status == null ? "pending" : taskItems.get(i).status;
+            if ("failed".equals(status)) {
+                return i;
+            }
+        }
+        for (int i = 0; i < taskItems.size(); i++) {
+            String status = taskItems.get(i).status == null ? "pending" : taskItems.get(i).status;
+            if ("pending".equals(status)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void buildLatest() {
+        latestPlan = repository.latestProjectPlan(projectId);
+        if (latestPlan == null || !"generated".equals(latestPlan.status)) {
+            Toast.makeText(this, R.string.execute_plan_first, Toast.LENGTH_SHORT).show();
+            return;
+        }
         BuildJobRecord job = repository.latestBuildJob(projectId);
-        if (job == null) {
+        if (job == null || job.logsPath == null) {
             Toast.makeText(this, R.string.generate_source_first, Toast.LENGTH_SHORT).show();
             return;
         }
@@ -208,8 +600,10 @@ public class ProjectActivity extends BaseActivity {
         }
         BuildBackend backend = BuildBackendFactory.create(this, repository, buildServer);
         buildLogVisible = true;
+        setOperationStatus(getString(BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started));
         String logsPath = resetBuildLog(job);
-        repository.updateBuildJob(job.id, "building", backend.id() + "_start", logsPath, null, null, job.retryCount);
+        autoRepairing.remove(job.id);
+        repository.updateBuildJob(job.id, "building", backend.id() + "_start", logsPath, null, null, BuildRepairPolicy.retryCountForManualBuild(job));
         BuildJobRecord buildJob = repository.getBuildJob(job.id);
         backend.build(buildJob == null ? job : buildJob, (p, j) -> runOnUiThread(() -> {
             refresh();
@@ -242,26 +636,136 @@ public class ProjectActivity extends BaseActivity {
         }
     }
 
-    private void openSourceFiles() {
-        File sourceDir = repository.sourceDir(projectId);
-        if (!sourceDir.exists()) {
-            Toast.makeText(this, R.string.no_source_files, Toast.LENGTH_SHORT).show();
+    private void loadSourceDirectory(File dir, boolean announceEmpty) {
+        if (sourceRoot == null || !sourceRoot.exists()) {
+            currentPathText.setText(R.string.no_source_files);
+            fileItems.clear();
+            fileAdapter.notifyDataSetChanged();
             return;
         }
-        Intent intent = new Intent(this, SourceFilesActivity.class);
-        intent.putExtra(MainActivity.EXTRA_PROJECT_ID, projectId);
-        startActivity(intent);
+        if (dir == null || !isInside(sourceRoot, dir)) {
+            dir = sourceRoot;
+        }
+        currentSourceDir = dir;
+        currentPathText.setText(relativeSourcePath(dir));
+        fileItems.clear();
+        if (!sameFile(dir, sourceRoot)) {
+            fileItems.add(FileItem.parent(dir.getParentFile()));
+        }
+        File[] children = dir.listFiles();
+        if (children != null) {
+            List<File> files = new ArrayList<>();
+            Collections.addAll(files, children);
+            files.sort(Comparator
+                    .comparing((File file) -> !file.isDirectory())
+                    .thenComparing(file -> file.getName().toLowerCase(Locale.ROOT)));
+            for (File file : files) {
+                fileItems.add(FileItem.file(file));
+            }
+        }
+        if (announceEmpty && fileItems.isEmpty()) {
+            Toast.makeText(this, R.string.empty_directory, Toast.LENGTH_SHORT).show();
+        }
+        fileAdapter.notifyDataSetChanged();
+    }
+
+    private void openFileItem(FileItem item) {
+        if (item.parent || item.file.isDirectory()) {
+            loadSourceDirectory(item.file, true);
+            return;
+        }
+        previewFile(item.file);
+    }
+
+    private void previewFile(File file) {
+        if (file.length() > MAX_PREVIEW_BYTES) {
+            Toast.makeText(this, R.string.file_too_large, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            String text = FileUtils.readText(file);
+            if (looksBinary(text)) {
+                Toast.makeText(this, R.string.binary_file, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            TextView preview = new TextView(this);
+            preview.setText(text);
+            preview.setTextColor(getResources().getColor(R.color.ink));
+            preview.setTextSize(13);
+            preview.setTypeface(android.graphics.Typeface.MONOSPACE);
+            preview.setPadding(24, 18, 24, 18);
+            preview.setMovementMethod(new ScrollingMovementMethod());
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(relativeSourcePath(file))
+                    .setView(preview)
+                    .setPositiveButton(R.string.close, null)
+                    .show();
+        } catch (Exception error) {
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private boolean looksBinary(String value) {
+        int sample = Math.min(value.length(), 2000);
+        for (int i = 0; i < sample; i++) {
+            if (value.charAt(i) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String relativeSourcePath(File file) {
+        if (sameFile(file, sourceRoot)) {
+            return "/";
+        }
+        String root = sourceRoot.getAbsolutePath();
+        String path = file.getAbsolutePath();
+        return path.startsWith(root) ? path.substring(root.length()) : path;
+    }
+
+    private boolean isInside(File root, File file) {
+        try {
+            String rootPath = root.getCanonicalPath();
+            String filePath = file.getCanonicalPath();
+            return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
+    private boolean sameFile(File left, File right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        try {
+            return left.getCanonicalPath().equals(right.getCanonicalPath());
+        } catch (Exception error) {
+            return left.equals(right);
+        }
     }
 
     private void maybeAutoRepair(long failedJobId) {
         BuildJobRecord failed = repository.getBuildJob(failedJobId);
-        if (failed == null || !"failed".equals(failed.status) || failed.retryCount >= 3 || autoRepairing.contains(failedJobId)) {
+        if (failed == null || !"failed".equals(failed.status)) {
             return;
         }
-        if (!isRepairableFailure(failed)) {
+        if (BuildRepairPolicy.reachedAutoRepairLimit(failed)) {
+            if (!autoRepairing.contains(failedJobId)) {
+                autoRepairing.add(failedJobId);
+                repository.addMessage(projectId, "assistant", "自动修复已达到 3 次上限。你可以点击重新构建来开始新一轮自动修复。", failedJobId);
+                refresh();
+            }
+            return;
+        }
+        boolean repairable = isRepairableFailure(failed);
+        if (!repairable && !autoRepairing.contains(failedJobId)) {
             autoRepairing.add(failedJobId);
             repository.addMessage(projectId, "assistant", "构建失败，但这类错误需要先修复本机运行环境或构建后端配置，不自动重试。", failedJobId);
             refresh();
+            return;
+        }
+        if (!BuildRepairPolicy.canAutoRepair(failed, autoRepairing.contains(failedJobId), repairable)) {
             return;
         }
         autoRepairing.add(failedJobId);
@@ -269,19 +773,16 @@ public class ProjectActivity extends BaseActivity {
         if (failed.logsPath != null) {
             try {
                 logs = FileUtils.readText(new File(failed.logsPath));
-                if (logs.length() > 7000) {
-                    logs = logs.substring(logs.length() - 7000);
-                }
+                logs = buildFailureContext(logs);
             } catch (Exception ignored) {
             }
         }
-        String prompt = "Fix the Android build failure and regenerate the project. Build log:\n" + logs;
-        repository.addMessage(projectId, "assistant", "构建失败，开始自动修复第 " + (failed.retryCount + 1) + "/3 次。", failedJobId);
-        agentService.generateRepairAsync(projectId, prompt, new AgentService.Callback() {
+        repository.addMessage(projectId, "assistant", "构建失败，开始自动修复第 " + BuildRepairPolicy.nextRetryCount(failed) + "/3 次。", failedJobId);
+        agentService.repairBuildAsync(projectId, logs, new AgentService.Callback() {
             @Override
             public void onComplete(BuildJobRecord job) {
                 runOnUiThread(() -> {
-                    repository.updateBuildJob(job.id, job.status, job.phase, job.logsPath, job.apkPath, job.errorSummary, failed.retryCount + 1);
+                    repository.updateBuildJob(job.id, job.status, job.phase, job.logsPath, job.apkPath, job.errorSummary, BuildRepairPolicy.nextRetryCount(failed));
                     BuildJobRecord retryJob = repository.getBuildJob(job.id);
                     refresh();
                     BuildBackend backend = BuildBackendFactory.create(ProjectActivity.this, repository, buildServer);
@@ -303,61 +804,389 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private boolean isRepairableFailure(BuildJobRecord failed) {
-        String phase = failed.phase == null ? "" : failed.phase;
         String error = failed.errorSummary == null ? "" : failed.errorSummary;
-        if (phase.contains("missing_tools") || phase.contains("termux") || phase.contains("runtime_error")) {
-            return false;
-        }
-        return !error.contains("toolchain is incomplete") &&
-                !error.contains("No such file") &&
-                !error.contains("Permission denied") &&
-                !error.contains("Cannot run program");
+        BuildFailureClassifier.Result result = BuildFailureClassifier.classify(failed.phase, error);
+        return result.repairableByModel;
     }
 
     private void setBusy(boolean busy) {
-        findViewById(R.id.sendButton).setEnabled(!busy);
-        findViewById(R.id.buildButton).setEnabled(!busy);
-        findViewById(R.id.installButton).setEnabled(!busy);
+        this.busy = busy;
+        if (!busy) {
+            activeTaskStartedAt = 0;
+        }
+        updateActionButtons();
+        if (taskAdapter != null) {
+            taskAdapter.notifyDataSetChanged();
+        }
+        updateKeepScreenOn();
+        updateElapsedTicker();
+    }
+
+    private void setOperationStatus(String value) {
+        operationStatus = value == null ? "" : value.trim();
+        if (status != null) {
+            status.setText(operationStatus);
+        }
+        if (adapter != null) {
+            adapter.notifyDataSetChanged();
+        }
+        if (shouldShowOperationStatus()) {
+            scrollMessagesToBottom();
+        }
+    }
+
+    private boolean shouldShowOperationStatus() {
+        return ProjectOperationStatus.shouldShow(operationStatus, busy, autoExecutingPlan, latestJob);
+    }
+
+    private void updateKeepScreenOn() {
+        boolean keepScreenOn = WorkAwakePolicy.shouldKeepScreenOn(busy, autoExecutingPlan, taskItems, latestJob);
+        if (keepScreenOn) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+        View decorView = getWindow().getDecorView();
+        if (decorView != null) {
+            decorView.setKeepScreenOn(keepScreenOn);
+        }
+        if (projectContent != null) {
+            projectContent.setKeepScreenOn(keepScreenOn);
+        }
+    }
+
+    private void clearKeepScreenOn() {
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        View decorView = getWindow().getDecorView();
+        if (decorView != null) {
+            decorView.setKeepScreenOn(false);
+        }
+        if (projectContent != null) {
+            projectContent.setKeepScreenOn(false);
+        }
+    }
+
+    private boolean shouldTickElapsed() {
+        if (busy || autoExecutingPlan) {
+            return true;
+        }
+        for (ProjectTaskRecord task : taskItems) {
+            if ("running".equals(task.status)) {
+                return true;
+            }
+        }
+        for (ChatMessage message : messages) {
+            if (message.linkedBuildJobId != null) {
+                BuildJobRecord job = repository.getBuildJob(message.linkedBuildJobId);
+                if (job != null && isRunningJob(job)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void updateElapsedTicker() {
+        elapsedHandler.removeCallbacks(elapsedTicker);
+        if (shouldTickElapsed()) {
+            elapsedHandler.postDelayed(elapsedTicker, 1000);
+        }
+    }
+
+    private void updateActionButtons() {
+        View sendButton = findViewById(R.id.sendButton);
+        View executePlanButton = findViewById(R.id.executePlanButton);
+        View buildButton = findViewById(R.id.buildButton);
+        View installButton = findViewById(R.id.installButton);
+        View copyLogButton = findViewById(R.id.copyLogButton);
+        boolean canExecutePlan = latestPlan != null && "planned".equals(latestPlan.status) && !latestPlan.content.trim().isEmpty();
+        sendButton.setEnabled(!busy);
+        executePlanButton.setEnabled(!busy && canExecutePlan);
+        buildButton.setEnabled(!busy && latestPlan != null && "generated".equals(latestPlan.status) && latestJob != null && latestJob.logsPath != null);
+        if (buildButton instanceof TextView) {
+            ((TextView) buildButton).setText(latestJob != null && "failed".equals(latestJob.status) ? R.string.rebuild : R.string.build);
+        }
+        installButton.setEnabled(!busy && latestJob != null && latestJob.apkPath != null);
+        copyLogButton.setEnabled(latestJob != null && latestJob.logsPath != null);
+    }
+
+    private void scrollMessagesToBottom() {
+        if (messageList == null || adapter == null) {
+            return;
+        }
+        messageList.postDelayed(() -> messageList.setSelection(Math.max(adapter.getCount() - 1, 0)), 120);
+    }
+
+    private void updateBuildLogPanel() {
+        boolean running = latestJob != null && ("building".equals(latestJob.status) || "queued".equals(latestJob.status));
+        buildProgress.setVisibility(running ? View.VISIBLE : View.GONE);
+        buildLogContent.setText(latestJob == null || latestJob.logsPath == null ? getString(R.string.no_build_log) : readBuildLogPreview(latestJob));
+    }
+
+    private String planStatusText(String value) {
+        boolean chinese = AppSettings.isChinese(this);
+        if ("planning".equals(value)) {
+            return chinese ? "规划中" : "planning";
+        }
+        if ("planned".equals(value)) {
+            return chinese ? "待执行" : "planned";
+        }
+        if ("coding".equals(value)) {
+            return chinese ? "编码中" : "coding";
+        }
+        if ("generated".equals(value)) {
+            return chinese ? "已生成" : "generated";
+        }
+        return chinese ? "待规划" : "idle";
+    }
+
+    private boolean isRunningJob(BuildJobRecord job) {
+        if (job == null || job.status == null) {
+            return false;
+        }
+        return "queued".equals(job.status) || "generating".equals(job.status) || "building".equals(job.status);
+    }
+
+    private String formatDuration(long millis) {
+        long totalSeconds = Math.max(0, millis / 1000);
+        long minutes = totalSeconds / 60;
+        long seconds = totalSeconds % 60;
+        if (minutes <= 0) {
+            return seconds + "s";
+        }
+        return minutes + "m " + seconds + "s";
+    }
+
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density);
     }
 
     private class MessageAdapter extends BaseAdapter {
         private static final int TYPE_MESSAGE = 0;
-        private static final int TYPE_BUILD = 1;
+        private static final int TYPE_STATUS = 1;
 
-        @Override public int getCount() { return messages.size() + (showBuildMessage() ? 1 : 0); }
-        @Override public Object getItem(int position) { return position < messages.size() ? messages.get(position) : latestJob; }
-        @Override public long getItemId(int position) { return position < messages.size() ? messages.get(position).id : -latestJob.id; }
+        @Override public int getCount() { return messages.size() + (shouldShowOperationStatus() ? 1 : 0); }
+        @Override public Object getItem(int position) { return isStatusPosition(position) ? operationStatus : messages.get(position); }
+        @Override public long getItemId(int position) { return isStatusPosition(position) ? -1 : messages.get(position).id; }
         @Override public int getViewTypeCount() { return 2; }
-        @Override public int getItemViewType(int position) { return position < messages.size() ? TYPE_MESSAGE : TYPE_BUILD; }
+        @Override public int getItemViewType(int position) { return isStatusPosition(position) ? TYPE_STATUS : TYPE_MESSAGE; }
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
-            if (getItemViewType(position) == TYPE_BUILD) {
-                View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_build_message, parent, false) : convertView;
-                bindBuildMessage(view);
+            if (isStatusPosition(position)) {
+                View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_operation_status, parent, false) : convertView;
+                ((TextView) view.findViewById(R.id.operationStatusContent)).setText(operationStatus);
                 return view;
             }
             View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_message, parent, false) : convertView;
             ChatMessage message = messages.get(position);
             ((TextView) view.findViewById(R.id.messageRole)).setText(message.role.toUpperCase());
-            ((TextView) view.findViewById(R.id.messageTime)).setText(timeFormat.format(new Date(message.createdAt)));
+            ((TextView) view.findViewById(R.id.messageTime)).setText(messageTimeText(message));
             ((TextView) view.findViewById(R.id.messageContent)).setText(message.content);
             return view;
         }
 
-        private boolean showBuildMessage() {
-            return buildLogVisible && latestJob != null && latestJob.logsPath != null;
+        private boolean isStatusPosition(int position) {
+            return shouldShowOperationStatus() && position == messages.size();
         }
 
-        private void bindBuildMessage(View view) {
-            boolean running = "building".equals(latestJob.status) || "queued".equals(latestJob.status);
-            ((ProgressBar) view.findViewById(R.id.buildProgress)).setVisibility(running ? View.VISIBLE : View.GONE);
-            ((TextView) view.findViewById(R.id.buildTime)).setText(timeFormat.format(new Date(latestJob.createdAt)));
-            ((TextView) view.findViewById(R.id.buildContent)).setText(readBuildLogTail(latestJob));
+        private String messageTimeText(ChatMessage message) {
+            String time = timeFormat.format(new Date(message.createdAt));
+            if (message.linkedBuildJobId == null) {
+                return time;
+            }
+            BuildJobRecord job = repository.getBuildJob(message.linkedBuildJobId);
+            if (job == null) {
+                return time;
+            }
+            long end = isRunningJob(job) ? System.currentTimeMillis() : Math.max(job.updatedAt, job.createdAt);
+            return time + " · " + getString(R.string.elapsed_time, formatDuration(Math.max(0, end - job.createdAt)));
         }
     }
 
-    private String readBuildLogTail(BuildJobRecord job) {
+    private class TaskAdapter extends BaseAdapter {
+        @Override public int getCount() { return Math.max(taskItems.size(), 1); }
+        @Override public Object getItem(int position) { return taskItems.isEmpty() ? null : taskItems.get(position); }
+        @Override public long getItemId(int position) { return taskItems.isEmpty() ? 0 : taskItems.get(position).id; }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_project_task, parent, false) : convertView;
+            TextView icon = view.findViewById(R.id.taskStatusIcon);
+            TextView title = view.findViewById(R.id.taskTitle);
+            TextView steps = view.findViewById(R.id.taskSteps);
+            TextView status = view.findViewById(R.id.taskStatus);
+            TextView log = view.findViewById(R.id.taskLog);
+            View copyLog = view.findViewById(R.id.taskCopyLog);
+            copyLog.setVisibility(View.GONE);
+            copyLog.setOnClickListener(null);
+            if (taskItems.isEmpty()) {
+                icon.setText("-");
+                title.setText(R.string.no_plan_tasks);
+                steps.setVisibility(View.GONE);
+                status.setText("");
+                log.setVisibility(View.GONE);
+                return view;
+            }
+            ProjectTaskRecord task = taskItems.get(position);
+            title.setText((task.sortOrder + 1) + ". " + task.title);
+            setTaskSteps(steps, task.instruction);
+            String taskStatus = task.status == null ? "pending" : task.status;
+            if (TaskRunningDisplayPolicy.shouldShowPredictedRunning(busy, position, taskStatus, taskItems)) {
+                icon.setText("...");
+                long startedAt = activeTaskStartedAt > 0 ? activeTaskStartedAt : System.currentTimeMillis();
+                status.setText(getString(R.string.task_running) + " · " + getString(R.string.elapsed_time, formatDuration(System.currentTimeMillis() - startedAt)));
+                setTaskLog(log, getString(R.string.task_running_log));
+                return view;
+            }
+            if ("done".equals(taskStatus)) {
+                icon.setText("✓");
+                status.setText(getString(R.string.task_done) + taskDurationSuffix(task));
+                setTaskLog(log, task.resultSummary);
+            } else if ("running".equals(taskStatus)) {
+                icon.setText("...");
+                status.setText(getString(R.string.task_running) + taskDurationSuffix(task));
+                setTaskLog(log, task.resultSummary == null || task.resultSummary.trim().isEmpty() ? getString(R.string.task_running_log) : task.resultSummary);
+            } else if ("failed".equals(taskStatus)) {
+                icon.setText("!");
+                status.setText(getString(R.string.task_failed) + taskDurationSuffix(task));
+                setTaskLog(log, task.resultSummary);
+                configureTaskLogCopy(copyLog, task.resultSummary);
+            } else {
+                icon.setText(String.valueOf(task.sortOrder + 1));
+                status.setText(R.string.task_pending);
+                log.setVisibility(View.GONE);
+            }
+            return view;
+        }
+
+        private String taskDurationSuffix(ProjectTaskRecord task) {
+            if (task.startedAt <= 0) {
+                return "";
+            }
+            long end = "running".equals(task.status) || task.completedAt <= 0 ? System.currentTimeMillis() : task.completedAt;
+            return " · " + getString(R.string.elapsed_time, formatDuration(Math.max(0, end - task.startedAt)));
+        }
+
+        private void setTaskLog(TextView log, String value) {
+            String text = value == null ? "" : value.trim();
+            if (text.isEmpty()) {
+                log.setVisibility(View.GONE);
+            } else {
+                log.setText(text);
+                log.setVisibility(View.VISIBLE);
+            }
+        }
+
+        private void setTaskSteps(TextView steps, String instruction) {
+            String text = taskStepsText(instruction);
+            if (text.isEmpty()) {
+                steps.setVisibility(View.GONE);
+                return;
+            }
+            steps.setText(text);
+            steps.setVisibility(View.VISIBLE);
+        }
+
+        private String taskStepsText(String instruction) {
+            String raw = instruction == null ? "" : instruction.trim().replace("\r", "");
+            if (raw.isEmpty()) {
+                return "";
+            }
+            List<String> parts = new ArrayList<>();
+            for (String line : raw.split("\n")) {
+                addTaskStep(parts, line);
+            }
+            if (parts.size() <= 1) {
+                parts.clear();
+                for (String part : raw.split("[。；;]\\s*")) {
+                    addTaskStep(parts, part);
+                }
+            }
+            if (parts.isEmpty()) {
+                return "";
+            }
+            StringBuilder text = new StringBuilder(getString(R.string.task_substeps)).append(":\n");
+            int count = Math.min(parts.size(), 6);
+            for (int i = 0; i < count; i++) {
+                text.append("• ").append(parts.get(i)).append("\n");
+            }
+            if (parts.size() > count) {
+                text.append("• ...");
+            }
+            return text.toString().trim();
+        }
+
+        private void addTaskStep(List<String> parts, String value) {
+            String text = value == null ? "" : value.trim()
+                    .replaceFirst("^(?:[-*•]+|\\d+[.)、])\\s*", "")
+                    .replaceFirst("^(Instruction|步骤|子步骤)[:：]\\s*", "")
+                    .trim();
+            if (text.isEmpty()) {
+                return;
+            }
+            if (text.length() > 180) {
+                text = text.substring(0, 180).trim() + "...";
+            }
+            parts.add(text);
+        }
+
+        private void configureTaskLogCopy(View copyLog, String value) {
+            String text = value == null ? "" : value.trim();
+            if (text.isEmpty()) {
+                copyLog.setVisibility(View.GONE);
+                copyLog.setOnClickListener(null);
+                return;
+            }
+            copyLog.setVisibility(View.VISIBLE);
+            copyLog.setOnClickListener(v -> copyText(getString(R.string.copy_log), text));
+        }
+    }
+
+    private class FileAdapter extends BaseAdapter {
+        @Override public int getCount() { return fileItems.size(); }
+        @Override public Object getItem(int position) { return fileItems.get(position); }
+        @Override public long getItemId(int position) { return position; }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_file, parent, false) : convertView;
+            FileItem item = fileItems.get(position);
+            ((TextView) view.findViewById(R.id.fileIcon)).setText(item.parent ? ".." : item.file.isDirectory() ? "/" : "{}");
+            ((TextView) view.findViewById(R.id.fileName)).setText(item.parent ? getString(R.string.parent_directory) : item.file.getName());
+            ((TextView) view.findViewById(R.id.fileMeta)).setText(item.parent ? relativeSourcePath(item.file) : fileMeta(item.file));
+            return view;
+        }
+
+        private String fileMeta(File file) {
+            String updated = getString(R.string.updated_at, fileTimeFormat.format(new Date(file.lastModified())));
+            if (file.isDirectory()) {
+                File[] children = file.listFiles();
+                return getString(R.string.file_items, children == null ? 0 : children.length) + " · " + updated;
+            }
+            return file.length() + " bytes · " + updated;
+        }
+    }
+
+    private static class FileItem {
+        final File file;
+        final boolean parent;
+
+        private FileItem(File file, boolean parent) {
+            this.file = file;
+            this.parent = parent;
+        }
+
+        static FileItem file(File file) {
+            return new FileItem(file, false);
+        }
+
+        static FileItem parent(File file) {
+            return new FileItem(file, true);
+        }
+    }
+
+    private String readBuildLogPreview(BuildJobRecord job) {
         String logs = "";
         try {
             logs = FileUtils.readText(new File(job.logsPath));
@@ -366,6 +1195,67 @@ public class ProjectActivity extends BaseActivity {
         if (logs.trim().isEmpty()) {
             return getString(R.string.build_waiting);
         }
-        return logs.length() > 5000 ? logs.substring(logs.length() - 5000) : logs;
+        if (logs.length() <= 5000) {
+            return logs;
+        }
+        return buildFailureContext(logs);
+    }
+
+    private String buildFailureContext(String logs) {
+        if (logs == null || logs.trim().isEmpty()) {
+            return "";
+        }
+        if (logs.length() <= BUILD_LOG_INLINE_LIMIT) {
+            return logs;
+        }
+        StringBuilder result = new StringBuilder();
+        appendSnippet(result, "First log", logs, 0, Math.min(1600, logs.length()));
+        int[] anchors = failureAnchors(logs);
+        for (int anchor : anchors) {
+            if (anchor >= 0) {
+                appendSnippet(result, "Failure context", logs,
+                        Math.max(0, anchor - BUILD_LOG_CONTEXT_RADIUS),
+                        Math.min(logs.length(), anchor + BUILD_LOG_CONTEXT_RADIUS));
+            }
+        }
+        appendSnippet(result, "Last log", logs, Math.max(0, logs.length() - 3500), logs.length());
+        String text = result.toString().trim();
+        if (text.length() > 14000) {
+            return text.substring(0, 14000).trim() + "\n\n...[truncated]";
+        }
+        return text;
+    }
+
+    private int[] failureAnchors(String logs) {
+        return new int[]{
+                indexOfAny(logs, "Android resource linking failed", "error: resource", "error: failed linking", "AAPT: error"),
+                indexOfAny(logs, "Namespace not specified", "Manifest merger failed", "package=\"", "> Task :app:processDebugResources FAILED", "Execution failed for task ':app:processDebugResources'", "* What went wrong:"),
+                indexOfAny(logs, "BUILD FAILED", "Caused by:")
+        };
+    }
+
+    private int indexOfAny(String text, String... needles) {
+        int best = -1;
+        for (String needle : needles) {
+            int index = text.indexOf(needle);
+            if (index >= 0 && (best < 0 || index < best)) {
+                best = index;
+            }
+        }
+        return best;
+    }
+
+    private void appendSnippet(StringBuilder result, String label, String text, int start, int end) {
+        if (start >= end) {
+            return;
+        }
+        String snippet = text.substring(start, end).trim();
+        if (snippet.isEmpty() || result.indexOf(snippet) >= 0) {
+            return;
+        }
+        if (result.length() > 0) {
+            result.append("\n\n...\n\n");
+        }
+        result.append(label).append(":\n").append(snippet);
     }
 }

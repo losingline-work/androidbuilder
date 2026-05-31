@@ -10,8 +10,9 @@ public class BuildJobRecord {
     public String errorSummary;
     public int retryCount;
     public long createdAt;
+    public long updatedAt;
 
-    public BuildJobRecord(long id, long projectId, String status, String phase, String logsPath, String apkPath, String errorSummary, int retryCount, long createdAt) {
+    public BuildJobRecord(long id, long projectId, String status, String phase, String logsPath, String apkPath, String errorSummary, int retryCount, long createdAt, long updatedAt) {
         this.id = id;
         this.projectId = projectId;
         this.status = status;
@@ -21,5 +22,6 @@ public class BuildJobRecord {
         this.errorSummary = errorSummary;
         this.retryCount = retryCount;
         this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
     }
 }

@@ -16,8 +16,7 @@ public class GeneratedProjectWriter {
         FileUtils.writeText(new File(sourceDir, "gradle.properties"),
                 "android.useAndroidX=false\n" +
                 "org.gradle.daemon=false\n" +
-                "org.gradle.workers.max=1\n" +
-                "kotlin.compiler.execution.strategy=in-process\n");
+                "org.gradle.workers.max=1\n");
         FileUtils.writeText(new File(sourceDir, "app/build.gradle"), appBuild(spec));
         FileUtils.writeText(new File(sourceDir, "app/src/main/AndroidManifest.xml"), manifest(spec));
         FileUtils.writeText(new File(sourceDir, "app/src/main/res/values/strings.xml"), strings(spec));
@@ -26,9 +25,9 @@ public class GeneratedProjectWriter {
         FileUtils.writeText(new File(sourceDir, "app/src/main/res/layout/activity_main.xml"), mainLayout(spec));
         FileUtils.writeText(new File(sourceDir, "app/src/main/res/layout/activity_edit_item.xml"), editLayout(spec));
         FileUtils.writeText(new File(sourceDir, "app/src/main/res/layout/row_item.xml"), rowLayout());
-        FileUtils.writeText(new File(sourceDir, "app/src/main/java/" + packagePath + "/ItemDbHelper.kt"), dbHelper(spec));
-        FileUtils.writeText(new File(sourceDir, "app/src/main/java/" + packagePath + "/MainActivity.kt"), mainActivity(spec));
-        FileUtils.writeText(new File(sourceDir, "app/src/main/java/" + packagePath + "/EditItemActivity.kt"), editActivity(spec));
+        FileUtils.writeText(new File(sourceDir, "app/src/main/java/" + packagePath + "/ItemDbHelper.java"), dbHelper(spec));
+        FileUtils.writeText(new File(sourceDir, "app/src/main/java/" + packagePath + "/MainActivity.java"), mainActivity(spec));
+        FileUtils.writeText(new File(sourceDir, "app/src/main/java/" + packagePath + "/EditItemActivity.java"), editActivity(spec));
         FileUtils.writeText(new File(sourceDir, "README.md"), "# " + spec.appName + "\n\n" + spec.description + "\n");
     }
 
@@ -42,17 +41,16 @@ public class GeneratedProjectWriter {
     private String rootBuild() {
         return "plugins {\n" +
                 "    id 'com.android.application' version '8.7.3' apply false\n" +
-                "    id 'org.jetbrains.kotlin.android' version '2.0.21' apply false\n" +
                 "}\n";
     }
 
     private String appBuild(AppSpec spec) {
         return "plugins {\n" +
                 "    id 'com.android.application'\n" +
-                "    id 'org.jetbrains.kotlin.android'\n" +
                 "}\n\n" +
                 "android { namespace '" + spec.packageName + "'; compileSdk 34\n" +
                 "    defaultConfig { applicationId '" + spec.packageName + "'; minSdk 31; targetSdk 34; versionCode 1; versionName '1.0' }\n" +
+                "    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }\n" +
                 "}\n";
     }
 
@@ -232,56 +230,77 @@ public class GeneratedProjectWriter {
 
     private String dbHelper(AppSpec spec) {
         return """
-                package %s
+                package %s;
 
-                import android.content.ContentValues
-                import android.content.Context
-                import android.database.sqlite.SQLiteDatabase
-                import android.database.sqlite.SQLiteOpenHelper
+                import android.content.ContentValues;
+                import android.content.Context;
+                import android.database.Cursor;
+                import android.database.sqlite.SQLiteDatabase;
+                import android.database.sqlite.SQLiteOpenHelper;
 
-                data class Item(val id: Long, val title: String, val notes: String)
+                import java.util.ArrayList;
+                import java.util.List;
 
-                class ItemDbHelper(context: Context) : SQLiteOpenHelper(context, "items.db", null, 1) {
-                    override fun onCreate(db: SQLiteDatabase) {
-                        db.execSQL("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, notes TEXT NOT NULL)")
+                public class ItemDbHelper extends SQLiteOpenHelper {
+                    public static class Item {
+                        public final long id;
+                        public final String title;
+                        public final String notes;
+
+                        public Item(long id, String title, String notes) {
+                            this.id = id;
+                            this.title = title;
+                            this.notes = notes;
+                        }
                     }
 
-                    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                        db.execSQL("DROP TABLE IF EXISTS items")
-                        onCreate(db)
+                    public ItemDbHelper(Context context) {
+                        super(context, "items.db", null, 1);
                     }
 
-                    fun all(): List<Item> {
-                        val rows = mutableListOf<Item>()
-                        readableDatabase.query("items", null, null, null, null, null, "id DESC").use { cursor ->
+                    @Override
+                    public void onCreate(SQLiteDatabase db) {
+                        db.execSQL("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, notes TEXT NOT NULL)");
+                    }
+
+                    @Override
+                    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+                        db.execSQL("DROP TABLE IF EXISTS items");
+                        onCreate(db);
+                    }
+
+                    public List<Item> all() {
+                        List<Item> rows = new ArrayList<>();
+                        try (Cursor cursor = getReadableDatabase().query("items", null, null, null, null, null, "id DESC")) {
                             while (cursor.moveToNext()) {
-                                rows.add(Item(cursor.getLong(0), cursor.getString(1), cursor.getString(2)))
+                                rows.add(new Item(cursor.getLong(0), cursor.getString(1), cursor.getString(2)));
                             }
                         }
-                        return rows
+                        return rows;
                     }
 
-                    fun get(id: Long): Item? {
-                        readableDatabase.query("items", null, "id = ?", arrayOf(id.toString()), null, null, null).use { cursor ->
-                            return if (cursor.moveToFirst()) Item(cursor.getLong(0), cursor.getString(1), cursor.getString(2)) else null
+                    public Item get(long id) {
+                        try (Cursor cursor = getReadableDatabase().query("items", null, "id = ?", new String[]{String.valueOf(id)}, null, null, null)) {
+                            return cursor.moveToFirst()
+                                    ? new Item(cursor.getLong(0), cursor.getString(1), cursor.getString(2))
+                                    : null;
                         }
                     }
 
-                    fun save(id: Long?, title: String, notes: String): Long {
-                        val values = ContentValues().apply {
-                            put("title", title)
-                            put("notes", notes)
-                        }
-                        return if (id == null) {
-                            writableDatabase.insertOrThrow("items", null, values)
+                    public long save(Long id, String title, String notes) {
+                        ContentValues values = new ContentValues();
+                        values.put("title", title);
+                        values.put("notes", notes);
+                        if (id == null) {
+                            return getWritableDatabase().insertOrThrow("items", null, values);
                         } else {
-                            writableDatabase.update("items", values, "id = ?", arrayOf(id.toString()))
-                            id
+                            getWritableDatabase().update("items", values, "id = ?", new String[]{String.valueOf(id)});
+                            return id;
                         }
                     }
 
-                    fun delete(id: Long) {
-                        writableDatabase.delete("items", "id = ?", arrayOf(id.toString()))
+                    public void delete(long id) {
+                        getWritableDatabase().delete("items", "id = ?", new String[]{String.valueOf(id)});
                     }
                 }
                 """.replace("%s", spec.packageName);
@@ -289,60 +308,67 @@ public class GeneratedProjectWriter {
 
     private String mainActivity(AppSpec spec) {
         return """
-                package %s
+                package %s;
 
-                import android.app.Activity
-                import android.content.Intent
-                import android.os.Bundle
-                import android.view.View
-                import android.view.ViewGroup
-                import android.widget.BaseAdapter
-                import android.widget.Button
-                import android.widget.ListView
-                import android.widget.TextView
+                import android.app.Activity;
+                import android.content.Intent;
+                import android.os.Bundle;
+                import android.view.View;
+                import android.view.ViewGroup;
+                import android.widget.BaseAdapter;
+                import android.widget.Button;
+                import android.widget.ListView;
+                import android.widget.TextView;
 
-                class MainActivity : Activity() {
-                    private lateinit var db: ItemDbHelper
-                    private lateinit var adapter: ItemAdapter
-                    private var items: List<Item> = emptyList()
+                import java.util.ArrayList;
+                import java.util.List;
 
-                    override fun onCreate(savedInstanceState: Bundle?) {
-                        super.onCreate(savedInstanceState)
-                        setContentView(R.layout.activity_main)
-                        db = ItemDbHelper(this)
-                        adapter = ItemAdapter()
-                        val list = findViewById<ListView>(R.id.list)
-                        list.adapter = adapter
-                        list.setOnItemClickListener { _, _, position, _ ->
-                            startActivity(Intent(this, EditItemActivity::class.java).putExtra("id", items[position].id))
-                        }
-                        findViewById<Button>(R.id.addButton).setOnClickListener {
-                            startActivity(Intent(this, EditItemActivity::class.java))
-                        }
+                public class MainActivity extends Activity {
+                    private ItemDbHelper db;
+                    private ItemAdapter adapter;
+                    private List<ItemDbHelper.Item> items = new ArrayList<>();
+
+                    @Override
+                    protected void onCreate(Bundle savedInstanceState) {
+                        super.onCreate(savedInstanceState);
+                        setContentView(R.layout.activity_main);
+                        db = new ItemDbHelper(this);
+                        adapter = new ItemAdapter();
+                        ListView list = findViewById(R.id.list);
+                        list.setAdapter(adapter);
+                        list.setOnItemClickListener((parent, view, position, id) ->
+                                startActivity(new Intent(this, EditItemActivity.class).putExtra("id", items.get(position).id)));
+                        Button addButton = findViewById(R.id.addButton);
+                        addButton.setOnClickListener(v -> startActivity(new Intent(this, EditItemActivity.class)));
                     }
 
-                    override fun onResume() {
-                        super.onResume()
-                        load()
+                    @Override
+                    protected void onResume() {
+                        super.onResume();
+                        load();
                     }
 
-                    private fun load() {
-                        items = db.all()
-                        findViewById<TextView>(R.id.empty).visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
-                        adapter.notifyDataSetChanged()
+                    private void load() {
+                        items = db.all();
+                        TextView empty = findViewById(R.id.empty);
+                        empty.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
+                        adapter.notifyDataSetChanged();
                     }
 
-                    inner class ItemAdapter : BaseAdapter() {
-                        override fun getCount() = items.size
-                        override fun getItem(position: Int) = items[position]
-                        override fun getItemId(position: Int) = items[position].id
+                    private class ItemAdapter extends BaseAdapter {
+                        @Override public int getCount() { return items.size(); }
+                        @Override public Object getItem(int position) { return items.get(position); }
+                        @Override public long getItemId(int position) { return items.get(position).id; }
 
-                        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-                            val view = convertView ?: layoutInflater.inflate(R.layout.row_item, parent, false)
-                            val item = items[position]
-                            view.findViewById<TextView>(R.id.rowTitle).text = item.title
-                            view.findViewById<TextView>(R.id.rowNotes).text = item.notes
-                            return view
+                        @Override
+                        public View getView(int position, View convertView, ViewGroup parent) {
+                            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_item, parent, false) : convertView;
+                            ItemDbHelper.Item item = items.get(position);
+                            TextView rowTitle = view.findViewById(R.id.rowTitle);
+                            TextView rowNotes = view.findViewById(R.id.rowNotes);
+                            rowTitle.setText(item.title);
+                            rowNotes.setText(item.notes);
+                            return view;
                         }
                     }
                 }
@@ -351,47 +377,56 @@ public class GeneratedProjectWriter {
 
     private String editActivity(AppSpec spec) {
         return """
-                package %s
+                package %s;
 
-                import android.app.Activity
-                import android.os.Bundle
-                import android.view.View
-                import android.widget.Button
-                import android.widget.EditText
-                import android.widget.Toast
+                import android.app.Activity;
+                import android.os.Bundle;
+                import android.view.View;
+                import android.widget.Button;
+                import android.widget.EditText;
+                import android.widget.Toast;
 
-                class EditItemActivity : Activity() {
-                    private lateinit var db: ItemDbHelper
-                    private var itemId: Long? = null
+                public class EditItemActivity extends Activity {
+                    private ItemDbHelper db;
+                    private Long itemId;
 
-                    override fun onCreate(savedInstanceState: Bundle?) {
-                        super.onCreate(savedInstanceState)
-                        setContentView(R.layout.activity_edit_item)
-                        db = ItemDbHelper(this)
-                        val titleInput = findViewById<EditText>(R.id.titleInput)
-                        val notesInput = findViewById<EditText>(R.id.notesInput)
-                        itemId = intent.takeIf { it.hasExtra("id") }?.getLongExtra("id", -1)?.takeIf { it > 0 }
-                        itemId?.let { id ->
-                            db.get(id)?.let { item ->
-                                titleInput.setText(item.title)
-                                notesInput.setText(item.notes)
+                    @Override
+                    protected void onCreate(Bundle savedInstanceState) {
+                        super.onCreate(savedInstanceState);
+                        setContentView(R.layout.activity_edit_item);
+                        db = new ItemDbHelper(this);
+                        EditText titleInput = findViewById(R.id.titleInput);
+                        EditText notesInput = findViewById(R.id.notesInput);
+                        if (getIntent().hasExtra("id")) {
+                            long id = getIntent().getLongExtra("id", -1);
+                            itemId = id > 0 ? id : null;
+                        }
+                        if (itemId != null) {
+                            ItemDbHelper.Item item = db.get(itemId);
+                            if (item != null) {
+                                titleInput.setText(item.title);
+                                notesInput.setText(item.notes);
                             }
                         }
-                        findViewById<Button>(R.id.deleteButton).visibility = if (itemId == null) View.GONE else View.VISIBLE
-                        findViewById<Button>(R.id.saveButton).setOnClickListener {
-                            val title = titleInput.text.toString().trim()
-                            val notes = notesInput.text.toString().trim()
+                        Button deleteButton = findViewById(R.id.deleteButton);
+                        deleteButton.setVisibility(itemId == null ? View.GONE : View.VISIBLE);
+                        Button saveButton = findViewById(R.id.saveButton);
+                        saveButton.setOnClickListener(v -> {
+                            String title = titleInput.getText().toString().trim();
+                            String notes = notesInput.getText().toString().trim();
                             if (title.isEmpty()) {
-                                Toast.makeText(this, getString(R.string.title_required), Toast.LENGTH_SHORT).show()
+                                Toast.makeText(this, getString(R.string.title_required), Toast.LENGTH_SHORT).show();
                             } else {
-                                db.save(itemId, title, notes)
-                                finish()
+                                db.save(itemId, title, notes);
+                                finish();
                             }
-                        }
-                        findViewById<Button>(R.id.deleteButton).setOnClickListener {
-                            itemId?.let { db.delete(it) }
-                            finish()
-                        }
+                        });
+                        deleteButton.setOnClickListener(v -> {
+                            if (itemId != null) {
+                                db.delete(itemId);
+                            }
+                            finish();
+                        });
                     }
                 }
                 """.replace("%s", spec.packageName);

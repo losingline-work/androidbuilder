@@ -22,6 +22,10 @@ public final class NameUtils {
         return "com.generated." + slug;
     }
 
+    public static boolean isPackageName(String value) {
+        return value != null && value.matches("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+");
+    }
+
     public static String className(String value, String fallback) {
         String slug = asciiSlug(value);
         if (slug.isEmpty()) {
