@@ -27,6 +27,7 @@ public class AgentService {
     private static final int SOURCE_SNAPSHOT_LIMIT = 18000;
     private static final int SOURCE_FILE_PREVIEW_LIMIT = 2600;
     private static final int BUILD_LOG_PREVIEW_LIMIT = 7000;
+    private static final int POLICY_REWRITE_ATTEMPTS = 3;
 
     public interface Callback {
         void onComplete(BuildJobRecord job);
@@ -291,20 +292,23 @@ public class AgentService {
     }
 
     private TaskOperations createAndApplyTaskOperations(File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, boolean chinese) throws Exception {
-        String operationsJson = openAiClient.createTaskOperations(planContent, taskTitle, taskInstruction, snapshot, chinese);
-        TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
-        try {
-            operationsWriter.apply(sourceDir, operations);
-        } catch (IllegalArgumentException policyError) {
-            if (!isRewriteablePolicyError(policyError)) {
-                throw policyError;
+        String instruction = taskInstruction;
+        IllegalArgumentException lastPolicyError = null;
+        for (int attempt = 1; attempt <= POLICY_REWRITE_ATTEMPTS; attempt++) {
+            String operationsJson = openAiClient.createTaskOperations(planContent, taskTitle, instruction, snapshot, chinese);
+            TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
+            try {
+                operationsWriter.apply(sourceDir, operations);
+                return operations;
+            } catch (IllegalArgumentException policyError) {
+                if (!isRewriteablePolicyError(policyError) || attempt == POLICY_REWRITE_ATTEMPTS) {
+                    throw policyError;
+                }
+                lastPolicyError = policyError;
+                instruction = PolicyRewriteInstruction.create(taskInstruction, policyError.getMessage(), attempt + 1);
             }
-            String rewriteInstruction = taskInstruction + "\n\nPrevious output was rejected: " + policyError.getMessage() + "\nRewrite this task using the active dependency mode. Do not add blocked dependencies or imports.";
-            String retryJson = openAiClient.createTaskOperations(planContent, taskTitle, rewriteInstruction, snapshot, chinese);
-            operations = TaskOperationsParser.fromJson(retryJson);
-            operationsWriter.apply(sourceDir, operations);
         }
-        return operations;
+        throw lastPolicyError == null ? new IllegalStateException("Task operation generation failed.") : lastPolicyError;
     }
 
     private boolean isRewriteablePolicyError(IllegalArgumentException error) {
@@ -350,16 +354,18 @@ public class AgentService {
         }
         if (chinese) {
             return "根据下面的构建失败日志修复当前源码。只做最小必要改动，不要重新生成整个项目，不要删除无关功能。"
-                    + "如果错误来自依赖策略，请改用当前依赖模式允许的 Android SDK/Kotlin/XML 实现。"
-                    + "如果是 compileDebugKotlin 的 Unresolved reference：Fragment 中不要直接调用 findViewById，要使用 inflated root view.findViewById 或 requireView().findViewById；"
+                    + "如果错误来自依赖策略，请改用当前依赖模式允许的 Android SDK/Java/XML 实现。"
+                    + "不要使用 Java lambda 或 -> 语法，监听器必须写成匿名内部类；"
+                    + "如果是 Java 引用错误：Fragment 中不要直接调用 findViewById，要使用 inflated root view.findViewById 或 requireView().findViewById；"
                     + "不要使用 Kotlin synthetic 视图变量（例如 btn_save.setOnClickListener），必须先从 dialog/root view 中 findViewById 声明局部变量；"
-                    + "所有 R.id.* 引用必须在对应 XML 中存在，缺失时补 android:id=\"@+id/...\" 或改代码使用已有 id。\n\n构建日志：\n" + log;
+                    + "所有 R.* 代码引用和 XML 中的 @mipmap/@style/@drawable/@string/@color/@layout 引用都必须有对应资源，缺失时补资源或改用已有资源。\n\n构建日志：\n" + log;
         }
         return "Repair the current source based on the build failure log below. Make the smallest necessary changes, do not regenerate the whole project, and do not remove unrelated features. "
-                + "If the error comes from dependency policy, rewrite the implementation using Android SDK/Kotlin/XML APIs allowed by the active dependency mode. "
-                + "For compileDebugKotlin unresolved references: in Fragments, do not call findViewById directly; use the inflated root view.findViewById or requireView().findViewById. "
+                + "If the error comes from dependency policy, rewrite the implementation using Android SDK/Java/XML APIs allowed by the active dependency mode. "
+                + "Do not use Java lambdas or -> syntax; listeners must use anonymous inner classes. "
+                + "For Java reference errors: in Fragments, do not call findViewById directly; use the inflated root view.findViewById or requireView().findViewById. "
                 + "Do not use Kotlin synthetic view variables such as btn_save.setOnClickListener; first declare local variables from the dialog/root view using findViewById. "
-                + "Every R.id.* reference must exist in the corresponding XML; add android:id=\"@+id/...\" or update Kotlin to use an existing id.\n\nBuild log:\n" + log;
+                + "Every R.* code reference and every XML @mipmap/@style/@drawable/@string/@color/@layout reference must have a matching resource; add the resource or use an existing one.\n\nBuild log:\n" + log;
     }
 
     private String fallbackRepairPlan(boolean chinese) {

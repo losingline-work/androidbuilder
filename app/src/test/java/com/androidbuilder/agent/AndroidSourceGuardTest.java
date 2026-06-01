@@ -47,9 +47,20 @@ public class AndroidSourceGuardTest {
         write(root, "app/src/main/res/layout/activity_main.xml",
                 "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\"><TextView android:id=\"@+id/fabAdd\" /></LinearLayout>");
         write(root, "app/src/main/java/com/example/MainActivity.java",
-                "package com.example;\nclass MainActivity { void bind() { View fabAdd = findViewById(R.id.fabAdd); fabAdd.setOnClickListener(v -> { }); } }");
+                "package com.example;\nclass MainActivity { void bind() { View fabAdd = findViewById(R.id.fabAdd); fabAdd.setText(\"ok\"); } }");
 
         new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void blocksJavaLambdaSyntax() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/MainActivity.java",
+                "package com.example;\nclass MainActivity { void bind(View button) { button.setOnClickListener(v -> open()); } void open() {} }");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertEquals("Generated source policy blocked Java lambda syntax in MainActivity.java. Use anonymous listener classes instead of ->.", error.getMessage());
     }
 
     @Test
@@ -131,6 +142,17 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void blocksMissingManifestMipmapReferences() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/AndroidManifest.xml",
+                "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"><application android:icon=\"@mipmap/ic_launcher\" /></manifest>");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertEquals("Generated source policy blocked missing XML resource reference: @mipmap/ic_launcher in AndroidManifest.xml.", error.getMessage());
+    }
+
+    @Test
     public void blocksMissingStyleReferences() throws Exception {
         File root = temporaryFolder.newFolder("source");
         write(root, "app/src/main/res/values/styles.xml",
@@ -141,6 +163,19 @@ public class AndroidSourceGuardTest {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
 
         assertEquals("Generated source policy blocked missing style resource: R.style.MissingTheme in MainActivity.java.", error.getMessage());
+    }
+
+    @Test
+    public void blocksMissingManifestStyleReferences() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/values/styles.xml",
+                "<resources><style name=\"AppTheme\" /></resources>");
+        write(root, "app/src/main/AndroidManifest.xml",
+                "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"><application android:theme=\"@style/Theme.LedgerApp\" /></manifest>");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertEquals("Generated source policy blocked missing XML resource reference: @style/Theme.LedgerApp in AndroidManifest.xml.", error.getMessage());
     }
 
     @Test
@@ -160,6 +195,8 @@ public class AndroidSourceGuardTest {
                 "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\" />");
         write(root, "app/src/main/java/com/example/MainActivity.java",
                 "package com.example;\nclass MainActivity { void bind() { setContentView(R.layout.activity_main); int a = R.string.app_name; int b = R.color.primary; int c = R.style.AppTheme; int d = R.drawable.ic_add; int e = R.mipmap.ic_launcher; } }");
+        write(root, "app/src/main/AndroidManifest.xml",
+                "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"><application android:theme=\"@style/AppTheme\" android:icon=\"@mipmap/ic_launcher\" /></manifest>");
 
         new AndroidSourceGuard().validate(root);
     }

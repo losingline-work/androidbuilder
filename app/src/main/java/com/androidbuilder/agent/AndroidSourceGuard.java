@@ -19,6 +19,7 @@ public class AndroidSourceGuard {
     private static final Pattern R_MIPMAP = Pattern.compile(APP_R_PREFIX + "mipmap\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
     private static final Pattern R_STYLE = Pattern.compile(APP_R_PREFIX + "style\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
     private static final Pattern NAMED_VALUE_RESOURCE = Pattern.compile("<\\s*(string|color|style)\\b[^>]*\\bname\\s*=\\s*[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
+    private static final Pattern XML_RESOURCE_REFERENCE = Pattern.compile("@(layout|string|color|drawable|mipmap|style)/([A-Za-z_][A-Za-z0-9_.]*)");
     private static final Pattern FRAGMENT_CLASS = Pattern.compile("\\bclass\\s+\\w+[^\\n{]*(?:Fragment\\(|:\\s*Fragment\\b)");
     private static final Pattern NAKED_FIND_VIEW = Pattern.compile("(?<![A-Za-z0-9_.])findViewById\\s*(?:<|\\()");
     private static final Pattern DECLARED_VARIABLE = Pattern.compile("\\b(?:val|var)\\s+%s\\b|\\blateinit\\s+var\\s+%s\\b");
@@ -28,8 +29,8 @@ public class AndroidSourceGuard {
         collectXmlIds(sourceDir, symbols.ids);
         File resDir = new File(sourceDir, "app/src/main/res");
         collectNamedXmlFiles(resDir, "layout", symbols.layouts);
-        collectNamedXmlFiles(resDir, "drawable", symbols.drawables);
-        collectNamedXmlFiles(resDir, "mipmap", symbols.mipmaps);
+        collectResourceFileNames(resDir, "drawable", symbols.drawables);
+        collectResourceFileNames(resDir, "mipmap", symbols.mipmaps);
         collectValueResources(resDir, symbols);
         validateFiles(sourceDir, symbols);
     }
@@ -91,6 +92,42 @@ public class AndroidSourceGuard {
         }
     }
 
+    private void collectResourceFileNames(File resDir, String directoryPrefix, Set<String> names) {
+        if (resDir == null || !resDir.exists()) {
+            return;
+        }
+        File[] resourceDirs = resDir.listFiles();
+        if (resourceDirs == null) {
+            return;
+        }
+        for (File resourceDir : resourceDirs) {
+            if (resourceDir.isDirectory() && resourceDir.getName().startsWith(directoryPrefix)) {
+                collectFileResourceNames(resourceDir, names);
+            }
+        }
+    }
+
+    private void collectFileResourceNames(File file, Set<String> names) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        if (file.isFile()) {
+            String name = file.getName();
+            int dot = name.lastIndexOf('.');
+            if (dot > 0) {
+                names.add(name.substring(0, dot));
+            }
+            return;
+        }
+        File[] children = file.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            collectFileResourceNames(child, names);
+        }
+    }
+
     private void collectValueResources(File resDir, ResourceSymbols symbols) throws Exception {
         if (resDir == null || !resDir.exists()) {
             return;
@@ -131,10 +168,13 @@ public class AndroidSourceGuard {
     private void addValueResource(ResourceSymbols symbols, String type, String name) {
         String javaName = name.replace('.', '_');
         if ("string".equals(type)) {
+            symbols.strings.add(name);
             symbols.strings.add(javaName);
         } else if ("color".equals(type)) {
+            symbols.colors.add(name);
             symbols.colors.add(javaName);
         } else if ("style".equals(type)) {
+            symbols.styles.add(name);
             symbols.styles.add(javaName);
         }
     }
@@ -150,6 +190,8 @@ public class AndroidSourceGuard {
             }
             if (name.endsWith(".java")) {
                 validateSourceFile(file, symbols);
+            } else if (name.endsWith(".xml")) {
+                validateXmlFile(file, symbols);
             }
             return;
         }
@@ -185,6 +227,43 @@ public class AndroidSourceGuard {
                 throw new IllegalArgumentException("Generated source policy blocked synthetic view access: " + id + " in " + file.getName() + ". Declare it with findViewById from the inflated root/dialog view.");
             }
         }
+        if (content.contains("->")) {
+            throw new IllegalArgumentException("Generated source policy blocked Java lambda syntax in " + file.getName() + ". Use anonymous listener classes instead of ->.");
+        }
+    }
+
+    private void validateXmlFile(File file, ResourceSymbols symbols) throws Exception {
+        String content = FileUtils.readText(file);
+        Matcher matcher = XML_RESOURCE_REFERENCE.matcher(content);
+        while (matcher.find()) {
+            String type = matcher.group(1);
+            String name = matcher.group(2);
+            if (!knownXmlResources(symbols, type).contains(name)) {
+                throw new IllegalArgumentException("Generated source policy blocked missing XML resource reference: @" + type + "/" + name + " in " + file.getName() + ".");
+            }
+        }
+    }
+
+    private Set<String> knownXmlResources(ResourceSymbols symbols, String type) {
+        if ("layout".equals(type)) {
+            return symbols.layouts;
+        }
+        if ("string".equals(type)) {
+            return symbols.strings;
+        }
+        if ("color".equals(type)) {
+            return symbols.colors;
+        }
+        if ("drawable".equals(type)) {
+            return symbols.drawables;
+        }
+        if ("mipmap".equals(type)) {
+            return symbols.mipmaps;
+        }
+        if ("style".equals(type)) {
+            return symbols.styles;
+        }
+        return new HashSet<>();
     }
 
     private void rejectMissingResource(Pattern pattern, Set<String> knownNames, String message, String content, File file) {

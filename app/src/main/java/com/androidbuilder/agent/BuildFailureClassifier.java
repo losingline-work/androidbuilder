@@ -8,6 +8,8 @@ public final class BuildFailureClassifier {
         RESOURCE_LINKING,
         DEPENDENCY_POLICY,
         DEPENDENCY_NETWORK,
+        DEPENDENCY_CONFLICT,
+        BUILD_TIMEOUT,
         RUNTIME_ENVIRONMENT,
         UNKNOWN
     }
@@ -30,8 +32,22 @@ public final class BuildFailureClassifier {
         if (containsAny(text, "missing_tools", "toolchain is incomplete", "cannot run program", "permission denied", "no such file", "runtime_error", "termux", "jdkimagetransform", "core-for-system-modules.jar", "androidjdkimage")) {
             return new Result(Kind.RUNTIME_ENVIRONMENT, false);
         }
-        if (containsAny(text, "dependency_network", "unknownhostexception", "dl.google.com", "network unavailable")) {
+        if (containsAny(text,
+                "dependency_network",
+                "unknownhostexception",
+                "connect timed out",
+                "sockettimeoutexception",
+                "connecttimeoutexception",
+                "repo.maven.apache.org",
+                "dl.google.com",
+                "network unavailable")) {
             return new Result(Kind.DEPENDENCY_NETWORK, false);
+        }
+        if (containsAny(text, "embedded_runtime_timeout", "build timed out", "last build output")) {
+            return new Result(Kind.BUILD_TIMEOUT, false);
+        }
+        if (containsAny(text, "checkdebugduplicateclasses", "duplicate class kotlin.", "kotlin-stdlib-jdk8")) {
+            return new Result(Kind.DEPENDENCY_CONFLICT, false);
         }
         if (containsAny(text, "dependency policy blocked", "could not resolve all files", "failed to transform", "could not download")) {
             return new Result(Kind.DEPENDENCY_POLICY, true);

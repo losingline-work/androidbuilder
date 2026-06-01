@@ -10,7 +10,6 @@ import android.text.method.ScrollingMovementMethod;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.view.inputmethod.InputMethodManager;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.ListView;
@@ -39,7 +38,6 @@ import com.androidbuilder.util.AppSettings;
 import com.androidbuilder.util.FileUtils;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-import com.google.android.material.tabs.TabLayout;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -56,10 +54,6 @@ public class ProjectActivity extends BaseActivity {
     private static final long MAX_PREVIEW_BYTES = 80 * 1024;
     private static final int BUILD_LOG_INLINE_LIMIT = 9000;
     private static final int BUILD_LOG_CONTEXT_RADIUS = 2500;
-    private static final int TAB_DESIGN = 0;
-    private static final int TAB_EXECUTE = 1;
-    private static final int TAB_BUILD = 2;
-    private static final String STATE_SELECTED_TAB = "selected_tab";
 
     private AppRepository repository;
     private AgentService agentService;
@@ -68,31 +62,21 @@ public class ProjectActivity extends BaseActivity {
     private final List<ChatMessage> messages = new ArrayList<>();
     private final List<FileItem> fileItems = new ArrayList<>();
     private final List<ProjectTaskRecord> taskItems = new ArrayList<>();
-    private MessageAdapter adapter;
+    private TimelineAdapter adapter;
     private FileAdapter fileAdapter;
-    private TaskAdapter taskAdapter;
     private ListView messageList;
     private ListView fileList;
-    private ListView taskList;
     private MaterialToolbar projectToolbar;
     private TextView status;
     private TextView currentPathText;
-    private TextView buildLogContent;
-    private ProgressBar buildProgress;
     private EditText promptInput;
-    private EditText promptEditorInput;
-    private View designInputBlock;
-    private View promptEditorPanel;
     private View projectContent;
-    private View designPanel;
-    private View executePanel;
-    private View buildPanel;
     private View fileBrowserPanel;
+    private View fileDrawerScrim;
     private TextView showFilesButton;
     private boolean buildLogVisible;
     private boolean busy;
     private boolean autoExecutingPlan;
-    private int selectedTab = -1;
     private long activeTaskStartedAt;
     private String statusSummary = "";
     private String operationStatus = "";
@@ -129,45 +113,26 @@ public class ProjectActivity extends BaseActivity {
         currentSourceDir = sourceRoot;
         status = findViewById(R.id.statusText);
         promptInput = findViewById(R.id.promptInput);
-        promptEditorInput = findViewById(R.id.promptEditorInput);
-        designInputBlock = findViewById(R.id.designInputBlock);
-        promptEditorPanel = findViewById(R.id.promptEditorPanel);
         projectContent = findViewById(R.id.projectContent);
-        designPanel = findViewById(R.id.designPanel);
-        executePanel = findViewById(R.id.executePanel);
-        buildPanel = findViewById(R.id.buildPanel);
         fileBrowserPanel = findViewById(R.id.fileBrowserPanel);
+        fileDrawerScrim = findViewById(R.id.fileDrawerScrim);
         showFilesButton = findViewById(R.id.showFilesButton);
         currentPathText = findViewById(R.id.currentPathText);
-        buildLogContent = findViewById(R.id.buildLogContent);
-        buildProgress = findViewById(R.id.buildProgress);
-        if (status.getParent() instanceof View) {
-            ((View) status.getParent()).setVisibility(View.GONE);
-        }
-        promptInput.setFocusable(false);
-        promptInput.setFocusableInTouchMode(false);
-        promptInput.setCursorVisible(false);
-        promptInput.setOnClickListener(v -> showPromptEditor());
-        designInputBlock.setOnClickListener(v -> showPromptEditor());
-        adapter = new MessageAdapter();
+        adapter = new TimelineAdapter();
         messageList = findViewById(R.id.messageList);
         messageList.setAdapter(adapter);
         messageList.setOnItemLongClickListener((parent, view, position, id) -> {
-            showMessageActions(position);
+            showTimelineActions(position);
             return true;
         });
-        taskAdapter = new TaskAdapter();
-        taskList = findViewById(R.id.taskList);
-        taskList.setAdapter(taskAdapter);
         fileAdapter = new FileAdapter();
         fileList = findViewById(R.id.fileList);
         fileList.setAdapter(fileAdapter);
         fileList.setOnItemClickListener((parent, view, position, id) -> openFileItem(fileItems.get(position)));
-        setupTabs(savedInstanceState);
         findViewById(R.id.sendButton).setOnClickListener(v -> generatePlan());
-        findViewById(R.id.promptEditorCancelButton).setOnClickListener(v -> hidePromptEditor(false));
-        findViewById(R.id.promptEditorSubmitButton).setOnClickListener(v -> submitPromptEditor());
         showFilesButton.setOnClickListener(v -> toggleFileBrowser());
+        fileDrawerScrim.setOnClickListener(v -> closeFileBrowser());
+        findViewById(R.id.closeFilesButton).setOnClickListener(v -> closeFileBrowser());
         findViewById(R.id.executePlanButton).setOnClickListener(v -> executePlan());
         findViewById(R.id.buildButton).setOnClickListener(v -> buildLatest());
         findViewById(R.id.installButton).setOnClickListener(v -> installLatest());
@@ -210,23 +175,13 @@ public class ProjectActivity extends BaseActivity {
     }
 
     @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        outState.putInt(STATE_SELECTED_TAB, selectedTab);
-    }
-
-    @Override
     public void onBackPressed() {
-        if (promptEditorPanel != null && promptEditorPanel.getVisibility() == View.VISIBLE) {
-            hidePromptEditor(true);
-            return;
-        }
-        if (executePanel != null && executePanel.getVisibility() == View.VISIBLE && fileBrowserPanel != null && fileBrowserPanel.getVisibility() == View.VISIBLE) {
+        if (fileBrowserPanel != null && fileBrowserPanel.getVisibility() == View.VISIBLE) {
             if (currentSourceDir != null && !sameFile(currentSourceDir, sourceRoot)) {
                 loadSourceDirectory(currentSourceDir.getParentFile(), false);
                 return;
             }
-            toggleFileBrowser();
+            closeFileBrowser();
             return;
         }
         super.onBackPressed();
@@ -244,10 +199,9 @@ public class ProjectActivity extends BaseActivity {
         updateStatusSummary(project);
         messages.clear();
         messages.addAll(repository.listMessages(projectId));
-        adapter.notifyDataSetChanged();
         taskItems.clear();
         taskItems.addAll(repository.listProjectTasks(projectId));
-        taskAdapter.notifyDataSetChanged();
+        adapter.notifyDataSetChanged();
         loadSourceDirectory(currentSourceDir == null ? sourceRoot : currentSourceDir, false);
         updateFileBrowserButton();
         updateBuildLogPanel();
@@ -278,12 +232,12 @@ public class ProjectActivity extends BaseActivity {
         if (ProjectLiveState.tasksChanged(taskItems, latestTasks)) {
             taskItems.clear();
             taskItems.addAll(latestTasks);
-            if (taskAdapter != null) {
-                taskAdapter.notifyDataSetChanged();
+            if (adapter != null) {
+                adapter.notifyDataSetChanged();
             }
             scrollToCurrentTask();
-        } else if (taskAdapter != null) {
-            taskAdapter.notifyDataSetChanged();
+        } else if (adapter != null) {
+            adapter.notifyDataSetChanged();
         }
 
         updateBuildLogPanel();
@@ -300,52 +254,39 @@ public class ProjectActivity extends BaseActivity {
         status.setText(statusSummary);
     }
 
-    private void setupTabs(Bundle savedInstanceState) {
-        TabLayout tabs = findViewById(R.id.projectTabs);
-        tabs.addTab(tabs.newTab().setText(R.string.tab_design));
-        tabs.addTab(tabs.newTab().setText(R.string.tab_execute));
-        tabs.addTab(tabs.newTab().setText(R.string.tab_build));
-        tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
-            @Override
-            public void onTabSelected(TabLayout.Tab tab) {
-                showTab(tab.getPosition());
-            }
-
-            @Override public void onTabUnselected(TabLayout.Tab tab) {}
-            @Override public void onTabReselected(TabLayout.Tab tab) {}
-        });
-        int savedTab = savedInstanceState == null ? -1 : savedInstanceState.getInt(STATE_SELECTED_TAB, -1);
-        int initialTab = ProjectTabPolicy.initialTab(
-                savedTab,
-                repository.latestProjectPlan(projectId),
-                repository.listProjectTasks(projectId),
-                repository.latestBuildJob(projectId));
-        selectTab(initialTab);
-        showTab(initialTab);
-    }
-
-    private void showTab(int position) {
-        selectedTab = position;
-        designPanel.setVisibility(position == TAB_DESIGN ? View.VISIBLE : View.GONE);
-        executePanel.setVisibility(position == TAB_EXECUTE ? View.VISIBLE : View.GONE);
-        buildPanel.setVisibility(position == TAB_BUILD ? View.VISIBLE : View.GONE);
-        if (position == TAB_EXECUTE) {
-            taskItems.clear();
-            taskItems.addAll(repository.listProjectTasks(projectId));
-            taskAdapter.notifyDataSetChanged();
-            loadSourceDirectory(currentSourceDir == null ? sourceRoot : currentSourceDir, false);
-            updateFileBrowserButton();
-        } else if (position == TAB_BUILD) {
-            updateBuildLogPanel();
-        }
-    }
-
     private void toggleFileBrowser() {
         if (fileBrowserPanel == null) {
             return;
         }
         boolean show = fileBrowserPanel.getVisibility() != View.VISIBLE;
-        fileBrowserPanel.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show) {
+            openFileBrowser();
+        } else {
+            closeFileBrowser();
+        }
+    }
+
+    private void openFileBrowser() {
+        if (fileBrowserPanel == null) {
+            return;
+        }
+        loadSourceDirectory(currentSourceDir == null ? sourceRoot : currentSourceDir, false);
+        if (fileDrawerScrim != null) {
+            fileDrawerScrim.setVisibility(View.VISIBLE);
+        }
+        fileBrowserPanel.setVisibility(View.VISIBLE);
+        fileBrowserPanel.bringToFront();
+        updateFileBrowserButton();
+    }
+
+    private void closeFileBrowser() {
+        if (fileBrowserPanel == null) {
+            return;
+        }
+        fileBrowserPanel.setVisibility(View.GONE);
+        if (fileDrawerScrim != null) {
+            fileDrawerScrim.setVisibility(View.GONE);
+        }
         updateFileBrowserButton();
     }
 
@@ -356,20 +297,21 @@ public class ProjectActivity extends BaseActivity {
         showFilesButton.setText(fileBrowserPanel.getVisibility() == View.VISIBLE ? R.string.hide_source_files : R.string.show_source_files);
     }
 
-    private void selectTab(int position) {
-        TabLayout tabs = findViewById(R.id.projectTabs);
-        TabLayout.Tab tab = tabs.getTabAt(position);
-        if (tab != null) {
-            tab.select();
+    private void showTimelineActions(int position) {
+        ProjectTimelinePolicy.Entry entry = adapter == null ? null : adapter.entryAt(position);
+        if (entry == null) {
+            return;
         }
-    }
-
-    private void showMessageActions(int position) {
-        if (shouldShowOperationStatus() && position == messages.size()) {
+        if (entry.kind == ProjectTimelinePolicy.Kind.OPERATION_STATUS) {
             copyText(getString(R.string.message), operationStatus);
             return;
         }
-        int messageIndex = position;
+        if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
+            BuildJobRecord job = latestJob;
+            copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job));
+            return;
+        }
+        int messageIndex = entry.kind == ProjectTimelinePolicy.Kind.MESSAGE ? entry.sourceIndex : -1;
         if (messageIndex >= 0 && messageIndex < messages.size()) {
             ChatMessage message = messages.get(messageIndex);
             new MaterialAlertDialogBuilder(this)
@@ -383,9 +325,12 @@ public class ProjectActivity extends BaseActivity {
                     .show();
             return;
         }
-        BuildJobRecord job = latestJob;
-        if (job != null) {
-            copyText(getString(R.string.build_log), readBuildLogPreview(job));
+        if (entry.kind == ProjectTimelinePolicy.Kind.TASK && entry.sourceIndex >= 0 && entry.sourceIndex < taskItems.size()) {
+            ProjectTaskRecord task = taskItems.get(entry.sourceIndex);
+            String summary = task.resultSummary == null ? "" : task.resultSummary.trim();
+            if (!summary.isEmpty()) {
+                copyText(getString(R.string.copy_log), summary);
+            }
         }
     }
 
@@ -407,60 +352,11 @@ public class ProjectActivity extends BaseActivity {
         Toast.makeText(this, getString(R.string.copied, label), Toast.LENGTH_SHORT).show();
     }
 
-    private void showPromptEditor() {
-        if (promptEditorPanel == null || promptEditorInput == null || projectContent == null) {
-            return;
-        }
-        promptEditorInput.setText(promptInput.getText());
-        promptEditorInput.setSelection(promptEditorInput.getText().length());
-        projectContent.setVisibility(View.GONE);
-        promptEditorPanel.setVisibility(View.VISIBLE);
-        promptEditorPanel.bringToFront();
-        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
-        promptEditorInput.requestFocus();
-        promptEditorInput.postDelayed(() -> {
-            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) {
-                imm.showSoftInput(promptEditorInput, InputMethodManager.SHOW_IMPLICIT);
-            }
-        }, 150);
-    }
-
-    private void hidePromptEditor(boolean keepDraft) {
-        if (promptEditorPanel == null || promptEditorInput == null || projectContent == null) {
-            return;
-        }
-        if (keepDraft) {
-            promptInput.setText(promptEditorInput.getText());
-        }
-        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (imm != null) {
-            imm.hideSoftInputFromWindow(promptEditorInput.getWindowToken(), 0);
-        }
-        promptEditorInput.clearFocus();
-        promptEditorPanel.setVisibility(View.GONE);
-        projectContent.setVisibility(View.VISIBLE);
-        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);
-    }
-
-    private void submitPromptEditor() {
-        if (promptEditorInput == null) {
-            return;
-        }
-        String text = promptEditorInput.getText().toString().trim();
-        if (text.isEmpty()) {
-            Toast.makeText(this, R.string.write_requirement_first, Toast.LENGTH_SHORT).show();
-            return;
-        }
-        promptInput.setText(text);
-        hidePromptEditor(false);
-        generatePlan();
-    }
-
     private void generatePlan() {
         String prompt = promptInput.getText().toString().trim();
         if (prompt.isEmpty()) {
-            showPromptEditor();
+            Toast.makeText(this, R.string.write_requirement_first, Toast.LENGTH_SHORT).show();
+            promptInput.requestFocus();
             return;
         }
         if (!new OpenAiClient(this).isConfigured()) {
@@ -478,7 +374,6 @@ public class ProjectActivity extends BaseActivity {
                 runOnUiThread(() -> {
                     setBusy(false);
                     refresh();
-                    selectTab(TAB_DESIGN);
                     Toast.makeText(ProjectActivity.this, R.string.plan_generated, Toast.LENGTH_SHORT).show();
                 });
             }
@@ -516,8 +411,8 @@ public class ProjectActivity extends BaseActivity {
 
     private void executePlanStep() {
         activeTaskStartedAt = System.currentTimeMillis();
-        if (taskAdapter != null) {
-            taskAdapter.notifyDataSetChanged();
+        if (adapter != null) {
+            adapter.notifyDataSetChanged();
         }
         scrollToCurrentTask();
         updateElapsedTicker();
@@ -551,14 +446,18 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void scrollToCurrentTask() {
-        if (taskList == null || taskItems.isEmpty()) {
+        if (messageList == null || adapter == null || taskItems.isEmpty()) {
             return;
         }
         int index = currentTaskIndex();
         if (index < 0) {
             return;
         }
-        taskList.postDelayed(() -> taskList.smoothScrollToPositionFromTop(index, dp(8)), 80);
+        int timelinePosition = adapter.positionForTaskIndex(index);
+        if (timelinePosition < 0) {
+            return;
+        }
+        messageList.postDelayed(() -> messageList.smoothScrollToPositionFromTop(timelinePosition, dp(8)), 80);
     }
 
     private int currentTaskIndex() {
@@ -815,8 +714,8 @@ public class ProjectActivity extends BaseActivity {
             activeTaskStartedAt = 0;
         }
         updateActionButtons();
-        if (taskAdapter != null) {
-            taskAdapter.notifyDataSetChanged();
+        if (adapter != null) {
+            adapter.notifyDataSetChanged();
         }
         updateKeepScreenOn();
         updateElapsedTicker();
@@ -918,9 +817,9 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void updateBuildLogPanel() {
-        boolean running = latestJob != null && ("building".equals(latestJob.status) || "queued".equals(latestJob.status));
-        buildProgress.setVisibility(running ? View.VISIBLE : View.GONE);
-        buildLogContent.setText(latestJob == null || latestJob.logsPath == null ? getString(R.string.no_build_log) : readBuildLogPreview(latestJob));
+        if (adapter != null) {
+            adapter.notifyDataSetChanged();
+        }
     }
 
     private String planStatusText(String value) {
@@ -961,56 +860,133 @@ public class ProjectActivity extends BaseActivity {
         return (int) (value * getResources().getDisplayMetrics().density);
     }
 
-    private class MessageAdapter extends BaseAdapter {
+    private class TimelineAdapter extends BaseAdapter {
         private static final int TYPE_MESSAGE = 0;
         private static final int TYPE_STATUS = 1;
+        private static final int TYPE_TASK = 2;
+        private static final int TYPE_BUILD_LOG = 3;
 
-        @Override public int getCount() { return messages.size() + (shouldShowOperationStatus() ? 1 : 0); }
-        @Override public Object getItem(int position) { return isStatusPosition(position) ? operationStatus : messages.get(position); }
-        @Override public long getItemId(int position) { return isStatusPosition(position) ? -1 : messages.get(position).id; }
-        @Override public int getViewTypeCount() { return 2; }
-        @Override public int getItemViewType(int position) { return isStatusPosition(position) ? TYPE_STATUS : TYPE_MESSAGE; }
+        @Override
+        public int getCount() {
+            return entries().size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            ProjectTimelinePolicy.Entry entry = entryAt(position);
+            if (entry == null) {
+                return null;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.MESSAGE && entry.sourceIndex >= 0 && entry.sourceIndex < messages.size()) {
+                return messages.get(entry.sourceIndex);
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.TASK && entry.sourceIndex >= 0 && entry.sourceIndex < taskItems.size()) {
+                return taskItems.get(entry.sourceIndex);
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
+                return latestJob;
+            }
+            return entry.kind;
+        }
+
+        @Override
+        public long getItemId(int position) {
+            ProjectTimelinePolicy.Entry entry = entryAt(position);
+            if (entry == null) {
+                return position;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.MESSAGE && entry.sourceIndex >= 0 && entry.sourceIndex < messages.size()) {
+                return messages.get(entry.sourceIndex).id;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.TASK && entry.sourceIndex >= 0 && entry.sourceIndex < taskItems.size()) {
+                return taskItems.get(entry.sourceIndex).id;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.OPERATION_STATUS) {
+                return -1;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.EMPTY_TASKS) {
+                return -2;
+            }
+            return -3;
+        }
+
+        @Override
+        public int getViewTypeCount() {
+            return 4;
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            ProjectTimelinePolicy.Entry entry = entryAt(position);
+            if (entry == null) {
+                return TYPE_MESSAGE;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.OPERATION_STATUS) {
+                return TYPE_STATUS;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.TASK || entry.kind == ProjectTimelinePolicy.Kind.EMPTY_TASKS) {
+                return TYPE_TASK;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
+                return TYPE_BUILD_LOG;
+            }
+            return TYPE_MESSAGE;
+        }
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
-            if (isStatusPosition(position)) {
-                View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_operation_status, parent, false) : convertView;
-                ((TextView) view.findViewById(R.id.operationStatusContent)).setText(operationStatus);
-                return view;
+            ProjectTimelinePolicy.Entry entry = entryAt(position);
+            if (entry == null) {
+                return new View(ProjectActivity.this);
             }
+            if (entry.kind == ProjectTimelinePolicy.Kind.OPERATION_STATUS) {
+                return bindOperationStatus(convertView, parent);
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.TASK || entry.kind == ProjectTimelinePolicy.Kind.EMPTY_TASKS) {
+                return bindTask(entry, convertView, parent);
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
+                return bindBuildLog(convertView, parent);
+            }
+            return bindMessage(entry, convertView, parent);
+        }
+
+        ProjectTimelinePolicy.Entry entryAt(int position) {
+            List<ProjectTimelinePolicy.Entry> entries = entries();
+            return position >= 0 && position < entries.size() ? entries.get(position) : null;
+        }
+
+        int positionForTaskIndex(int taskIndex) {
+            List<ProjectTimelinePolicy.Entry> entries = entries();
+            for (int i = 0; i < entries.size(); i++) {
+                ProjectTimelinePolicy.Entry entry = entries.get(i);
+                if (entry.kind == ProjectTimelinePolicy.Kind.TASK && entry.sourceIndex == taskIndex) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private List<ProjectTimelinePolicy.Entry> entries() {
+            return ProjectTimelinePolicy.entries(messages.size(), shouldShowOperationStatus(), latestPlan, taskItems, latestJob, buildLogVisible);
+        }
+
+        private View bindOperationStatus(View convertView, ViewGroup parent) {
+            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_operation_status, parent, false) : convertView;
+            ((TextView) view.findViewById(R.id.operationStatusContent)).setText(operationStatus);
+            return view;
+        }
+
+        private View bindMessage(ProjectTimelinePolicy.Entry entry, View convertView, ViewGroup parent) {
             View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_message, parent, false) : convertView;
-            ChatMessage message = messages.get(position);
+            ChatMessage message = messages.get(entry.sourceIndex);
             ((TextView) view.findViewById(R.id.messageRole)).setText(message.role.toUpperCase());
             ((TextView) view.findViewById(R.id.messageTime)).setText(messageTimeText(message));
             ((TextView) view.findViewById(R.id.messageContent)).setText(message.content);
             return view;
         }
 
-        private boolean isStatusPosition(int position) {
-            return shouldShowOperationStatus() && position == messages.size();
-        }
-
-        private String messageTimeText(ChatMessage message) {
-            String time = timeFormat.format(new Date(message.createdAt));
-            if (message.linkedBuildJobId == null) {
-                return time;
-            }
-            BuildJobRecord job = repository.getBuildJob(message.linkedBuildJobId);
-            if (job == null) {
-                return time;
-            }
-            long end = isRunningJob(job) ? System.currentTimeMillis() : Math.max(job.updatedAt, job.createdAt);
-            return time + " · " + getString(R.string.elapsed_time, formatDuration(Math.max(0, end - job.createdAt)));
-        }
-    }
-
-    private class TaskAdapter extends BaseAdapter {
-        @Override public int getCount() { return Math.max(taskItems.size(), 1); }
-        @Override public Object getItem(int position) { return taskItems.isEmpty() ? null : taskItems.get(position); }
-        @Override public long getItemId(int position) { return taskItems.isEmpty() ? 0 : taskItems.get(position).id; }
-
-        @Override
-        public View getView(int position, View convertView, ViewGroup parent) {
+        private View bindTask(ProjectTimelinePolicy.Entry entry, View convertView, ViewGroup parent) {
             View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_project_task, parent, false) : convertView;
             TextView icon = view.findViewById(R.id.taskStatusIcon);
             TextView title = view.findViewById(R.id.taskTitle);
@@ -1020,7 +996,7 @@ public class ProjectActivity extends BaseActivity {
             View copyLog = view.findViewById(R.id.taskCopyLog);
             copyLog.setVisibility(View.GONE);
             copyLog.setOnClickListener(null);
-            if (taskItems.isEmpty()) {
+            if (entry.kind == ProjectTimelinePolicy.Kind.EMPTY_TASKS || taskItems.isEmpty()) {
                 icon.setText("-");
                 title.setText(R.string.no_plan_tasks);
                 steps.setVisibility(View.GONE);
@@ -1028,11 +1004,11 @@ public class ProjectActivity extends BaseActivity {
                 log.setVisibility(View.GONE);
                 return view;
             }
-            ProjectTaskRecord task = taskItems.get(position);
+            ProjectTaskRecord task = taskItems.get(entry.sourceIndex);
             title.setText((task.sortOrder + 1) + ". " + task.title);
             setTaskSteps(steps, task.instruction);
             String taskStatus = task.status == null ? "pending" : task.status;
-            if (TaskRunningDisplayPolicy.shouldShowPredictedRunning(busy, position, taskStatus, taskItems)) {
+            if (TaskRunningDisplayPolicy.shouldShowPredictedRunning(busy, entry.sourceIndex, taskStatus, taskItems)) {
                 icon.setText("...");
                 long startedAt = activeTaskStartedAt > 0 ? activeTaskStartedAt : System.currentTimeMillis();
                 status.setText(getString(R.string.task_running) + " · " + getString(R.string.elapsed_time, formatDuration(System.currentTimeMillis() - startedAt)));
@@ -1057,6 +1033,33 @@ public class ProjectActivity extends BaseActivity {
                 status.setText(R.string.task_pending);
                 log.setVisibility(View.GONE);
             }
+            return view;
+        }
+
+        private String messageTimeText(ChatMessage message) {
+            String time = timeFormat.format(new Date(message.createdAt));
+            if (message.linkedBuildJobId == null) {
+                return time;
+            }
+            BuildJobRecord job = repository.getBuildJob(message.linkedBuildJobId);
+            if (job == null) {
+                return time;
+            }
+            long end = isRunningJob(job) ? System.currentTimeMillis() : Math.max(job.updatedAt, job.createdAt);
+            return time + " · " + getString(R.string.elapsed_time, formatDuration(Math.max(0, end - job.createdAt)));
+        }
+
+        private View bindBuildLog(View convertView, ViewGroup parent) {
+            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_build_log, parent, false) : convertView;
+            BuildJobRecord job = latestJob;
+            boolean running = job != null && ("building".equals(job.status) || "queued".equals(job.status));
+            ProgressBar progress = view.findViewById(R.id.buildProgress);
+            TextView content = view.findViewById(R.id.buildLogContent);
+            View copyButton = view.findViewById(R.id.buildLogCopyButton);
+            progress.setVisibility(running ? View.VISIBLE : View.GONE);
+            content.setText(job == null || job.logsPath == null ? getString(R.string.no_build_log) : readBuildLogPreview(job));
+            copyButton.setEnabled(job != null && job.logsPath != null);
+            copyButton.setOnClickListener(v -> copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job)));
             return view;
         }
 

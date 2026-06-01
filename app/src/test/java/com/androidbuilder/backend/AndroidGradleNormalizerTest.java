@@ -70,6 +70,18 @@ public class AndroidGradleNormalizerTest {
     }
 
     @Test
+    public void rootBuildGetsKotlinStdlibAlignment() {
+        String normalized = AndroidGradleNormalizer.ensureRootAndroidApplicationPlugin(
+                "plugins {\n" +
+                        "    id 'com.android.application'\n" +
+                        "}\n");
+
+        assertTrue(normalized.contains("details.requested.group == 'org.jetbrains.kotlin'"));
+        assertTrue(normalized.contains("details.requested.name.startsWith('kotlin-stdlib')"));
+        assertTrue(normalized.contains("details.useVersion '1.8.22'"));
+    }
+
+    @Test
     public void gradlePropertiesEnableAndroidXWhenAndroidXDependenciesExist() {
         String normalized = AndroidGradleNormalizer.normalizeGradleProperties(
                 "android.useAndroidX=false\norg.gradle.daemon=true\n",
@@ -83,11 +95,45 @@ public class AndroidGradleNormalizerTest {
     }
 
     @Test
+    public void gradlePropertiesReplaceNetworkTimeoutsForEmbeddedBuilds() {
+        String normalized = AndroidGradleNormalizer.normalizeGradleProperties(
+                "systemProp.org.gradle.internal.http.connectionTimeout=120000\n" +
+                        "systemProp.org.gradle.internal.http.socketTimeout=120000\n" +
+                        "org.gradle.vfs.watch=true\n",
+                false,
+                "/runtime/bin/aapt2");
+
+        assertTrue(normalized.contains("systemProp.org.gradle.internal.http.connectionTimeout=30000"));
+        assertTrue(normalized.contains("systemProp.org.gradle.internal.http.socketTimeout=30000"));
+        assertTrue(normalized.contains("org.gradle.vfs.watch=false"));
+        assertTrue(normalized.contains("android.javaCompile.suppressSourceTargetDeprecationWarning=true"));
+        assertFalse(normalized.contains("120000"));
+        assertFalse(normalized.contains("org.gradle.vfs.watch=true"));
+    }
+
+    @Test
     public void settingsWithoutPluginManagementGetsAndroidPluginRepositories() {
         String normalized = AndroidGradleNormalizer.ensureSettingsPluginManagement("include ':app'\n");
 
         assertTrue(normalized.contains("pluginManagement"));
+        assertTrue(normalized.contains("https://maven.aliyun.com/repository/google"));
+        assertTrue(normalized.contains("https://maven.aliyun.com/repository/public"));
+        assertTrue(normalized.contains("https://maven.aliyun.com/repository/gradle-plugin"));
         assertTrue(normalized.contains("google()"));
+        assertTrue(normalized.contains("gradlePluginPortal()"));
+        assertTrue(normalized.contains("include ':app'"));
+    }
+
+    @Test
+    public void settingsWithExistingRepositoriesGetsMirrorRepositories() {
+        String normalized = AndroidGradleNormalizer.ensureSettingsPluginManagement(
+                "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\n" +
+                        "dependencyResolutionManagement { repositories { google(); mavenCentral() } }\n" +
+                        "include ':app'\n");
+
+        assertTrue(normalized.contains("https://maven.aliyun.com/repository/google"));
+        assertTrue(normalized.contains("https://maven.aliyun.com/repository/public"));
+        assertTrue(normalized.contains("https://maven.aliyun.com/repository/gradle-plugin"));
         assertTrue(normalized.contains("gradlePluginPortal()"));
         assertTrue(normalized.contains("include ':app'"));
     }

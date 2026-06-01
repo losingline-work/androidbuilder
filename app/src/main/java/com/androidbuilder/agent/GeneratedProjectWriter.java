@@ -2,21 +2,22 @@ package com.androidbuilder.agent;
 
 import com.androidbuilder.model.AppSpec;
 import com.androidbuilder.util.FileUtils;
-import com.androidbuilder.util.NameUtils;
 
 import java.io.File;
 import java.io.IOException;
 
 public class GeneratedProjectWriter {
+    private static final String MIRROR_REPOSITORIES =
+            "maven { url 'https://maven.aliyun.com/repository/google' }; " +
+                    "maven { url 'https://maven.aliyun.com/repository/public' }; " +
+                    "maven { url 'https://maven.aliyun.com/repository/gradle-plugin' };";
+
     public void write(File sourceDir, AppSpec spec) throws IOException {
         FileUtils.deleteRecursively(sourceDir);
         String packagePath = spec.packageName.replace('.', '/');
         FileUtils.writeText(new File(sourceDir, "settings.gradle"), settings(spec));
         FileUtils.writeText(new File(sourceDir, "build.gradle"), rootBuild());
-        FileUtils.writeText(new File(sourceDir, "gradle.properties"),
-                "android.useAndroidX=false\n" +
-                "org.gradle.daemon=false\n" +
-                "org.gradle.workers.max=1\n");
+        FileUtils.writeText(new File(sourceDir, "gradle.properties"), gradleProperties());
         FileUtils.writeText(new File(sourceDir, "app/build.gradle"), appBuild(spec));
         FileUtils.writeText(new File(sourceDir, "app/src/main/AndroidManifest.xml"), manifest(spec));
         FileUtils.writeText(new File(sourceDir, "app/src/main/res/values/strings.xml"), strings(spec));
@@ -32,8 +33,8 @@ public class GeneratedProjectWriter {
     }
 
     private String settings(AppSpec spec) {
-        return "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\n" +
-                "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\n" +
+        return "pluginManagement { repositories { " + MIRROR_REPOSITORIES + " google(); mavenCentral(); gradlePluginPortal() } }\n" +
+                "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { " + MIRROR_REPOSITORIES + " google(); mavenCentral() } }\n" +
                 "rootProject.name = \"" + escape(spec.appName) + "\"\n" +
                 "include ':app'\n";
     }
@@ -41,7 +42,26 @@ public class GeneratedProjectWriter {
     private String rootBuild() {
         return "plugins {\n" +
                 "    id 'com.android.application' version '8.7.3' apply false\n" +
+                "}\n\n" +
+                "allprojects {\n" +
+                "    configurations.configureEach {\n" +
+                "        resolutionStrategy.eachDependency { details ->\n" +
+                "            if (details.requested.group == 'org.jetbrains.kotlin' && details.requested.name.startsWith('kotlin-stdlib')) {\n" +
+                "                details.useVersion '1.8.22'\n" +
+                "            }\n" +
+                "        }\n" +
+                "    }\n" +
                 "}\n";
+    }
+
+    private String gradleProperties() {
+        return "android.useAndroidX=false\n" +
+                "org.gradle.daemon=false\n" +
+                "org.gradle.workers.max=1\n" +
+                "org.gradle.vfs.watch=false\n" +
+                "systemProp.org.gradle.internal.http.connectionTimeout=30000\n" +
+                "systemProp.org.gradle.internal.http.socketTimeout=30000\n" +
+                "android.javaCompile.suppressSourceTargetDeprecationWarning=true\n";
     }
 
     private String appBuild(AppSpec spec) {
@@ -315,6 +335,7 @@ public class GeneratedProjectWriter {
                 import android.os.Bundle;
                 import android.view.View;
                 import android.view.ViewGroup;
+                import android.widget.AdapterView;
                 import android.widget.BaseAdapter;
                 import android.widget.Button;
                 import android.widget.ListView;
@@ -336,10 +357,19 @@ public class GeneratedProjectWriter {
                         adapter = new ItemAdapter();
                         ListView list = findViewById(R.id.list);
                         list.setAdapter(adapter);
-                        list.setOnItemClickListener((parent, view, position, id) ->
-                                startActivity(new Intent(this, EditItemActivity.class).putExtra("id", items.get(position).id)));
+                        list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+                            @Override
+                            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                                startActivity(new Intent(MainActivity.this, EditItemActivity.class).putExtra("id", items.get(position).id));
+                            }
+                        });
                         Button addButton = findViewById(R.id.addButton);
-                        addButton.setOnClickListener(v -> startActivity(new Intent(this, EditItemActivity.class)));
+                        addButton.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                startActivity(new Intent(MainActivity.this, EditItemActivity.class));
+                            }
+                        });
                     }
 
                     @Override
@@ -411,21 +441,27 @@ public class GeneratedProjectWriter {
                         Button deleteButton = findViewById(R.id.deleteButton);
                         deleteButton.setVisibility(itemId == null ? View.GONE : View.VISIBLE);
                         Button saveButton = findViewById(R.id.saveButton);
-                        saveButton.setOnClickListener(v -> {
-                            String title = titleInput.getText().toString().trim();
-                            String notes = notesInput.getText().toString().trim();
-                            if (title.isEmpty()) {
-                                Toast.makeText(this, getString(R.string.title_required), Toast.LENGTH_SHORT).show();
-                            } else {
-                                db.save(itemId, title, notes);
-                                finish();
+                        saveButton.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                String title = titleInput.getText().toString().trim();
+                                String notes = notesInput.getText().toString().trim();
+                                if (title.isEmpty()) {
+                                    Toast.makeText(EditItemActivity.this, getString(R.string.title_required), Toast.LENGTH_SHORT).show();
+                                } else {
+                                    db.save(itemId, title, notes);
+                                    finish();
+                                }
                             }
                         });
-                        deleteButton.setOnClickListener(v -> {
-                            if (itemId != null) {
-                                db.delete(itemId);
+                        deleteButton.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                if (itemId != null) {
+                                    db.delete(itemId);
+                                }
+                                finish();
                             }
-                            finish();
                         });
                     }
                 }

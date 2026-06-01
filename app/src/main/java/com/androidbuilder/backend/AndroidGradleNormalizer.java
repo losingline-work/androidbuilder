@@ -2,6 +2,22 @@ package com.androidbuilder.backend;
 
 final class AndroidGradleNormalizer {
     static final String ANDROID_GRADLE_PLUGIN_VERSION = "8.7.3";
+    private static final String MIRROR_REPOSITORIES =
+            "maven { url 'https://maven.aliyun.com/repository/google' }; " +
+                    "maven { url 'https://maven.aliyun.com/repository/public' }; " +
+                    "maven { url 'https://maven.aliyun.com/repository/gradle-plugin' };";
+    private static final String PLUGIN_REPOSITORIES =
+            MIRROR_REPOSITORIES + " google(); mavenCentral(); gradlePluginPortal()";
+    private static final String KOTLIN_STDLIB_ALIGNMENT =
+            "\nallprojects {\n" +
+                    "    configurations.configureEach {\n" +
+                    "        resolutionStrategy.eachDependency { details ->\n" +
+                    "            if (details.requested.group == 'org.jetbrains.kotlin' && details.requested.name.startsWith('kotlin-stdlib')) {\n" +
+                    "                details.useVersion '1.8.22'\n" +
+                    "            }\n" +
+                    "        }\n" +
+                    "    }\n" +
+                    "}\n";
 
     private AndroidGradleNormalizer() {
     }
@@ -9,13 +25,13 @@ final class AndroidGradleNormalizer {
     static String ensureRootAndroidApplicationPlugin(String build) {
         String normalized = build == null ? "" : build;
         if (hasVersionedAndroidApplicationPlugin(normalized)) {
-            return normalized;
+            return ensureKotlinStdlibAlignment(normalized);
         }
         if (containsAndroidApplicationPlugin(normalized)) {
             normalized = normalized.replaceAll(
                     "id\\s*(?:\\(\\s*)?[\"']com\\.android\\.application[\"']\\s*(?:\\))?",
                     "id 'com.android.application' version '" + ANDROID_GRADLE_PLUGIN_VERSION + "' apply false");
-            return normalized.replace("apply false apply false", "apply false");
+            return ensureKotlinStdlibAlignment(normalized.replace("apply false apply false", "apply false"));
         }
         String pluginLine = "    id 'com.android.application' version '" + ANDROID_GRADLE_PLUGIN_VERSION + "' apply false\n";
         int pluginsIndex = normalized.indexOf("plugins");
@@ -24,13 +40,13 @@ final class AndroidGradleNormalizer {
             if (openBrace >= 0) {
                 int closeBrace = matchingBrace(normalized, openBrace);
                 if (closeBrace >= 0) {
-                    return normalized.substring(0, openBrace + 1) +
+                    return ensureKotlinStdlibAlignment(normalized.substring(0, openBrace + 1) +
                             "\n" + pluginLine +
-                            normalized.substring(closeBrace);
+                            normalized.substring(closeBrace));
                 }
             }
         }
-        return "plugins {\n" + pluginLine + "}\n" + normalized;
+        return ensureKotlinStdlibAlignment("plugins {\n" + pluginLine + "}\n" + normalized);
     }
 
     static String normalizeGradleProperties(String existing, boolean enableAndroidX, String aapt2Path) {
@@ -41,8 +57,12 @@ final class AndroidGradleNormalizer {
             if (trimmed.startsWith("org.gradle.jvmargs=") ||
                     trimmed.startsWith("org.gradle.daemon=") ||
                     trimmed.startsWith("org.gradle.workers.max=") ||
+                    trimmed.startsWith("org.gradle.vfs.watch=") ||
                     trimmed.startsWith("kotlin.compiler.execution.strategy=") ||
                     trimmed.startsWith("android.aapt2FromMavenOverride=") ||
+                    trimmed.startsWith("android.javaCompile.suppressSourceTargetDeprecationWarning=") ||
+                    trimmed.startsWith("systemProp.org.gradle.internal.http.connectionTimeout=") ||
+                    trimmed.startsWith("systemProp.org.gradle.internal.http.socketTimeout=") ||
                     (enableAndroidX && trimmed.startsWith("android.useAndroidX="))) {
                 continue;
             }
@@ -56,7 +76,11 @@ final class AndroidGradleNormalizer {
         }
         next.append("org.gradle.daemon=false\n");
         next.append("org.gradle.workers.max=1\n");
+        next.append("org.gradle.vfs.watch=false\n");
         next.append("kotlin.compiler.execution.strategy=in-process\n");
+        next.append("systemProp.org.gradle.internal.http.connectionTimeout=30000\n");
+        next.append("systemProp.org.gradle.internal.http.socketTimeout=30000\n");
+        next.append("android.javaCompile.suppressSourceTargetDeprecationWarning=true\n");
         if (aapt2Path != null && !aapt2Path.isEmpty()) {
             next.append("android.aapt2FromMavenOverride=")
                     .append(aapt2Path)
@@ -67,10 +91,12 @@ final class AndroidGradleNormalizer {
 
     static String ensureSettingsPluginManagement(String settings) {
         String normalized = settings == null ? "" : settings;
-        if (normalized.contains("pluginManagement")) {
-            return normalized;
+        if (!normalized.contains("pluginManagement")) {
+            normalized = "pluginManagement { repositories { " + PLUGIN_REPOSITORIES + " } }\n" + normalized;
+        } else {
+            normalized = ensureBlockHasRepositories(normalized, "pluginManagement", PLUGIN_REPOSITORIES);
         }
-        return "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\n" + normalized;
+        return ensureMirrorRepositories(normalized);
     }
 
     static String normalizeJvmTargets(String build, boolean kotlinDsl) {
@@ -99,6 +125,65 @@ final class AndroidGradleNormalizer {
 
     private static boolean hasVersionedAndroidApplicationPlugin(String build) {
         return build != null && build.matches("(?s).*id\\s*(?:\\(\\s*)?[\"']com\\.android\\.application[\"']\\s*(?:\\))?\\s+version\\s+[\"'][^\"']+[\"'].*");
+    }
+
+    private static String ensureKotlinStdlibAlignment(String build) {
+        String normalized = build == null ? "" : build;
+        if (normalized.contains("details.requested.name.startsWith('kotlin-stdlib')")) {
+            return normalized;
+        }
+        return normalized + KOTLIN_STDLIB_ALIGNMENT;
+    }
+
+    private static String ensureBlockHasRepositories(String text, String blockName, String repositories) {
+        StringBuilder output = new StringBuilder(text);
+        int blockIndex = indexOfBlockName(output, blockName, 0);
+        if (blockIndex < 0) {
+            return text;
+        }
+        int braceIndex = nextNonWhitespace(output, blockIndex + blockName.length());
+        if (braceIndex < 0 || output.charAt(braceIndex) != '{') {
+            return text;
+        }
+        int endIndex = matchingBrace(output, braceIndex);
+        if (endIndex < 0) {
+            return text;
+        }
+        String block = output.substring(braceIndex + 1, endIndex);
+        if (block.contains("repositories")) {
+            return text;
+        }
+        output.insert(endIndex, "\n    repositories { " + repositories + " }\n");
+        return output.toString();
+    }
+
+    private static String ensureMirrorRepositories(String text) {
+        StringBuilder output = new StringBuilder(text);
+        int searchFrom = 0;
+        while (searchFrom < output.length()) {
+            int repositoriesIndex = indexOfBlockName(output, "repositories", searchFrom);
+            if (repositoriesIndex < 0) {
+                break;
+            }
+            int braceIndex = nextNonWhitespace(output, repositoriesIndex + "repositories".length());
+            if (braceIndex < 0 || output.charAt(braceIndex) != '{') {
+                searchFrom = repositoriesIndex + "repositories".length();
+                continue;
+            }
+            int endIndex = matchingBrace(output, braceIndex);
+            if (endIndex < 0) {
+                searchFrom = repositoriesIndex + "repositories".length();
+                continue;
+            }
+            String block = output.substring(braceIndex + 1, endIndex);
+            if (!block.contains("maven.aliyun.com")) {
+                String insertion = " " + MIRROR_REPOSITORIES + " ";
+                output.insert(braceIndex + 1, insertion);
+                endIndex += insertion.length();
+            }
+            searchFrom = endIndex + 1;
+        }
+        return output.toString();
     }
 
     private static String removeGradleBlock(String build, String blockName) {

@@ -101,9 +101,6 @@
     <string name="requirement_required">Requirement is required.</string>
     <string name="invalid_package_name">Use a lowercase package name like com.example.app.</string>
     <string name="prompt_hint">Describe requirements or plan changes</string>
-    <string name="tab_design">Design</string>
-    <string name="tab_execute">Execute</string>
-    <string name="tab_build">Build</string>
     <string name="generate">Generate Plan</string>
     <string name="execute_plan">Execute Next Step</string>
     <string name="plan_tasks">Plan Tasks</string>

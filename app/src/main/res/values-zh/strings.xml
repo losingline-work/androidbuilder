@@ -101,9 +101,6 @@
     <string name="requirement_required">请先输入需求。</string>
     <string name="invalid_package_name">请输入小写包名，例如 com.example.app。</string>
     <string name="prompt_hint">描述需求或补充计划修改意见</string>
-    <string name="tab_design">设计</string>
-    <string name="tab_execute">执行</string>
-    <string name="tab_build">构建</string>
     <string name="generate">生成计划</string>
     <string name="execute_plan">执行下一步</string>
     <string name="plan_tasks">计划任务</string>

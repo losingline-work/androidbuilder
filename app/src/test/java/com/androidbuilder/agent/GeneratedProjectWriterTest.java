@@ -29,11 +29,25 @@ public class GeneratedProjectWriterTest {
         assertFalse(containsFileWithSuffix(root, ".kt"));
         String rootBuild = FileUtils.readText(new File(root, "build.gradle"));
         String appBuild = FileUtils.readText(new File(root, "app/build.gradle"));
-        assertFalse(rootBuild.contains("kotlin"));
+        String gradleProperties = FileUtils.readText(new File(root, "gradle.properties"));
+        String settings = FileUtils.readText(new File(root, "settings.gradle"));
+        assertFalse(rootBuild.contains("org.jetbrains.kotlin.android"));
+        assertFalse(rootBuild.contains("kotlinOptions"));
         assertFalse(appBuild.contains("kotlin"));
+        assertTrue(rootBuild.contains("details.requested.group == 'org.jetbrains.kotlin'"));
+        assertTrue(rootBuild.contains("details.requested.name.startsWith('kotlin-stdlib')"));
+        assertTrue(rootBuild.contains("details.useVersion '1.8.22'"));
         assertTrue(appBuild.contains("sourceCompatibility JavaVersion.VERSION_1_8"));
         assertTrue(appBuild.contains("targetCompatibility JavaVersion.VERSION_1_8"));
         assertFalse(appBuild.contains("VERSION_17"));
+        assertTrue(settings.contains("https://maven.aliyun.com/repository/google"));
+        assertTrue(settings.contains("https://maven.aliyun.com/repository/public"));
+        assertTrue(settings.contains("https://maven.aliyun.com/repository/gradle-plugin"));
+        assertTrue(gradleProperties.contains("systemProp.org.gradle.internal.http.connectionTimeout=30000"));
+        assertTrue(gradleProperties.contains("systemProp.org.gradle.internal.http.socketTimeout=30000"));
+        assertTrue(gradleProperties.contains("org.gradle.vfs.watch=false"));
+        assertFalse(FileUtils.readText(new File(root, "app/src/main/java/com/example/demo/MainActivity.java")).contains("->"));
+        assertFalse(FileUtils.readText(new File(root, "app/src/main/java/com/example/demo/EditItemActivity.java")).contains("->"));
     }
 
     private boolean containsFileWithSuffix(File file, String suffix) {

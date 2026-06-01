@@ -19,6 +19,9 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class EmbeddedRuntimeBackend implements BuildBackend {
     private final Context context;
@@ -100,8 +103,9 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             FileUtils.appendText(log, "Running embedded build with " + gradle.getAbsolutePath() + "\n");
             ProcessResult version = runCommand(sourceWorkDir, log, listener, job, gradle.getAbsolutePath(), "--version");
             if (version.exitCode != 0) {
-                String error = summarizeFailure("Gradle smoke test failed", version);
-                repository.updateBuildJob(job.id, "failed", "embedded_runtime_gradle_start_failed", log.getAbsolutePath(), null, error, job.retryCount);
+                boolean timeout = version.exitCode == 124;
+                String error = summarizeFailure(timeout ? "Gradle smoke test timed out" : "Gradle smoke test failed", version);
+                repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "embedded_runtime_gradle_start_failed", log.getAbsolutePath(), null, error, job.retryCount);
                 repository.addMessage(job.projectId, "assistant", "Build failed before Gradle could start:\n" + error, job.id);
                 listener.onJobChanged(job.projectId, job.id);
                 return;
@@ -114,6 +118,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 buildArgs.add(initScript.getAbsolutePath());
             }
             buildArgs.add("--no-daemon");
+            buildArgs.add("--console=plain");
             buildArgs.add("assembleDebug");
             buildArgs.add("--stacktrace");
             ProcessResult build = runCommand(sourceWorkDir, log, listener, job, buildArgs.toArray(new String[0]));
@@ -125,9 +130,10 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 repository.updateBuildJob(job.id, "success", "embedded_runtime_finished", log.getAbsolutePath(), artifact.getAbsolutePath(), null, job.retryCount);
                 repository.addMessage(job.projectId, "assistant", "Build result: success: APK built with embedded runtime", job.id);
             } else {
-                String error = summarizeFailure("embedded runtime build exited with " + build.exitCode + (apk == null ? " and did not produce an APK" : ""), build);
+                boolean timeout = build.exitCode == 124;
+                String error = summarizeFailure(timeout ? "embedded runtime build timed out" : "embedded runtime build exited with " + build.exitCode + (apk == null ? " and did not produce an APK" : ""), build);
                 FileUtils.appendText(log, error + "\n");
-                repository.updateBuildJob(job.id, "failed", "embedded_runtime_finished", log.getAbsolutePath(), null, error, job.retryCount);
+                repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "embedded_runtime_finished", log.getAbsolutePath(), null, error, job.retryCount);
                 repository.addMessage(job.projectId, "assistant", "Build result: failed\n" + error, job.id);
             }
         } catch (Exception error) {
@@ -209,10 +215,18 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         String repo = offlineMaven.getAbsolutePath().replace("\\", "\\\\").replace("'", "\\'");
         FileUtils.writeText(init,
                 "allprojects {\n" +
-                        "    repositories { maven { url uri('" + repo + "') }; google(); mavenCentral() }\n" +
+                        "    repositories { maven { url uri('" + repo + "') }; " +
+                        "maven { url 'https://maven.aliyun.com/repository/google' }; " +
+                        "maven { url 'https://maven.aliyun.com/repository/public' }; " +
+                        "maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }; " +
+                        "google(); mavenCentral() }\n" +
                         "}\n" +
                         "settingsEvaluated { settings ->\n" +
-                        "    settings.pluginManagement.repositories { maven { url = uri('" + repo + "') }; google(); gradlePluginPortal(); mavenCentral() }\n" +
+                        "    settings.pluginManagement.repositories { maven { url = uri('" + repo + "') }; " +
+                        "maven { url 'https://maven.aliyun.com/repository/google' }; " +
+                        "maven { url 'https://maven.aliyun.com/repository/public' }; " +
+                        "maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }; " +
+                        "google(); gradlePluginPortal(); mavenCentral() }\n" +
                         "}\n");
         return init;
     }
@@ -498,8 +512,32 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         long lastNotifyAt = 0;
         int contextLines = 0;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            AtomicLong lastOutputAt = new AtomicLong(System.currentTimeMillis());
+            AtomicBoolean timedOut = new AtomicBoolean(false);
+            AtomicReference<String> timeoutMessage = new AtomicReference<>("");
+            long startedAt = lastOutputAt.get();
+            Thread watchdog = new Thread(() -> {
+                while (process.isAlive() && !Thread.currentThread().isInterrupted()) {
+                    long now = System.currentTimeMillis();
+                    if (BuildTimeoutPolicy.exceededTotalTimeout(now, startedAt) ||
+                            BuildTimeoutPolicy.exceededIdleTimeout(now, lastOutputAt.get())) {
+                        timedOut.set(true);
+                        timeoutMessage.set(BuildTimeoutPolicy.timeoutMessage(now, startedAt, lastOutputAt.get()));
+                        destroyProcess(process);
+                        return;
+                    }
+                    try {
+                        Thread.sleep(1000L);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }, "embedded-build-watchdog");
+            watchdog.setDaemon(true);
+            watchdog.start();
             String line;
             while ((line = reader.readLine()) != null) {
+                lastOutputAt.set(System.currentTimeMillis());
                 FileUtils.appendText(log, line + "\n");
                 if (head.length() < 5000) {
                     head.append(line).append('\n');
@@ -524,10 +562,34 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                     listener.onJobChanged(job.projectId, job.id);
                 }
             }
+            int exitCode = process.waitFor();
+            watchdog.interrupt();
+            if (timedOut.get()) {
+                String message = timeoutMessage.get();
+                if (message == null || message.isEmpty()) {
+                    message = BuildTimeoutPolicy.timeoutMessage(System.currentTimeMillis(), startedAt, lastOutputAt.get());
+                }
+                FileUtils.appendText(log, message + "\n");
+                tail.append(message).append('\n');
+                failureContext.append(message).append('\n');
+                listener.onJobChanged(job.projectId, job.id);
+                return new ProcessResult(124, head.toString().trim(), failureContext.toString().trim(), tail.toString().trim());
+            }
+            listener.onJobChanged(job.projectId, job.id);
+            return new ProcessResult(exitCode, head.toString().trim(), failureContext.toString().trim(), tail.toString().trim());
         }
-        int exitCode = process.waitFor();
-        listener.onJobChanged(job.projectId, job.id);
-        return new ProcessResult(exitCode, head.toString().trim(), failureContext.toString().trim(), tail.toString().trim());
+    }
+
+    private void destroyProcess(Process process) {
+        process.destroy();
+        try {
+            Thread.sleep(3000L);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+        if (process.isAlive()) {
+            process.destroyForcibly();
+        }
     }
 
     private String summarizeFailure(String prefix, ProcessResult result) {
