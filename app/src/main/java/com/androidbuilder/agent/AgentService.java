@@ -25,7 +25,8 @@ import java.util.regex.Pattern;
 
 public class AgentService {
     private static final int SOURCE_SNAPSHOT_LIMIT = 18000;
-    private static final int SOURCE_FILE_PREVIEW_LIMIT = 2600;
+    private static final int SOURCE_FILE_PREVIEW_LIMIT = 3500;
+    private static final int SOURCE_FOCUS_FILE_LIMIT = 12000;
     private static final int BUILD_LOG_PREVIEW_LIMIT = 7000;
     private static final int POLICY_REWRITE_ATTEMPTS = 3;
 
@@ -52,6 +53,10 @@ public class AgentService {
         this.operationsWriter = new FileOperationsWriter(new DependencyGuard(
                 BuildBackendSettings.dependencyMode(this.context),
                 BuildBackendSettings.offlineMavenDir(this.context)));
+    }
+
+    public void setProgressListener(OpenAiClient.ProgressListener listener) {
+        openAiClient.setProgressListener(listener);
     }
 
     public void generateAsync(long projectId, String prompt, Callback callback) {
@@ -260,8 +265,11 @@ public class AgentService {
                 ? fallbackRepairPlan(chinese)
                 : plan.content;
         BuildJobRecord job = repository.createBuildJob(projectId);
+        File jobDir = repository.jobDir(projectId, job.id);
+        File logs = new File(jobDir, "build.log");
         try {
-            repository.updateBuildJob(job.id, "generating", "repairing_build_failure", null, null, null, 0);
+            FileUtils.writeText(logs, chinese ? "开始根据构建日志修复当前源码。\n" : "Repairing current source from build log.\n");
+            repository.updateBuildJob(job.id, "generating", "repairing_build_failure", logs.getAbsolutePath(), null, null, 0);
             repository.addMessage(projectId, "assistant", chinese ? "正在根据构建日志修复当前源码。" : "Repairing the current source from the build log.", job.id);
 
             String instruction = repairInstruction(buildLog, chinese);
@@ -275,18 +283,22 @@ public class AgentService {
                     snapshot,
                     chinese);
 
-            File jobDir = repository.jobDir(projectId, job.id);
             File projectZip = new File(jobDir, "project.zip");
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
-            File logs = new File(jobDir, "build.log");
-            FileUtils.writeText(logs, "Repaired build failure\n" + operations.summary + "\nWaiting for build.\n");
+            FileUtils.appendText(logs, (chinese ? "修复完成：\n" : "Repair complete:\n") + operations.summary + "\n" + (chinese ? "等待重新构建。\n" : "Waiting for build.\n"));
 
             repository.updateProjectPlanStatus(projectId, "generated", job.id);
             repository.addMessage(projectId, "assistant", (chinese ? "已完成构建修复：" : "Build repair complete: ") + operations.summary, job.id);
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
         } catch (Exception error) {
-            repository.updateBuildJob(job.id, "failed", "repair_failed", null, null, error.getMessage(), job.retryCount);
+            String message = error.getMessage() == null ? error.toString() : error.getMessage();
+            try {
+                FileUtils.appendText(logs, (chinese ? "修复失败：" : "Repair failed: ") + message + "\n");
+            } catch (Exception ignored) {
+            }
+            repository.updateBuildJob(job.id, "failed", "repair_failed", logs.getAbsolutePath(), null, message, job.retryCount);
+            repository.addMessage(projectId, "assistant", context.getString(com.androidbuilder.R.string.repair_build_failed, message), job.id);
             throw error;
         }
     }
@@ -296,8 +308,8 @@ public class AgentService {
         IllegalArgumentException lastPolicyError = null;
         for (int attempt = 1; attempt <= POLICY_REWRITE_ATTEMPTS; attempt++) {
             String operationsJson = openAiClient.createTaskOperations(planContent, taskTitle, instruction, snapshot, chinese);
-            TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
             try {
+                TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
                 operationsWriter.apply(sourceDir, operations);
                 return operations;
             } catch (IllegalArgumentException policyError) {
@@ -306,14 +318,16 @@ public class AgentService {
                 }
                 lastPolicyError = policyError;
                 instruction = PolicyRewriteInstruction.create(taskInstruction, policyError.getMessage(), attempt + 1);
+                // Refocus the snapshot on the files/types named in the rejection so the next attempt
+                // sees the offending caller and the real class declarations in full (untruncated).
+                snapshot = sourceSnapshot(sourceDir, policyError.getMessage());
             }
         }
         throw lastPolicyError == null ? new IllegalStateException("Task operation generation failed.") : lastPolicyError;
     }
 
     private boolean isRewriteablePolicyError(IllegalArgumentException error) {
-        String message = error.getMessage();
-        return message != null && (message.startsWith("Dependency policy blocked") || message.startsWith("Generated source policy blocked"));
+        return TaskOperationErrorPolicy.shouldRequestRewrite(error);
     }
 
     private CapabilityAssessment assessCapability(String text) {
@@ -355,6 +369,11 @@ public class AgentService {
         if (chinese) {
             return "根据下面的构建失败日志修复当前源码。只做最小必要改动，不要重新生成整个项目，不要删除无关功能。"
                     + "如果错误来自依赖策略，请改用当前依赖模式允许的 Android SDK/Java/XML 实现。"
+                    + "如果是 javac 编译错误，必须逐条处理所有 diagnostics，不要只修第一条；"
+                    + "所有方法调用必须存在且参数个数/类型匹配；所有 DTO/model 字段访问必须真实存在且可见，例如 item.total 要求 CategorySum 声明 total 字段或提供对应 getter；private 字段要改用 getter/setter 或同步调整 DTO 字段可见性；"
+                    + "统计/汇总 DTO 给 Adapter 展示时，不要访问未声明的 item.categoryName、item.percent 等字段；要么补齐 DTO 字段/getter，要么把 Adapter 改为真实存在的字段。DAO/helper 构造函数必须按声明传参，例如 CategoryDAO(Context) 不能传 DBHelper，必须改传 context 或同步修改构造函数与所有调用点。"
+                    + "修改 Activity/Adapter 时必须同步更新 DAO、model、helper 中对应的方法签名和字段。"
+                    + "如果计划或需求涉及版本升级、发版、测试版、APK 迭代或构建号，必须保持或修正 app/build.gradle 中的 versionCode/versionName：versionCode 必须大于当前旧值，versionName 按需求指定版本或递增补丁号，禁止降级。"
                     + "不要使用 Java lambda 或 -> 语法，监听器必须写成匿名内部类；"
                     + "如果是 Java 引用错误：Fragment 中不要直接调用 findViewById，要使用 inflated root view.findViewById 或 requireView().findViewById；"
                     + "不要使用 Kotlin synthetic 视图变量（例如 btn_save.setOnClickListener），必须先从 dialog/root view 中 findViewById 声明局部变量；"
@@ -362,6 +381,9 @@ public class AgentService {
         }
         return "Repair the current source based on the build failure log below. Make the smallest necessary changes, do not regenerate the whole project, and do not remove unrelated features. "
                 + "If the error comes from dependency policy, rewrite the implementation using Android SDK/Java/XML APIs allowed by the active dependency mode. "
+                + "If these are javac diagnostics, fix every diagnostic, not just the first one. Every method call must have an existing declaration with matching argument count and types. Every direct DTO/model field access must actually exist and be visible; for example item.total requires CategorySum to declare total or expose a matching getter. Use getters/setters or adjust DTO field visibility consistently. When changing an Activity or Adapter, update the corresponding DAO, model, and helper APIs in the same repair. "
+                + "For aggregate/statistics DTOs used by adapters, do not access undeclared item.categoryName, item.percent, or similar fields; either add DTO fields/getters or update the adapter to real fields. DAO/helper constructor calls must pass the declared type, e.g. CategoryDAO(Context) cannot receive DBHelper; pass context or update the constructor and every caller consistently. "
+                + VersionUpgradePolicy.prompt() + " "
                 + "Do not use Java lambdas or -> syntax; listeners must use anonymous inner classes. "
                 + "For Java reference errors: in Fragments, do not call findViewById directly; use the inflated root view.findViewById or requireView().findViewById. "
                 + "Do not use Kotlin synthetic view variables such as btn_save.setOnClickListener; first declare local variables from the dialog/root view using findViewById. "
@@ -409,13 +431,56 @@ public class AgentService {
         if (focusText == null || focusText.trim().isEmpty()) {
             return;
         }
-        Matcher matcher = Pattern.compile("(?:^|/)(app/src/[^\\s:]+\\.(?:kt|java|xml|gradle|kts))").matcher(focusText);
-        while (matcher.find() && snapshot.length() <= SOURCE_SNAPSHOT_LIMIT) {
-            File file = new File(root, matcher.group(1));
-            appendSourceFile(root, file, snapshot, seen);
+        // Files that the failure points at are appended in full (not preview-truncated) and first,
+        // so the model can see and fix the whole offending file, e.g. every synthetic view access.
+        Matcher pathMatcher = Pattern.compile("(?:^|/)(app/src/[^\\s:]+\\.(?:kt|java|xml|gradle|kts))").matcher(focusText);
+        while (pathMatcher.find() && snapshot.length() <= SOURCE_SNAPSHOT_LIMIT) {
+            File file = new File(root, pathMatcher.group(1));
+            appendSourceFile(root, file, snapshot, seen, true);
+        }
+        // Guard/compiler messages often name only the bare file ("... in AddTransactionActivity.java."),
+        // so also resolve plain file names by searching the tree.
+        Matcher nameMatcher = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*\\.(?:kt|java|xml))\\b").matcher(focusText);
+        while (nameMatcher.find() && snapshot.length() <= SOURCE_SNAPSHOT_LIMIT) {
+            appendSourceFilesNamed(root, root, nameMatcher.group(1), snapshot, seen, true);
+        }
+        for (String type : BuildLogContextExtractor.referencedJavaTypes(focusText)) {
+            appendSourceFilesNamed(root, root, type + ".java", snapshot, seen, true);
+        }
+        // Capitalized type identifiers named in the failure (e.g. "CategoryDao", "DBHelper" from a
+        // constructor-mismatch message) are pulled in full so the model can reconcile caller and class.
+        Matcher typeMatcher = Pattern.compile("\\b([A-Z][A-Za-z0-9_]*)\\b").matcher(focusText);
+        int typeBudget = 16;
+        Set<String> triedTypes = new HashSet<>();
+        while (typeMatcher.find() && typeBudget > 0 && snapshot.length() <= SOURCE_SNAPSHOT_LIMIT) {
+            String typeName = typeMatcher.group(1);
+            if (!triedTypes.add(typeName)) {
+                continue;
+            }
+            typeBudget--;
+            appendSourceFilesNamed(root, root, typeName + ".java", snapshot, seen, true);
         }
         if (focusText.contains("Unresolved reference") || focusText.contains("findViewById") || focusText.contains("R.id")) {
             appendSourceSnapshot(root, new File(root, "app/src/main/res/layout"), snapshot, seen);
+        }
+    }
+
+    private void appendSourceFilesNamed(File root, File file, String fileName, StringBuilder snapshot, Set<String> seen, boolean full) {
+        if (file == null || !file.exists() || snapshot.length() > SOURCE_SNAPSHOT_LIMIT) {
+            return;
+        }
+        if (file.isFile()) {
+            if (file.getName().equals(fileName)) {
+                appendSourceFile(root, file, snapshot, seen, full);
+            }
+            return;
+        }
+        File[] children = file.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            appendSourceFilesNamed(root, child, fileName, snapshot, seen, full);
         }
     }
 
@@ -437,6 +502,10 @@ public class AgentService {
     }
 
     private void appendSourceFile(File root, File file, StringBuilder snapshot, Set<String> seen) {
+        appendSourceFile(root, file, snapshot, seen, false);
+    }
+
+    private void appendSourceFile(File root, File file, StringBuilder snapshot, Set<String> seen, boolean full) {
         if (file == null || !file.exists() || snapshot.length() > SOURCE_SNAPSHOT_LIMIT) {
             return;
         }
@@ -451,8 +520,9 @@ public class AgentService {
             }
             snapshot.append("\n--- ").append(path).append(" ---\n");
             String text = FileUtils.readText(file);
-            if (text.length() > SOURCE_FILE_PREVIEW_LIMIT) {
-                text = text.substring(0, SOURCE_FILE_PREVIEW_LIMIT) + "\n...[truncated]";
+            int limit = full ? SOURCE_FOCUS_FILE_LIMIT : SOURCE_FILE_PREVIEW_LIMIT;
+            if (text.length() > limit) {
+                text = text.substring(0, limit) + "\n...[truncated]";
             }
             snapshot.append(text).append("\n");
         } catch (Exception ignored) {

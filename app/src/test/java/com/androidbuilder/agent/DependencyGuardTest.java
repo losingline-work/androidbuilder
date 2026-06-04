@@ -8,6 +8,7 @@ import java.io.File;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 public class DependencyGuardTest {
     @Test
@@ -85,23 +86,40 @@ public class DependencyGuardTest {
     }
 
     @Test
-    public void onlineBlocksUnapprovedMavenDependencies() {
+    public void onlineAllowsTrustedGroupsWithAnyPinnedVersion() {
+        DependencyGuard guard = new DependencyGuard(BuildBackendSettings.DEPENDENCY_ONLINE, new File("missing"));
+
+        guard.validateContent("app/build.gradle", "dependencies { implementation \"androidx.appcompat:appcompat:1.6.1\"; implementation \"com.google.code.gson:gson:2.11.0\"; implementation \"org.apache.commons:commons-lang3:3.17.0\" }");
+    }
+
+    @Test
+    public void onlineBlocksUntrustedMavenGroups() {
         DependencyGuard guard = new DependencyGuard(BuildBackendSettings.DEPENDENCY_ONLINE, new File("missing"));
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
                 guard.validateContent("app/build.gradle", "dependencies { implementation \"com.squareup.retrofit2:retrofit:2.11.0\" }"));
 
-        assertEquals("Dependency policy blocked unapproved online Maven dependency: com.squareup.retrofit2:retrofit:2.11.0", error.getMessage());
+        assertTrue(error.getMessage().startsWith("Dependency policy blocked unapproved online Maven dependency: com.squareup.retrofit2:retrofit:2.11.0"));
     }
 
     @Test
-    public void onlineBlocksUnapprovedVersions() {
+    public void onlineBlocksDynamicVersions() {
         DependencyGuard guard = new DependencyGuard(BuildBackendSettings.DEPENDENCY_ONLINE, new File("missing"));
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
-                guard.validateContent("app/build.gradle", "dependencies { implementation \"androidx.appcompat:appcompat:1.6.1\" }"));
+                guard.validateContent("app/build.gradle", "dependencies { implementation \"androidx.appcompat:appcompat:1.+\" }"));
 
-        assertEquals("Dependency policy blocked unapproved online Maven dependency: androidx.appcompat:appcompat:1.6.1", error.getMessage());
+        assertTrue(error.getMessage().startsWith("Dependency policy blocked dynamic Maven version: androidx.appcompat:appcompat:1.+"));
+    }
+
+    @Test
+    public void onlineBlocksComposeAndProcessorLibrariesUnderTrustedGroup() {
+        DependencyGuard guard = new DependencyGuard(BuildBackendSettings.DEPENDENCY_ONLINE, new File("missing"));
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                guard.validateContent("app/build.gradle", "dependencies { implementation \"androidx.room:room-runtime:2.6.1\" }"));
+
+        assertTrue(error.getMessage().contains("Kotlin/Compose/annotation processing"));
     }
 
     @Test

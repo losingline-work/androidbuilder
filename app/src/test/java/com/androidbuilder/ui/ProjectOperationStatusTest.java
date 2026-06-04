@@ -4,6 +4,7 @@ import com.androidbuilder.model.BuildJobRecord;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -28,5 +29,17 @@ public class ProjectOperationStatusTest {
     @Test
     public void hiddenWhenMessageIsEmpty() {
         assertFalse(ProjectOperationStatus.shouldShow(" ", true, true, null));
+    }
+
+    @Test
+    public void displayTextIncludesElapsedTimeWhenProvided() {
+        assertEquals("Repairing failed build... · 3s elapsed",
+                ProjectOperationStatus.displayText("Repairing failed build...", "3s elapsed"));
+    }
+
+    @Test
+    public void displayTextTrimsEmptyElapsedTime() {
+        assertEquals("Repairing failed build...",
+                ProjectOperationStatus.displayText(" Repairing failed build... ", " "));
     }
 }

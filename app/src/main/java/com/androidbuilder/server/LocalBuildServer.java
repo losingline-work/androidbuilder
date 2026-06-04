@@ -186,8 +186,28 @@ public class LocalBuildServer {
         String status = body.startsWith("success") ? "success" : "failed";
         String error = "failed".equals(status) ? body : null;
         repository.updateBuildJob(jobId, status, "finished", job == null ? null : job.logsPath, job == null ? null : job.apkPath, error, job == null ? 0 : job.retryCount);
-        repository.addMessage(projectId, "assistant", "Build result: " + body, jobId);
+        repository.addMessage(projectId, "assistant", buildResultMessage(status, body), jobId);
         listener.onJobChanged(projectId, jobId);
+    }
+
+    private String buildResultMessage(String status, String body) {
+        if ("success".equals(status)) {
+            return "Build complete: success. APK is ready.";
+        }
+        return "Build complete: failed. " + firstDetailLine(body);
+    }
+
+    private String firstDetailLine(String detail) {
+        if (detail != null) {
+            String[] lines = detail.split("\\r?\\n");
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (!trimmed.isEmpty()) {
+                    return trimmed.length() > 240 ? trimmed.substring(0, 240).trim() + "..." : trimmed;
+                }
+            }
+        }
+        return "See the build log for details.";
     }
 
     private int contentLength(Map<String, String> headers) {

@@ -29,6 +29,8 @@ import com.google.android.material.appbar.MaterialToolbar;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 
 public class SettingsActivity extends BaseActivity {
     private static final int REQUEST_TERMUX_RUN_COMMAND = 8001;
@@ -37,25 +39,36 @@ public class SettingsActivity extends BaseActivity {
     private String[] languageLabels;
     private String[] backendLabels;
     private String[] dependencyModeLabels;
+    private String[] openaiModelLabels;
     private String[] deepseekModelLabels;
     private String[] minimaxModelLabels;
+    private String[] endpointPresetLabels = new String[0];
 
     private EditText apiKey;
     private EditText endpoint;
     private EditText model;
+    private AutoCompleteTextView openaiModelSpinner;
     private AutoCompleteTextView deepseekModelSpinner;
     private AutoCompleteTextView minimaxModelSpinner;
+    private AutoCompleteTextView endpointPresetSpinner;
     private AutoCompleteTextView providerSpinner;
     private AutoCompleteTextView languageSpinner;
     private AutoCompleteTextView backendSpinner;
     private AutoCompleteTextView dependencyModeSpinner;
     private View termuxSection;
+    private View openaiModelLayout;
     private View deepseekModelLayout;
     private View minimaxModelLayout;
+    private androidx.appcompat.widget.SwitchCompat thinkingModeSwitch;
+    private View thinkingModeHint;
     private View modelInputLayout;
+    private View endpointPresetLayout;
     private EditText runtimeBootstrapUrlInput;
     private TextView runtimeStatusText;
     private TextView offlineMavenStatusText;
+    private final Map<String, ProviderDraft> providerDrafts = new HashMap<>();
+    private SharedPreferences cloudPrefs;
+    private String selectedProvider = OpenAiClient.PROVIDER_OPENAI;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,11 +80,17 @@ public class SettingsActivity extends BaseActivity {
         apiKey = findViewById(R.id.apiKeyInput);
         endpoint = findViewById(R.id.endpointInput);
         model = findViewById(R.id.modelInput);
+        openaiModelSpinner = findViewById(R.id.openaiModelSpinner);
         deepseekModelSpinner = findViewById(R.id.deepseekModelSpinner);
         minimaxModelSpinner = findViewById(R.id.minimaxModelSpinner);
+        endpointPresetSpinner = findViewById(R.id.endpointPresetSpinner);
+        openaiModelLayout = findViewById(R.id.openaiModelLayout);
         deepseekModelLayout = findViewById(R.id.deepseekModelLayout);
         minimaxModelLayout = findViewById(R.id.minimaxModelLayout);
+        thinkingModeSwitch = findViewById(R.id.thinkingModeSwitch);
+        thinkingModeHint = findViewById(R.id.thinkingModeHint);
         modelInputLayout = findViewById(R.id.modelInputLayout);
+        endpointPresetLayout = findViewById(R.id.endpointPresetLayout);
         providerSpinner = findViewById(R.id.providerSpinner);
         languageSpinner = findViewById(R.id.languageSpinner);
         backendSpinner = findViewById(R.id.backendSpinner);
@@ -81,14 +100,10 @@ public class SettingsActivity extends BaseActivity {
         runtimeStatusText = findViewById(R.id.runtimeStatusText);
         offlineMavenStatusText = findViewById(R.id.offlineMavenStatusText);
         configureSpinners();
-        SharedPreferences prefs = getSharedPreferences(OpenAiClient.PREFS, MODE_PRIVATE);
-        apiKey.setText(prefs.getString(OpenAiClient.KEY_API_KEY, ""));
-        String provider = prefs.getString(OpenAiClient.KEY_PROVIDER, OpenAiClient.PROVIDER_OPENAI);
-        select(providerSpinner, providerLabels, providerIndex(provider));
-        endpoint.setText(prefs.getString(OpenAiClient.KEY_ENDPOINT, OpenAiClient.defaultEndpoint(provider)));
-        model.setText(prefs.getString(OpenAiClient.KEY_MODEL, OpenAiClient.defaultModel(provider)));
-        select(deepseekModelSpinner, deepseekModelLabels, deepseekModelIndex(prefs.getString(OpenAiClient.KEY_MODEL, OpenAiClient.defaultModel(provider))));
-        select(minimaxModelSpinner, minimaxModelLabels, minimaxModelIndex(prefs.getString(OpenAiClient.KEY_MODEL, OpenAiClient.defaultModel(provider))));
+        cloudPrefs = getSharedPreferences(OpenAiClient.PREFS, MODE_PRIVATE);
+        selectedProvider = cloudPrefs.getString(OpenAiClient.KEY_PROVIDER, OpenAiClient.PROVIDER_OPENAI);
+        select(providerSpinner, providerLabels, providerIndex(selectedProvider));
+        applyProviderDraft(selectedProvider);
         select(languageSpinner, languageLabels, languageIndex(AppSettings.language(this)));
         select(backendSpinner, backendLabels, backendIndex(BuildBackendSettings.selected(this)));
         select(dependencyModeSpinner, dependencyModeLabels, dependencyModeIndex(BuildBackendSettings.dependencyMode(this)));
@@ -118,24 +133,32 @@ public class SettingsActivity extends BaseActivity {
         languageLabels = new String[]{getString(R.string.language_system), "English", "中文"};
         backendLabels = new String[]{getString(R.string.backend_embedded), getString(R.string.backend_external_termux)};
         dependencyModeLabels = new String[]{getString(R.string.dependency_mode_offline_safe), getString(R.string.dependency_mode_local_cache), getString(R.string.dependency_mode_online)};
+        openaiModelLabels = OpenAiClient.openAiModels();
         deepseekModelLabels = new String[]{getString(R.string.deepseek_model_v4_flash), getString(R.string.deepseek_model_v4_pro)};
-        minimaxModelLabels = new String[]{getString(R.string.minimax_model_m2), getString(R.string.minimax_model_m1), getString(R.string.minimax_model_text_01)};
+        minimaxModelLabels = new String[]{
+                getString(R.string.minimax_model_m3),
+                getString(R.string.minimax_model_m27),
+                getString(R.string.minimax_model_m27_highspeed),
+                getString(R.string.minimax_model_m25),
+                getString(R.string.minimax_model_m25_highspeed),
+                getString(R.string.minimax_model_m21),
+                getString(R.string.minimax_model_m21_highspeed),
+                getString(R.string.minimax_model_m2)};
         configureDropdown(providerSpinner, providerLabels);
         configureDropdown(languageSpinner, languageLabels);
         configureDropdown(backendSpinner, backendLabels);
         configureDropdown(dependencyModeSpinner, dependencyModeLabels);
+        configureDropdown(openaiModelSpinner, openaiModelLabels);
         configureDropdown(deepseekModelSpinner, deepseekModelLabels);
         configureDropdown(minimaxModelSpinner, minimaxModelLabels);
+        configureDropdown(endpointPresetSpinner, endpointPresetLabels);
         providerSpinner.setOnItemClickListener((parent, view, position, id) -> {
-            String provider = providerAt(position);
-            if (!OpenAiClient.PROVIDER_CUSTOM.equals(provider)) {
-                endpoint.setText(OpenAiClient.defaultEndpoint(provider));
-                if (!OpenAiClient.PROVIDER_DEEPSEEK.equals(provider) && !OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
-                    model.setText(OpenAiClient.defaultModel(provider));
-                }
-            }
-            updateModelInputVisibility();
+            captureProviderDraft(selectedProvider);
+            selectedProvider = providerAt(position);
+            applyProviderDraft(selectedProvider);
         });
+        endpointPresetSpinner.setOnItemClickListener((parent, view, position, id) ->
+                applyEndpointPreset(providerAt(selectedIndex(providerSpinner, providerLabels)), position));
         backendSpinner.setOnItemClickListener((parent, view, position, id) -> updateTermuxSectionVisibility());
     }
 
@@ -144,38 +167,192 @@ public class SettingsActivity extends BaseActivity {
         view.setThreshold(0);
     }
 
+    private ProviderDraft providerDraft(String provider) {
+        ProviderDraft draft = providerDrafts.get(provider);
+        if (draft == null) {
+            draft = new ProviderDraft(
+                    OpenAiClient.apiKeyForProvider(cloudPrefs, provider),
+                    OpenAiClient.endpointForProvider(cloudPrefs, provider),
+                    OpenAiClient.modelForProvider(cloudPrefs, provider),
+                    OpenAiClient.thinkingEnabledForProvider(cloudPrefs, provider));
+            providerDrafts.put(provider, draft);
+        }
+        return draft;
+    }
+
+    private void applyProviderDraft(String provider) {
+        ProviderDraft draft = providerDraft(provider);
+        apiKey.setText(draft.apiKey);
+        endpoint.setText(draft.endpoint);
+        model.setText(draft.model);
+        select(openaiModelSpinner, openaiModelLabels, openaiModelIndex(draft.model));
+        select(deepseekModelSpinner, deepseekModelLabels, deepseekModelIndex(draft.model));
+        select(minimaxModelSpinner, minimaxModelLabels, minimaxModelIndex(draft.model));
+        thinkingModeSwitch.setChecked(draft.thinking);
+        updateModelInputVisibility();
+        updateEndpointPreset(provider, draft.endpoint);
+    }
+
+    private void captureProviderDraft(String provider) {
+        providerDrafts.put(provider, new ProviderDraft(
+                OpenAiClient.normalizedApiKey(apiKey.getText().toString()),
+                selectedEndpointForProvider(provider),
+                selectedModelForProvider(provider),
+                thinkingModeSwitch.isChecked()));
+    }
+
+    private String selectedEndpointForProvider(String provider) {
+        String presetEndpoint = endpointPresetValueAt(provider, selectedIndex(endpointPresetSpinner, endpointPresetLabels));
+        if (!presetEndpoint.isEmpty()) {
+            return presetEndpoint;
+        }
+        return endpoint.getText().toString().trim();
+    }
+
+    private String selectedModelForProvider(String provider) {
+        if (OpenAiClient.PROVIDER_OPENAI.equals(provider)) {
+            return openaiModelAt(selectedIndex(openaiModelSpinner, openaiModelLabels));
+        }
+        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
+            return deepseekModelAt(selectedIndex(deepseekModelSpinner, deepseekModelLabels));
+        }
+        if (OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
+            return minimaxModelAt(selectedIndex(minimaxModelSpinner, minimaxModelLabels));
+        }
+        return OpenAiClient.normalizedModel(provider, model.getText().toString());
+    }
+
     private void updateModelInputVisibility() {
         String provider = providerAt(selectedIndex(providerSpinner, providerLabels));
+        boolean isOpenAI = OpenAiClient.PROVIDER_OPENAI.equals(provider);
         boolean isDeepSeek = OpenAiClient.PROVIDER_DEEPSEEK.equals(provider);
         boolean isMiniMax = OpenAiClient.PROVIDER_MINIMAX.equals(provider);
+        openaiModelLayout.setVisibility(isOpenAI ? View.VISIBLE : View.GONE);
         deepseekModelLayout.setVisibility(isDeepSeek ? View.VISIBLE : View.GONE);
         minimaxModelLayout.setVisibility(isMiniMax ? View.VISIBLE : View.GONE);
-        modelInputLayout.setVisibility((isDeepSeek || isMiniMax) ? View.GONE : View.VISIBLE);
+        boolean supportsThinking = OpenAiClient.supportsThinkingToggle(provider);
+        thinkingModeSwitch.setVisibility(supportsThinking ? View.VISIBLE : View.GONE);
+        thinkingModeHint.setVisibility(supportsThinking ? View.VISIBLE : View.GONE);
+        modelInputLayout.setVisibility(OpenAiClient.PROVIDER_CUSTOM.equals(provider) ? View.VISIBLE : View.GONE);
+    }
+
+    private void updateEndpointPreset(String provider, String endpointValue) {
+        endpointPresetLabels = endpointPresetLabelsForProvider(provider);
+        configureDropdown(endpointPresetSpinner, endpointPresetLabels);
+        if (endpointPresetLabels.length == 0) {
+            endpointPresetLayout.setVisibility(View.GONE);
+            endpoint.setEnabled(true);
+            return;
+        }
+        endpointPresetLayout.setVisibility(View.VISIBLE);
+        int presetIndex = endpointPresetIndex(provider, endpointValue);
+        select(endpointPresetSpinner, endpointPresetLabels, presetIndex);
+        if (isCustomEndpointPreset(provider, presetIndex)) {
+            endpoint.setText(endpointValue == null ? "" : endpointValue);
+            endpoint.setEnabled(true);
+        } else {
+            endpoint.setText(endpointPresetValueAt(provider, presetIndex));
+            endpoint.setEnabled(false);
+        }
+    }
+
+    private void applyEndpointPreset(String provider, int position) {
+        String presetEndpoint = endpointPresetValueAt(provider, position);
+        boolean custom = presetEndpoint.isEmpty();
+        endpoint.setEnabled(custom);
+        if (!custom) {
+            endpoint.setText(presetEndpoint);
+        }
+    }
+
+    private String[] endpointPresetLabelsForProvider(String provider) {
+        if (OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
+            return new String[]{
+                    getString(R.string.minimax_endpoint_china),
+                    getString(R.string.minimax_endpoint_international),
+                    getString(R.string.endpoint_preset_custom)};
+        }
+        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
+            return new String[]{
+                    getString(R.string.deepseek_endpoint_official),
+                    getString(R.string.deepseek_endpoint_openai_compatible),
+                    getString(R.string.endpoint_preset_custom)};
+        }
+        return new String[0];
+    }
+
+    private int endpointPresetIndex(String provider, String endpointValue) {
+        if (OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
+            if (OpenAiClient.isMiniMaxInternationalEndpoint(endpointValue)) {
+                return 1;
+            }
+            if (OpenAiClient.isMiniMaxChinaEndpoint(endpointValue)) {
+                return 0;
+            }
+            return 2;
+        }
+        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
+            if (OpenAiClient.isDeepSeekOpenAiCompatibleEndpoint(endpointValue)) {
+                return 1;
+            }
+            if (OpenAiClient.isDeepSeekOfficialEndpoint(endpointValue)) {
+                return 0;
+            }
+            return 2;
+        }
+        return 0;
+    }
+
+    private boolean isCustomEndpointPreset(String provider, int position) {
+        return endpointPresetValueAt(provider, position).isEmpty();
+    }
+
+    private String endpointPresetValueAt(String provider, int position) {
+        if (OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
+            if (position == 0) {
+                return OpenAiClient.MINIMAX_CHINA_BASE_URL;
+            }
+            if (position == 1) {
+                return OpenAiClient.MINIMAX_INTERNATIONAL_BASE_URL;
+            }
+        }
+        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
+            if (position == 0) {
+                return OpenAiClient.DEEPSEEK_OFFICIAL_BASE_URL;
+            }
+            if (position == 1) {
+                return OpenAiClient.DEEPSEEK_OPENAI_COMPATIBLE_BASE_URL;
+            }
+        }
+        return "";
     }
 
     private void save() {
         String provider = providerAt(selectedIndex(providerSpinner, providerLabels));
-        String selectedModel;
-        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
-            selectedModel = deepseekModelAt(selectedIndex(deepseekModelSpinner, deepseekModelLabels));
-        } else if (OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
-            selectedModel = minimaxModelAt(selectedIndex(minimaxModelSpinner, minimaxModelLabels));
-        } else {
-            selectedModel = OpenAiClient.normalizedModel(provider, model.getText().toString());
-        }
-        getSharedPreferences(OpenAiClient.PREFS, MODE_PRIVATE)
-                .edit()
+        captureProviderDraft(provider);
+        ProviderDraft selectedDraft = providerDraft(provider);
+        SharedPreferences.Editor editor = cloudPrefs.edit()
                 .putString(OpenAiClient.KEY_PROVIDER, provider)
-                .putString(OpenAiClient.KEY_API_KEY, apiKey.getText().toString().trim())
-                .putString(OpenAiClient.KEY_ENDPOINT, endpoint.getText().toString().trim())
-                .putString(OpenAiClient.KEY_MODEL, selectedModel)
-                .apply();
+                .putString(OpenAiClient.KEY_API_KEY, selectedDraft.apiKey)
+                .putString(OpenAiClient.KEY_ENDPOINT, selectedDraft.endpoint)
+                .putString(OpenAiClient.KEY_MODEL, selectedDraft.model);
+        for (Map.Entry<String, ProviderDraft> entry : providerDrafts.entrySet()) {
+            writeProviderDraft(editor, entry.getKey(), entry.getValue());
+        }
+        editor.apply();
         AppSettings.prefs(this).edit().putString(AppSettings.KEY_LANGUAGE, languageAt(selectedIndex(languageSpinner, languageLabels))).apply();
         BuildBackendSettings.setSelected(this, backendAt(selectedIndex(backendSpinner, backendLabels)));
         BuildBackendSettings.setDependencyMode(this, dependencyModeAt(selectedIndex(dependencyModeSpinner, dependencyModeLabels)));
         BuildBackendSettings.prefs(this).edit().putString(BuildBackendSettings.KEY_BOOTSTRAP_URL, runtimeBootstrapUrlInput.getText().toString().trim()).apply();
         Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show();
         recreate();
+    }
+
+    private void writeProviderDraft(SharedPreferences.Editor editor, String provider, ProviderDraft draft) {
+        editor.putString(OpenAiClient.scopedKey(OpenAiClient.KEY_API_KEY, provider), draft.apiKey)
+                .putString(OpenAiClient.scopedKey(OpenAiClient.KEY_ENDPOINT, provider), draft.endpoint)
+                .putString(OpenAiClient.scopedKey(OpenAiClient.KEY_MODEL, provider), draft.model)
+                .putString(OpenAiClient.scopedKey(OpenAiClient.KEY_THINKING, provider), draft.thinking ? "true" : "false");
     }
 
     private void updateTermuxSectionVisibility() {
@@ -200,6 +377,20 @@ public class SettingsActivity extends BaseActivity {
             }
         }
         return 0;
+    }
+
+    private static final class ProviderDraft {
+        final String apiKey;
+        final String endpoint;
+        final String model;
+        final boolean thinking;
+
+        ProviderDraft(String apiKey, String endpoint, String model, boolean thinking) {
+            this.apiKey = apiKey == null ? "" : apiKey;
+            this.endpoint = endpoint == null ? "" : endpoint;
+            this.model = model == null ? "" : model;
+            this.thinking = thinking;
+        }
     }
 
     private void copyAsset(String asset, String label) {
@@ -482,6 +673,21 @@ public class SettingsActivity extends BaseActivity {
         return OpenAiClient.PROVIDER_OPENAI;
     }
 
+    private int openaiModelIndex(String model) {
+        String value = model == null ? "" : model.trim();
+        for (int index = 0; index < openaiModelLabels.length; index++) {
+            if (openaiModelLabels[index].equals(value)) {
+                return index;
+            }
+        }
+        return 0;
+    }
+
+    private String openaiModelAt(int position) {
+        int safeIndex = Math.max(0, Math.min(position, openaiModelLabels.length - 1));
+        return openaiModelLabels[safeIndex];
+    }
+
     private int deepseekModelIndex(String model) {
         if (OpenAiClient.DEEPSEEK_MODEL_PRO.equals(model)) {
             return 1;
@@ -497,23 +703,53 @@ public class SettingsActivity extends BaseActivity {
     }
 
     private int minimaxModelIndex(String model) {
-        if (OpenAiClient.MINIMAX_MODEL_M1.equals(model)) {
+        if (OpenAiClient.MINIMAX_MODEL_M27.equals(model)) {
             return 1;
         }
-        if (OpenAiClient.MINIMAX_MODEL_TEXT_01.equals(model)) {
+        if (OpenAiClient.MINIMAX_MODEL_M27_HIGHSPEED.equals(model)) {
             return 2;
+        }
+        if (OpenAiClient.MINIMAX_MODEL_M25.equals(model)) {
+            return 3;
+        }
+        if (OpenAiClient.MINIMAX_MODEL_M25_HIGHSPEED.equals(model)) {
+            return 4;
+        }
+        if (OpenAiClient.MINIMAX_MODEL_M21.equals(model)) {
+            return 5;
+        }
+        if (OpenAiClient.MINIMAX_MODEL_M21_HIGHSPEED.equals(model)) {
+            return 6;
+        }
+        if (OpenAiClient.MINIMAX_MODEL_M2.equals(model)) {
+            return 7;
         }
         return 0;
     }
 
     private String minimaxModelAt(int position) {
         if (position == 1) {
-            return OpenAiClient.MINIMAX_MODEL_M1;
+            return OpenAiClient.MINIMAX_MODEL_M27;
         }
         if (position == 2) {
-            return OpenAiClient.MINIMAX_MODEL_TEXT_01;
+            return OpenAiClient.MINIMAX_MODEL_M27_HIGHSPEED;
         }
-        return OpenAiClient.MINIMAX_MODEL_M2;
+        if (position == 3) {
+            return OpenAiClient.MINIMAX_MODEL_M25;
+        }
+        if (position == 4) {
+            return OpenAiClient.MINIMAX_MODEL_M25_HIGHSPEED;
+        }
+        if (position == 5) {
+            return OpenAiClient.MINIMAX_MODEL_M21;
+        }
+        if (position == 6) {
+            return OpenAiClient.MINIMAX_MODEL_M21_HIGHSPEED;
+        }
+        if (position == 7) {
+            return OpenAiClient.MINIMAX_MODEL_M2;
+        }
+        return OpenAiClient.MINIMAX_MODEL_M3;
     }
 
     private int languageIndex(String language) {

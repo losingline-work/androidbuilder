@@ -5,6 +5,7 @@ import java.util.Locale;
 public final class BuildFailureClassifier {
     public enum Kind {
         KOTLIN_COMPILE,
+        JAVA_COMPILE,
         RESOURCE_LINKING,
         DEPENDENCY_POLICY,
         DEPENDENCY_NETWORK,
@@ -54,6 +55,15 @@ public final class BuildFailureClassifier {
         }
         if (containsAny(text, "compiledebugkotlin", "unresolved reference", "kotlin compiler")) {
             return new Result(Kind.KOTLIN_COMPILE, true);
+        }
+        if (containsAny(text,
+                "compiledebugjavawithjavac",
+                ".java:",
+                "cannot find symbol",
+                "has private access",
+                "cannot be applied to given types",
+                "actual and formal argument lists differ")) {
+            return new Result(Kind.JAVA_COMPILE, true);
         }
         if (containsAny(text, "processdebugresources", "linkapplicationandroidresources", "resource linking failed", "androidmanifest.xml")) {
             return new Result(Kind.RESOURCE_LINKING, true);

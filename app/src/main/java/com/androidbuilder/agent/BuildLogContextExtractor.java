@@ -1,0 +1,114 @@
+package com.androidbuilder.agent;
+
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public final class BuildLogContextExtractor {
+    private static final Pattern JAVAC_ERROR = Pattern.compile(".*\\.java:\\d+:\\s+error:.*");
+    private static final Pattern ERROR_COUNT = Pattern.compile("\\d+\\s+errors?");
+    private static final Pattern REFERENCED_TYPE = Pattern.compile("\\btype\\s+([A-Z][A-Za-z0-9_]*)\\b");
+    private static final Pattern SYMBOL_VARIABLE = Pattern.compile("\\bsymbol:\\s+variable\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\b");
+    private static final Pattern LOCATION_VARIABLE_TYPE = Pattern.compile("\\blocation:\\s+variable\\s+\\S+\\s+of\\s+type\\s+([A-Z][A-Za-z0-9_]*)\\b");
+
+    private BuildLogContextExtractor() {
+    }
+
+    public static String javaCompileDiagnostics(String logs, int maxChars) {
+        if (logs == null || logs.trim().isEmpty()) {
+            return "";
+        }
+        StringBuilder diagnostics = new StringBuilder();
+        int trailingLines = 0;
+        for (String line : logs.split("\\R")) {
+            boolean diagnosticStart = isJavacError(line);
+            if (diagnosticStart) {
+                appendLine(diagnostics, line);
+                trailingLines = 6;
+                continue;
+            }
+            if (trailingLines > 0) {
+                appendLine(diagnostics, line);
+                trailingLines--;
+                continue;
+            }
+            if (ERROR_COUNT.matcher(line.trim()).matches()) {
+                appendLine(diagnostics, line);
+            }
+        }
+        return trimMiddle(diagnostics.toString().trim(), maxChars);
+    }
+
+    public static Set<String> referencedJavaTypes(String text) {
+        Set<String> types = new LinkedHashSet<>();
+        if (text == null || text.trim().isEmpty()) {
+            return types;
+        }
+        Matcher matcher = REFERENCED_TYPE.matcher(text);
+        while (matcher.find()) {
+            types.add(matcher.group(1));
+        }
+        return types;
+    }
+
+    public static String missingFieldHints(String logs) {
+        if (logs == null || logs.trim().isEmpty()) {
+            return "";
+        }
+        Set<String> fields = new LinkedHashSet<>();
+        String pendingVariable = null;
+        for (String line : logs.split("\\R")) {
+            Matcher variable = SYMBOL_VARIABLE.matcher(line);
+            if (variable.find()) {
+                pendingVariable = variable.group(1);
+                continue;
+            }
+            if (pendingVariable == null) {
+                continue;
+            }
+            Matcher location = LOCATION_VARIABLE_TYPE.matcher(line);
+            if (location.find()) {
+                fields.add(location.group(1) + "." + pendingVariable);
+                pendingVariable = null;
+            }
+        }
+        if (fields.isEmpty()) {
+            return "";
+        }
+        StringBuilder hints = new StringBuilder("Missing field references:");
+        for (String field : fields) {
+            hints.append("\n- ").append(field);
+        }
+        return hints.toString();
+    }
+
+    private static boolean isJavacError(String line) {
+        if (line == null) {
+            return false;
+        }
+        String lower = line.toLowerCase(java.util.Locale.ROOT);
+        return JAVAC_ERROR.matcher(line).matches() ||
+                lower.contains("error: cannot find symbol") ||
+                lower.contains("has private access") ||
+                lower.contains("cannot be applied to given types") ||
+                lower.contains("actual and formal argument lists differ");
+    }
+
+    private static void appendLine(StringBuilder out, String line) {
+        if (out.length() > 0) {
+            out.append('\n');
+        }
+        out.append(line);
+    }
+
+    private static String trimMiddle(String text, int maxChars) {
+        if (maxChars <= 0 || text.length() <= maxChars) {
+            return text;
+        }
+        String marker = "\n...[truncated middle]...\n";
+        int headLength = Math.max(0, (maxChars - marker.length()) / 2);
+        int tailLength = Math.max(0, maxChars - marker.length() - headLength);
+        return text.substring(0, headLength).trim() + marker + text.substring(text.length() - tailLength).trim();
+    }
+}

@@ -111,6 +111,24 @@
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/endpointPresetLayout"
+                        style="@style/Widget.AndroidBuilder.TextInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="@string/endpoint_preset"
+                        android:visibility="gone"
+                        app:endIconMode="dropdown_menu">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/endpointPresetSpinner"
+                            style="@style/DropdownField"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
                         style="@style/Widget.AndroidBuilder.TextInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -140,20 +158,30 @@
                             android:inputType="textUri" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <TextView
-                        android:id="@+id/modelLabel"
-                        style="@style/TextSectionLabel"
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/openaiModelLayout"
+                        style="@style/Widget.AndroidBuilder.TextInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:text="@string/model" />
+                        android:layout_marginTop="10dp"
+                        android:hint="@string/model"
+                        android:visibility="gone"
+                        app:endIconMode="dropdown_menu">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/openaiModelSpinner"
+                            style="@style/DropdownField"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/deepseekModelLayout"
                         style="@style/Widget.AndroidBuilder.TextInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="10dp"
                         android:hint="@string/model"
                         android:visibility="gone"
                         app:endIconMode="dropdown_menu">
@@ -171,7 +199,7 @@
                         style="@style/Widget.AndroidBuilder.TextInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="10dp"
                         android:hint="@string/model"
                         android:visibility="gone"
                         app:endIconMode="dropdown_menu">
@@ -184,12 +212,32 @@
                             android:inputType="none" />
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/thinkingModeSwitch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:text="@string/thinking_mode"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="15sp"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/thinkingModeHint"
+                        style="@style/TextBodyMedium"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/thinking_mode_hint"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/modelInputLayout"
                         style="@style/Widget.AndroidBuilder.TextInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="10dp"
                         android:hint="@string/model">
 
                         <com.google.android.material.textfield.TextInputEditText

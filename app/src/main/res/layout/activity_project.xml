@@ -32,25 +32,11 @@
             android:paddingEnd="10dp"
             android:paddingBottom="10dp">
 
-            <com.google.android.material.card.MaterialCardView
-                style="@style/Widget.AndroidBuilder.Card.Filled"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp">
-
-                <TextView
-                    android:id="@+id/statusText"
-                    style="@style/TextBodyMedium"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:padding="12dp" />
-            </com.google.android.material.card.MaterialCardView>
-
             <ListView
                 android:id="@+id/messageList"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
                 android:layout_weight="1"
                 android:clipToPadding="false"
                 android:divider="@android:color/transparent"
@@ -81,19 +67,6 @@
                     android:orientation="horizontal">
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/showFilesButton"
-                        style="@style/Widget.AndroidBuilder.Button.Outlined"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:layout_marginEnd="8dp"
-                        android:minWidth="0dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:text="@string/show_source_files"
-                        android:textSize="12sp"
-                        app:icon="@drawable/ic_folder" />
-
-                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/executePlanButton"
                         style="@style/Widget.AndroidBuilder.Button.Outlined"
                         android:layout_width="wrap_content"
@@ -120,6 +93,19 @@
                         app:icon="@drawable/ic_build" />
 
                     <com.google.android.material.button.MaterialButton
+                        android:id="@+id/repairButton"
+                        style="@style/Widget.AndroidBuilder.Button.Outlined"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginEnd="8dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:text="@string/repair_build"
+                        android:textSize="12sp"
+                        app:icon="@drawable/ic_code" />
+
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/installButton"
                         style="@style/Widget.AndroidBuilder.Button.Outlined"
                         android:layout_width="wrap_content"
@@ -131,18 +117,6 @@
                         android:text="@string/install"
                         android:textSize="12sp"
                         app:icon="@drawable/ic_install" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/copyLogButton"
-                        style="@style/Widget.AndroidBuilder.Button.Outlined"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:minWidth="0dp"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:text="@string/copy_log"
-                        android:textSize="12sp"
-                        app:icon="@drawable/ic_copy" />
                 </LinearLayout>
             </HorizontalScrollView>
 

@@ -1,0 +1,43 @@
+package com.androidbuilder.agent;
+
+import org.junit.Test;
+
+import static org.junit.Assert.assertTrue;
+
+public class TaskOperationsPromptPolicyTest {
+    @Test
+    public void taskOperationsPromptRejectsEmptyOperations() {
+        String prompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(prompt.contains("Do not return an empty operations array"));
+        assertTrue(prompt.contains("at least one write or delete"));
+    }
+
+    @Test
+    public void promptsAskForSmallFocusedFiles() {
+        assertTrue(OpenAiClient.taskOperationsSystemPromptForTest(false).contains("under about 250 lines"));
+        assertTrue(OpenAiClient.projectFilesSystemPromptForTest(false).contains("under about 250 lines"));
+    }
+
+    @Test
+    public void promptsCallOutCommonGeneratedJavaApiMismatches() {
+        String projectPrompt = OpenAiClient.projectFilesSystemPromptForTest(false);
+        String taskPrompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(projectPrompt.contains("item.categoryName"));
+        assertTrue(projectPrompt.contains("new CategoryDAO(dbHelper)"));
+        assertTrue(taskPrompt.contains("item.percent"));
+        assertTrue(taskPrompt.contains("CategoryDAO(Context)"));
+    }
+
+    @Test
+    public void promptsRejectDependencyProvidedAppbarBehaviorResources() {
+        String projectPrompt = OpenAiClient.projectFilesSystemPromptForTest(false);
+        String taskPrompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(projectPrompt.contains("appbar_scrolling_view_behavior"));
+        assertTrue(projectPrompt.contains("CoordinatorLayout"));
+        assertTrue(taskPrompt.contains("appbar_scrolling_view_behavior"));
+        assertTrue(taskPrompt.contains("LinearLayout"));
+    }
+}

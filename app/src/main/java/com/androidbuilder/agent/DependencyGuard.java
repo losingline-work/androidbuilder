@@ -75,7 +75,14 @@ public class DependencyGuard {
                 continue;
             }
             if (BuildBackendSettings.DEPENDENCY_ONLINE.equals(mode) && !OnlineDependencyPolicy.isApproved(group, name, version)) {
-                throw new IllegalArgumentException("Dependency policy blocked unapproved online Maven dependency: " + group + ":" + name + ":" + version);
+                String coordinate = group + ":" + name + ":" + version;
+                if (!OnlineDependencyPolicy.isPinnedVersion(version)) {
+                    throw new IllegalArgumentException("Dependency policy blocked dynamic Maven version: " + coordinate + ". Use an exact pinned version such as 1.2.3, not + or a version range.");
+                }
+                if (OnlineDependencyPolicy.isBlockedCoordinate(group, name)) {
+                    throw new IllegalArgumentException("Dependency policy blocked online Maven dependency requiring Kotlin/Compose/annotation processing: " + coordinate + ". Use Java-only libraries without Compose, Room, Hilt, Dagger, or annotation processors.");
+                }
+                throw new IllegalArgumentException("Dependency policy blocked unapproved online Maven dependency: " + coordinate + ". Allowed groups: " + OnlineDependencyPolicy.trustedGroupsSummary() + " with exact versions.");
             }
             if (BuildBackendSettings.DEPENDENCY_OFFLINE_SAFE.equals(mode)) {
                 throw new IllegalArgumentException("Dependency policy blocked Maven dependency: " + group + ":" + name + ":" + version);

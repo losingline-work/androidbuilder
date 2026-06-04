@@ -5,14 +5,15 @@ import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class ProjectTimelinePolicy {
     public enum Kind {
         MESSAGE,
         OPERATION_STATUS,
-        TASK,
-        EMPTY_TASKS,
+        TASK_GROUP,
         BUILD_LOG
     }
 
@@ -31,28 +32,85 @@ public final class ProjectTimelinePolicy {
 
     public static List<Entry> entries(
             int messageCount,
+            List<Long> linkedBuildJobIds,
+            List<Boolean> messageVisible,
+            int taskAnchorIndex,
             boolean showOperationStatus,
             ProjectPlanRecord plan,
             List<ProjectTaskRecord> tasks,
             BuildJobRecord latestJob,
             boolean buildLogVisible) {
         List<Entry> entries = new ArrayList<>();
+        // The task group is a record too: it is inserted at the chronological position where the
+        // plan was split into tasks (taskAnchorIndex = number of messages created before it),
+        // not pinned at the top.
+        boolean hasTaskGroup = tasks != null && !tasks.isEmpty();
+        boolean taskGroupEmitted = false;
+        // The BUILD_LOG anchor is independent of message visibility: it points at the last
+        // message linked to each job even when that message itself is hidden as chatter, so the
+        // build log row never disappears when we filter the "build complete" message away.
+        Map<Long, Integer> lastMessageIndexByJob = new LinkedHashMap<>();
+        if (linkedBuildJobIds != null) {
+            for (int i = 0; i < messageCount && i < linkedBuildJobIds.size(); i++) {
+                Long buildJobId = linkedBuildJobIds.get(i);
+                if (buildJobId != null) {
+                    lastMessageIndexByJob.put(buildJobId, i);
+                }
+            }
+        }
         for (int i = 0; i < messageCount; i++) {
-            entries.add(new Entry(Kind.MESSAGE, i));
+            if (hasTaskGroup && !taskGroupEmitted && i >= taskAnchorIndex) {
+                entries.add(new Entry(Kind.TASK_GROUP, -1));
+                taskGroupEmitted = true;
+            }
+            boolean visible = messageVisible == null || i >= messageVisible.size() || messageVisible.get(i);
+            if (visible) {
+                entries.add(new Entry(Kind.MESSAGE, i));
+            }
+            Long buildJobId = linkedBuildJobIds != null && i < linkedBuildJobIds.size() ? linkedBuildJobIds.get(i) : null;
+            if (buildJobId != null && Integer.valueOf(i).equals(lastMessageIndexByJob.get(buildJobId))) {
+                entries.add(new Entry(Kind.BUILD_LOG, i));
+            }
+        }
+        if (hasTaskGroup && !taskGroupEmitted) {
+            entries.add(new Entry(Kind.TASK_GROUP, -1));
         }
         if (showOperationStatus) {
             entries.add(new Entry(Kind.OPERATION_STATUS, -1));
         }
-        if (tasks != null && !tasks.isEmpty()) {
-            for (int i = 0; i < tasks.size(); i++) {
-                entries.add(new Entry(Kind.TASK, i));
-            }
-        } else if (plan != null) {
-            entries.add(new Entry(Kind.EMPTY_TASKS, -1));
-        }
-        if (latestJob != null || buildLogVisible) {
-            entries.add(new Entry(Kind.BUILD_LOG, -1));
-        }
         return entries;
+    }
+
+    public static List<Entry> entries(
+            int messageCount,
+            List<Long> linkedBuildJobIds,
+            List<Boolean> messageVisible,
+            boolean showOperationStatus,
+            ProjectPlanRecord plan,
+            List<ProjectTaskRecord> tasks,
+            BuildJobRecord latestJob,
+            boolean buildLogVisible) {
+        return entries(messageCount, linkedBuildJobIds, messageVisible, 0, showOperationStatus, plan, tasks, latestJob, buildLogVisible);
+    }
+
+    public static List<Entry> entries(
+            int messageCount,
+            List<Long> linkedBuildJobIds,
+            boolean showOperationStatus,
+            ProjectPlanRecord plan,
+            List<ProjectTaskRecord> tasks,
+            BuildJobRecord latestJob,
+            boolean buildLogVisible) {
+        return entries(messageCount, linkedBuildJobIds, null, 0, showOperationStatus, plan, tasks, latestJob, buildLogVisible);
+    }
+
+    public static List<Entry> entries(
+            int messageCount,
+            boolean showOperationStatus,
+            ProjectPlanRecord plan,
+            List<ProjectTaskRecord> tasks,
+            BuildJobRecord latestJob,
+            boolean buildLogVisible) {
+        return entries(messageCount, null, null, 0, showOperationStatus, plan, tasks, latestJob, buildLogVisible);
     }
 }

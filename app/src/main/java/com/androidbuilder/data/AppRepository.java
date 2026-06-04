@@ -289,6 +289,40 @@ public class AppRepository {
         return null;
     }
 
+    public synchronized BuildJobRecord latestBuildJobWithApk(long projectId) {
+        try (Cursor cursor = helper.getReadableDatabase().query(
+                DatabaseHelper.TABLE_BUILD_JOBS,
+                null,
+                "project_id = ? AND apk_path IS NOT NULL",
+                new String[]{String.valueOf(projectId)},
+                null,
+                null,
+                "created_at DESC",
+                "1")) {
+            if (cursor.moveToFirst()) {
+                return readBuildJob(cursor);
+            }
+        }
+        return null;
+    }
+
+    public synchronized BuildJobRecord latestFailedBuildJobWithLog(long projectId) {
+        try (Cursor cursor = helper.getReadableDatabase().query(
+                DatabaseHelper.TABLE_BUILD_JOBS,
+                null,
+                "project_id = ? AND status = ? AND logs_path IS NOT NULL",
+                new String[]{String.valueOf(projectId), "failed"},
+                null,
+                null,
+                "created_at DESC",
+                "1")) {
+            if (cursor.moveToFirst()) {
+                return readBuildJob(cursor);
+            }
+        }
+        return null;
+    }
+
     public synchronized void updateBuildJob(long id, String status, String phase, String logsPath, String apkPath, String errorSummary, int retryCount) {
         BuildJobRecord current = getBuildJob(id);
         ContentValues values = new ContentValues();

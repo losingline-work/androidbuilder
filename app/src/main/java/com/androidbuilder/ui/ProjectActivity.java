@@ -10,8 +10,10 @@ import android.text.method.ScrollingMovementMethod;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -21,6 +23,7 @@ import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
 import com.androidbuilder.agent.AgentService;
 import com.androidbuilder.agent.BuildFailureClassifier;
+import com.androidbuilder.agent.BuildLogContextExtractor;
 import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.backend.BuildBackend;
 import com.androidbuilder.backend.BuildBackendFactory;
@@ -62,6 +65,8 @@ public class ProjectActivity extends BaseActivity {
     private final List<ChatMessage> messages = new ArrayList<>();
     private final List<FileItem> fileItems = new ArrayList<>();
     private final List<ProjectTaskRecord> taskItems = new ArrayList<>();
+    private final Set<Long> expandedBuildLogJobIds = new HashSet<>();
+    private boolean tasksCollapsed;
     private TimelineAdapter adapter;
     private FileAdapter fileAdapter;
     private ListView messageList;
@@ -73,20 +78,21 @@ public class ProjectActivity extends BaseActivity {
     private View projectContent;
     private View fileBrowserPanel;
     private View fileDrawerScrim;
-    private TextView showFilesButton;
-    private boolean buildLogVisible;
     private boolean busy;
     private boolean autoExecutingPlan;
+    private long repairSourceBuildJobId = -1;
+    private long operationStartedAt;
     private long activeTaskStartedAt;
     private String statusSummary = "";
     private String operationStatus = "";
+    private String operationProgress = "";
+    private long lastStreamProgressAt;
     private BuildJobRecord latestJob;
     private ProjectPlanRecord latestPlan;
     private File sourceRoot;
     private File currentSourceDir;
     private final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.getDefault());
     private final SimpleDateFormat fileTimeFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault());
-    private final Set<Long> autoRepairing = new HashSet<>();
     private final Handler elapsedHandler = new Handler(Looper.getMainLooper());
     private final Runnable elapsedTicker = new Runnable() {
         @Override
@@ -106,17 +112,25 @@ public class ProjectActivity extends BaseActivity {
         applySystemBarPadding();
         projectToolbar = findViewById(R.id.projectToolbar);
         projectToolbar.setNavigationOnClickListener(v -> finish());
+        projectToolbar.inflateMenu(R.menu.menu_project);
+        projectToolbar.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == R.id.action_source_files) {
+                toggleFileBrowser();
+                return true;
+            }
+            return false;
+        });
         repository = ((AndroidBuilderApp) getApplication()).repository();
         agentService = new AgentService(this, repository);
+        agentService.setProgressListener(this::onModelStreamProgress);
         projectId = getIntent().getLongExtra(MainActivity.EXTRA_PROJECT_ID, -1);
         sourceRoot = repository.sourceDir(projectId);
         currentSourceDir = sourceRoot;
-        status = findViewById(R.id.statusText);
+        status = null;
         promptInput = findViewById(R.id.promptInput);
         projectContent = findViewById(R.id.projectContent);
         fileBrowserPanel = findViewById(R.id.fileBrowserPanel);
         fileDrawerScrim = findViewById(R.id.fileDrawerScrim);
-        showFilesButton = findViewById(R.id.showFilesButton);
         currentPathText = findViewById(R.id.currentPathText);
         adapter = new TimelineAdapter();
         messageList = findViewById(R.id.messageList);
@@ -129,17 +143,18 @@ public class ProjectActivity extends BaseActivity {
         fileList = findViewById(R.id.fileList);
         fileList.setAdapter(fileAdapter);
         fileList.setOnItemClickListener((parent, view, position, id) -> openFileItem(fileItems.get(position)));
-        findViewById(R.id.sendButton).setOnClickListener(v -> generatePlan());
-        showFilesButton.setOnClickListener(v -> toggleFileBrowser());
+        findViewById(R.id.sendButton).setOnClickListener(v -> {
+            hideKeyboard();
+            generatePlan();
+        });
         fileDrawerScrim.setOnClickListener(v -> closeFileBrowser());
         findViewById(R.id.closeFilesButton).setOnClickListener(v -> closeFileBrowser());
         findViewById(R.id.executePlanButton).setOnClickListener(v -> executePlan());
         findViewById(R.id.buildButton).setOnClickListener(v -> buildLatest());
+        findViewById(R.id.repairButton).setOnClickListener(v -> repairLatest());
         findViewById(R.id.installButton).setOnClickListener(v -> installLatest());
-        findViewById(R.id.copyLogButton).setOnClickListener(v -> copyText(getString(R.string.build_log), latestJob == null ? "" : readBuildLogPreview(latestJob)));
         buildServer = new LocalBuildServer(repository, (p, j) -> runOnUiThread(() -> {
             refresh();
-            maybeAutoRepair(j);
         }));
         try {
             buildServer.start();
@@ -207,7 +222,7 @@ public class ProjectActivity extends BaseActivity {
         updateBuildLogPanel();
         updateActionButtons();
         updateKeepScreenOn();
-        if (!messages.isEmpty() || buildLogVisible || shouldShowOperationStatus()) {
+        if (!messages.isEmpty() || shouldShowOperationStatus()) {
             scrollMessagesToBottom();
         }
         updateElapsedTicker();
@@ -224,20 +239,18 @@ public class ProjectActivity extends BaseActivity {
 
         messages.clear();
         messages.addAll(repository.listMessages(projectId));
+
+        List<ProjectTaskRecord> latestTasks = repository.listProjectTasks(projectId);
+        boolean tasksChanged = ProjectLiveState.tasksChanged(taskItems, latestTasks);
+        if (tasksChanged) {
+            taskItems.clear();
+            taskItems.addAll(latestTasks);
+        }
         if (adapter != null) {
             adapter.notifyDataSetChanged();
         }
-
-        List<ProjectTaskRecord> latestTasks = repository.listProjectTasks(projectId);
-        if (ProjectLiveState.tasksChanged(taskItems, latestTasks)) {
-            taskItems.clear();
-            taskItems.addAll(latestTasks);
-            if (adapter != null) {
-                adapter.notifyDataSetChanged();
-            }
+        if (tasksChanged) {
             scrollToCurrentTask();
-        } else if (adapter != null) {
-            adapter.notifyDataSetChanged();
         }
 
         updateBuildLogPanel();
@@ -245,13 +258,16 @@ public class ProjectActivity extends BaseActivity {
         updateKeepScreenOn();
         if (!shouldShowOperationStatus()) {
             operationStatus = "";
+            operationStartedAt = 0;
         }
     }
 
     private void updateStatusSummary(ProjectRecord project) {
         String planStatus = latestPlan == null ? "idle" : latestPlan.status;
         statusSummary = project.packageName + " · " + project.lastBuildStatus + " · " + getString(R.string.plan_status, planStatusText(planStatus)) + (latestJob == null ? "" : " · job #" + latestJob.id);
-        status.setText(statusSummary);
+        if (status != null) {
+            status.setText(statusSummary);
+        }
     }
 
     private void toggleFileBrowser() {
@@ -291,10 +307,13 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void updateFileBrowserButton() {
-        if (showFilesButton == null || fileBrowserPanel == null) {
+        if (projectToolbar == null || fileBrowserPanel == null) {
             return;
         }
-        showFilesButton.setText(fileBrowserPanel.getVisibility() == View.VISIBLE ? R.string.hide_source_files : R.string.show_source_files);
+        android.view.MenuItem item = projectToolbar.getMenu().findItem(R.id.action_source_files);
+        if (item != null) {
+            item.setTitle(fileBrowserPanel.getVisibility() == View.VISIBLE ? R.string.hide_source_files : R.string.show_source_files);
+        }
     }
 
     private void showTimelineActions(int position) {
@@ -307,7 +326,7 @@ public class ProjectActivity extends BaseActivity {
             return;
         }
         if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
-            BuildJobRecord job = latestJob;
+            BuildJobRecord job = buildLogJob(entry);
             copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job));
             return;
         }
@@ -325,12 +344,8 @@ public class ProjectActivity extends BaseActivity {
                     .show();
             return;
         }
-        if (entry.kind == ProjectTimelinePolicy.Kind.TASK && entry.sourceIndex >= 0 && entry.sourceIndex < taskItems.size()) {
-            ProjectTaskRecord task = taskItems.get(entry.sourceIndex);
-            String summary = task.resultSummary == null ? "" : task.resultSummary.trim();
-            if (!summary.isEmpty()) {
-                copyText(getString(R.string.copy_log), summary);
-            }
+        if (entry.kind == ProjectTimelinePolicy.Kind.TASK_GROUP && !taskItems.isEmpty()) {
+            copyText(getString(R.string.plan_tasks), taskGroupCopyText());
         }
     }
 
@@ -350,6 +365,20 @@ public class ProjectActivity extends BaseActivity {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         clipboard.setPrimaryClip(ClipData.newPlainText(label, text == null ? "" : text));
         Toast.makeText(this, getString(R.string.copied, label), Toast.LENGTH_SHORT).show();
+    }
+
+    private void hideKeyboard() {
+        View focused = getCurrentFocus();
+        if (focused == null) {
+            focused = promptInput;
+        }
+        InputMethodManager inputMethodManager = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (inputMethodManager != null && focused != null) {
+            inputMethodManager.hideSoftInputFromWindow(focused.getWindowToken(), 0);
+        }
+        if (promptInput != null) {
+            promptInput.clearFocus();
+        }
     }
 
     private void generatePlan() {
@@ -482,14 +511,26 @@ public class ProjectActivity extends BaseActivity {
         return -1;
     }
 
-    private void buildLatest() {
-        latestPlan = repository.latestProjectPlan(projectId);
-        if (latestPlan == null || !"generated".equals(latestPlan.status)) {
-            Toast.makeText(this, R.string.execute_plan_first, Toast.LENGTH_SHORT).show();
-            return;
+    private String taskGroupCopyText() {
+        StringBuilder text = new StringBuilder(getString(R.string.plan_tasks));
+        for (ProjectTaskRecord task : taskItems) {
+            text.append("\n\n")
+                    .append(task.sortOrder + 1)
+                    .append(". ")
+                    .append(task.title)
+                    .append(" [")
+                    .append(task.status == null ? "pending" : task.status)
+                    .append("]");
+            String summary = task.resultSummary == null ? "" : task.resultSummary.trim();
+            if (!summary.isEmpty()) {
+                text.append("\n").append(summary);
+            }
         }
-        BuildJobRecord job = repository.latestBuildJob(projectId);
-        if (job == null || job.logsPath == null) {
+        return text.toString();
+    }
+
+    private void buildLatest() {
+        if (!hasSourceFiles()) {
             Toast.makeText(this, R.string.generate_source_first, Toast.LENGTH_SHORT).show();
             return;
         }
@@ -497,19 +538,86 @@ public class ProjectActivity extends BaseActivity {
             Toast.makeText(this, R.string.local_server_not_running, Toast.LENGTH_SHORT).show();
             return;
         }
+        BuildJobRecord job = repository.createBuildJob(projectId);
         BuildBackend backend = BuildBackendFactory.create(this, repository, buildServer);
-        buildLogVisible = true;
+        repairSourceBuildJobId = -1;
+        operationStartedAt = System.currentTimeMillis();
         setOperationStatus(getString(BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started));
         String logsPath = resetBuildLog(job);
-        autoRepairing.remove(job.id);
-        repository.updateBuildJob(job.id, "building", backend.id() + "_start", logsPath, null, null, BuildRepairPolicy.retryCountForManualBuild(job));
+        repository.updateBuildJob(job.id, "building", backend.id() + "_start", logsPath, null, null, 0);
+        repository.addMessage(projectId, "assistant", getString(BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started), job.id);
         BuildJobRecord buildJob = repository.getBuildJob(job.id);
-        backend.build(buildJob == null ? job : buildJob, (p, j) -> runOnUiThread(() -> {
-            refresh();
-            maybeAutoRepair(j);
-        }));
+        backend.build(buildJob == null ? job : buildJob, (p, j) -> runOnUiThread(this::refresh));
         refresh();
         Toast.makeText(this, BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started, Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean hasSourceFiles() {
+        return containsSourceFile(sourceRoot);
+    }
+
+    private boolean containsSourceFile(File file) {
+        if (file == null || !file.exists()) {
+            return false;
+        }
+        if (file.isFile()) {
+            return true;
+        }
+        File[] children = file.listFiles();
+        if (children == null) {
+            return false;
+        }
+        for (File child : children) {
+            if (containsSourceFile(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void repairLatest() {
+        latestJob = repository.latestBuildJob(projectId);
+        BuildJobRecord failed = repairTargetJob();
+        boolean repairable = failed != null && isRepairableFailure(failed);
+        if (!ProjectBuildActionPolicy.canRepair(busy, failed, repairable)) {
+            int message = failed != null && "failed".equals(failed.status) && !repairable
+                    ? R.string.repair_build_not_model_repairable
+                    : R.string.repair_build_required;
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String logs;
+        try {
+            logs = FileUtils.readText(new File(failed.logsPath));
+            logs = buildFailureContext(logs);
+        } catch (Exception error) {
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        repairSourceBuildJobId = failed.id;
+        setBusy(true);
+        setOperationStatus(getString(R.string.repair_build_started));
+        refresh();
+        Toast.makeText(this, R.string.repair_build_started, Toast.LENGTH_SHORT).show();
+        agentService.repairBuildAsync(projectId, logs, new AgentService.Callback() {
+            @Override
+            public void onComplete(BuildJobRecord job) {
+                runOnUiThread(() -> {
+                    setBusy(false);
+                    refresh();
+                    Toast.makeText(ProjectActivity.this, R.string.repair_build_done, Toast.LENGTH_SHORT).show();
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                runOnUiThread(() -> {
+                    setBusy(false);
+                    refresh();
+                    Toast.makeText(ProjectActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
     }
 
     private String resetBuildLog(BuildJobRecord job) {
@@ -522,8 +630,26 @@ public class ProjectActivity extends BaseActivity {
         return log.getAbsolutePath();
     }
 
+    private BuildJobRecord repairTargetJob() {
+        return ProjectRepairFlowPolicy.repairTargetJob(latestJob, repository.latestFailedBuildJobWithLog(projectId));
+    }
+
+    private BuildJobRecord buildLogJob(ProjectTimelinePolicy.Entry entry) {
+        if (adapter != null) {
+            BuildJobRecord cached = adapter.cachedBuildLogJob(entry);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        if (entry == null || entry.sourceIndex < 0 || entry.sourceIndex >= messages.size()) {
+            return null;
+        }
+        Long jobId = messages.get(entry.sourceIndex).linkedBuildJobId;
+        return jobId == null ? null : repository.getBuildJob(jobId);
+    }
+
     private void installLatest() {
-        BuildJobRecord job = repository.latestBuildJob(projectId);
+        BuildJobRecord job = repository.latestBuildJobWithApk(projectId);
         if (job == null || job.apkPath == null) {
             Toast.makeText(this, R.string.no_apk_yet, Toast.LENGTH_SHORT).show();
             return;
@@ -531,7 +657,7 @@ public class ProjectActivity extends BaseActivity {
         try {
             new ApkInstaller(this).install(new File(job.apkPath));
         } catch (Exception error) {
-            Toast.makeText(this, "Install failed: " + error.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, getString(R.string.install_failed, error.getMessage()), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -644,64 +770,6 @@ public class ProjectActivity extends BaseActivity {
         }
     }
 
-    private void maybeAutoRepair(long failedJobId) {
-        BuildJobRecord failed = repository.getBuildJob(failedJobId);
-        if (failed == null || !"failed".equals(failed.status)) {
-            return;
-        }
-        if (BuildRepairPolicy.reachedAutoRepairLimit(failed)) {
-            if (!autoRepairing.contains(failedJobId)) {
-                autoRepairing.add(failedJobId);
-                repository.addMessage(projectId, "assistant", "自动修复已达到 3 次上限。你可以点击重新构建来开始新一轮自动修复。", failedJobId);
-                refresh();
-            }
-            return;
-        }
-        boolean repairable = isRepairableFailure(failed);
-        if (!repairable && !autoRepairing.contains(failedJobId)) {
-            autoRepairing.add(failedJobId);
-            repository.addMessage(projectId, "assistant", "构建失败，但这类错误需要先修复本机运行环境或构建后端配置，不自动重试。", failedJobId);
-            refresh();
-            return;
-        }
-        if (!BuildRepairPolicy.canAutoRepair(failed, autoRepairing.contains(failedJobId), repairable)) {
-            return;
-        }
-        autoRepairing.add(failedJobId);
-        String logs = "";
-        if (failed.logsPath != null) {
-            try {
-                logs = FileUtils.readText(new File(failed.logsPath));
-                logs = buildFailureContext(logs);
-            } catch (Exception ignored) {
-            }
-        }
-        repository.addMessage(projectId, "assistant", "构建失败，开始自动修复第 " + BuildRepairPolicy.nextRetryCount(failed) + "/3 次。", failedJobId);
-        agentService.repairBuildAsync(projectId, logs, new AgentService.Callback() {
-            @Override
-            public void onComplete(BuildJobRecord job) {
-                runOnUiThread(() -> {
-                    repository.updateBuildJob(job.id, job.status, job.phase, job.logsPath, job.apkPath, job.errorSummary, BuildRepairPolicy.nextRetryCount(failed));
-                    BuildJobRecord retryJob = repository.getBuildJob(job.id);
-                    refresh();
-                    BuildBackend backend = BuildBackendFactory.create(ProjectActivity.this, repository, buildServer);
-                    backend.build(retryJob == null ? job : retryJob, (p, j) -> runOnUiThread(() -> {
-                        refresh();
-                        maybeAutoRepair(j);
-                    }));
-                });
-            }
-
-            @Override
-            public void onError(Exception error) {
-                runOnUiThread(() -> {
-                    repository.addMessage(projectId, "assistant", "自动修复失败：" + error.getMessage(), failedJobId);
-                    refresh();
-                });
-            }
-        });
-    }
-
     private boolean isRepairableFailure(BuildJobRecord failed) {
         String error = failed.errorSummary == null ? "" : failed.errorSummary;
         BuildFailureClassifier.Result result = BuildFailureClassifier.classify(failed.phase, error);
@@ -709,9 +777,13 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void setBusy(boolean busy) {
+        if (busy && !this.busy) {
+            operationStartedAt = System.currentTimeMillis();
+        }
         this.busy = busy;
         if (!busy) {
             activeTaskStartedAt = 0;
+            operationStartedAt = 0;
         }
         updateActionButtons();
         if (adapter != null) {
@@ -723,6 +795,7 @@ public class ProjectActivity extends BaseActivity {
 
     private void setOperationStatus(String value) {
         operationStatus = value == null ? "" : value.trim();
+        operationProgress = "";
         if (status != null) {
             status.setText(operationStatus);
         }
@@ -734,8 +807,60 @@ public class ProjectActivity extends BaseActivity {
         }
     }
 
+    private String operationStatusWithProgress() {
+        if (operationProgress.isEmpty()) {
+            return operationStatus;
+        }
+        if (operationStatus.isEmpty()) {
+            return operationProgress;
+        }
+        return operationStatus + " · " + operationProgress;
+    }
+
+    // Called on a worker thread by OpenAiClient while a model response is streaming.
+    private void onModelStreamProgress(int answerChars, int reasoningChars) {
+        long now = System.currentTimeMillis();
+        if (now - lastStreamProgressAt < 300) {
+            return;
+        }
+        lastStreamProgressAt = now;
+        runOnUiThread(() -> {
+            if (!busy && !autoExecutingPlan) {
+                return;
+            }
+            if (answerChars > 0) {
+                operationProgress = getString(R.string.streaming_writing, formatStreamCount(answerChars));
+            } else if (reasoningChars > 0) {
+                operationProgress = getString(R.string.streaming_thinking, formatStreamCount(reasoningChars));
+            } else {
+                return;
+            }
+            if (adapter != null) {
+                adapter.notifyDataSetChanged();
+            }
+        });
+    }
+
+    private String formatStreamCount(int chars) {
+        if (chars >= 1000) {
+            return (chars / 100) / 10.0 + "k";
+        }
+        return String.valueOf(chars);
+    }
+
     private boolean shouldShowOperationStatus() {
         return ProjectOperationStatus.shouldShow(operationStatus, busy, autoExecutingPlan, latestJob);
+    }
+
+    private String operationElapsedText() {
+        long startedAt = operationStartedAt;
+        if (startedAt <= 0 && latestJob != null && isRunningJob(latestJob)) {
+            startedAt = latestJob.createdAt;
+        }
+        if (startedAt <= 0 || !(busy || autoExecutingPlan || isRunningJob(latestJob))) {
+            return "";
+        }
+        return getString(R.string.elapsed_time, formatDuration(System.currentTimeMillis() - startedAt));
     }
 
     private void updateKeepScreenOn() {
@@ -776,7 +901,10 @@ public class ProjectActivity extends BaseActivity {
         }
         for (ChatMessage message : messages) {
             if (message.linkedBuildJobId != null) {
-                BuildJobRecord job = repository.getBuildJob(message.linkedBuildJobId);
+                BuildJobRecord job = adapter == null ? null : adapter.cachedJobForMessage(message);
+                if (job == null) {
+                    job = repository.getBuildJob(message.linkedBuildJobId);
+                }
                 if (job != null && isRunningJob(job)) {
                     return true;
                 }
@@ -796,17 +924,24 @@ public class ProjectActivity extends BaseActivity {
         View sendButton = findViewById(R.id.sendButton);
         View executePlanButton = findViewById(R.id.executePlanButton);
         View buildButton = findViewById(R.id.buildButton);
+        View repairButton = findViewById(R.id.repairButton);
         View installButton = findViewById(R.id.installButton);
-        View copyLogButton = findViewById(R.id.copyLogButton);
         boolean canExecutePlan = latestPlan != null && "planned".equals(latestPlan.status) && !latestPlan.content.trim().isEmpty();
+        boolean hasSourceFiles = hasSourceFiles();
+        BuildJobRecord repairTarget = repairTargetJob();
+        boolean repairable = repairTarget != null && isRepairableFailure(repairTarget);
+        boolean showRepairAction = (busy && repairSourceBuildJobId > 0) ||
+                ProjectBuildActionPolicy.primaryAction(repairTarget, repairable) == ProjectBuildActionPolicy.PrimaryAction.REPAIR;
         sendButton.setEnabled(!busy);
         executePlanButton.setEnabled(!busy && canExecutePlan);
-        buildButton.setEnabled(!busy && latestPlan != null && "generated".equals(latestPlan.status) && latestJob != null && latestJob.logsPath != null);
+        buildButton.setVisibility(showRepairAction ? View.GONE : View.VISIBLE);
+        repairButton.setVisibility(showRepairAction ? View.VISIBLE : View.GONE);
+        buildButton.setEnabled(ProjectBuildActionPolicy.canBuild(busy, hasSourceFiles));
+        repairButton.setEnabled(ProjectBuildActionPolicy.canRepair(busy, repairTarget, repairable));
         if (buildButton instanceof TextView) {
             ((TextView) buildButton).setText(latestJob != null && "failed".equals(latestJob.status) ? R.string.rebuild : R.string.build);
         }
-        installButton.setEnabled(!busy && latestJob != null && latestJob.apkPath != null);
-        copyLogButton.setEnabled(latestJob != null && latestJob.logsPath != null);
+        installButton.setEnabled(!busy && repository.latestBuildJobWithApk(projectId) != null);
     }
 
     private void scrollMessagesToBottom() {
@@ -817,9 +952,6 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void updateBuildLogPanel() {
-        if (adapter != null) {
-            adapter.notifyDataSetChanged();
-        }
     }
 
     private String planStatusText(String value) {
@@ -865,10 +997,31 @@ public class ProjectActivity extends BaseActivity {
         private static final int TYPE_STATUS = 1;
         private static final int TYPE_TASK = 2;
         private static final int TYPE_BUILD_LOG = 3;
+        private ProjectTimelineSnapshot snapshot = ProjectTimelineSnapshot.empty();
+
+        TimelineAdapter() {
+            rebuildSnapshot();
+        }
+
+        @Override
+        public void notifyDataSetChanged() {
+            rebuildSnapshot();
+            super.notifyDataSetChanged();
+        }
+
+        private void rebuildSnapshot() {
+            snapshot = ProjectTimelineSnapshot.create(
+                    messages,
+                    shouldShowOperationStatus(),
+                    latestPlan,
+                    taskItems,
+                    latestJob,
+                    id -> repository == null ? null : repository.getBuildJob(id));
+        }
 
         @Override
         public int getCount() {
-            return entries().size();
+            return snapshot.size();
         }
 
         @Override
@@ -880,11 +1033,11 @@ public class ProjectActivity extends BaseActivity {
             if (entry.kind == ProjectTimelinePolicy.Kind.MESSAGE && entry.sourceIndex >= 0 && entry.sourceIndex < messages.size()) {
                 return messages.get(entry.sourceIndex);
             }
-            if (entry.kind == ProjectTimelinePolicy.Kind.TASK && entry.sourceIndex >= 0 && entry.sourceIndex < taskItems.size()) {
-                return taskItems.get(entry.sourceIndex);
+            if (entry.kind == ProjectTimelinePolicy.Kind.TASK_GROUP) {
+                return taskItems;
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
-                return latestJob;
+                return cachedBuildLogJob(entry);
             }
             return entry.kind;
         }
@@ -898,14 +1051,14 @@ public class ProjectActivity extends BaseActivity {
             if (entry.kind == ProjectTimelinePolicy.Kind.MESSAGE && entry.sourceIndex >= 0 && entry.sourceIndex < messages.size()) {
                 return messages.get(entry.sourceIndex).id;
             }
-            if (entry.kind == ProjectTimelinePolicy.Kind.TASK && entry.sourceIndex >= 0 && entry.sourceIndex < taskItems.size()) {
-                return taskItems.get(entry.sourceIndex).id;
+            if (entry.kind == ProjectTimelinePolicy.Kind.TASK_GROUP) {
+                return -2;
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.OPERATION_STATUS) {
                 return -1;
             }
-            if (entry.kind == ProjectTimelinePolicy.Kind.EMPTY_TASKS) {
-                return -2;
+            if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
+                return -1000 - entry.sourceIndex;
             }
             return -3;
         }
@@ -924,7 +1077,7 @@ public class ProjectActivity extends BaseActivity {
             if (entry.kind == ProjectTimelinePolicy.Kind.OPERATION_STATUS) {
                 return TYPE_STATUS;
             }
-            if (entry.kind == ProjectTimelinePolicy.Kind.TASK || entry.kind == ProjectTimelinePolicy.Kind.EMPTY_TASKS) {
+            if (entry.kind == ProjectTimelinePolicy.Kind.TASK_GROUP) {
                 return TYPE_TASK;
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
@@ -942,38 +1095,34 @@ public class ProjectActivity extends BaseActivity {
             if (entry.kind == ProjectTimelinePolicy.Kind.OPERATION_STATUS) {
                 return bindOperationStatus(convertView, parent);
             }
-            if (entry.kind == ProjectTimelinePolicy.Kind.TASK || entry.kind == ProjectTimelinePolicy.Kind.EMPTY_TASKS) {
-                return bindTask(entry, convertView, parent);
+            if (entry.kind == ProjectTimelinePolicy.Kind.TASK_GROUP) {
+                return bindTaskGroup(convertView, parent);
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
-                return bindBuildLog(convertView, parent);
+                return bindBuildLog(entry, convertView, parent);
             }
             return bindMessage(entry, convertView, parent);
         }
 
         ProjectTimelinePolicy.Entry entryAt(int position) {
-            List<ProjectTimelinePolicy.Entry> entries = entries();
-            return position >= 0 && position < entries.size() ? entries.get(position) : null;
+            return snapshot.entryAt(position);
         }
 
         int positionForTaskIndex(int taskIndex) {
-            List<ProjectTimelinePolicy.Entry> entries = entries();
-            for (int i = 0; i < entries.size(); i++) {
-                ProjectTimelinePolicy.Entry entry = entries.get(i);
-                if (entry.kind == ProjectTimelinePolicy.Kind.TASK && entry.sourceIndex == taskIndex) {
-                    return i;
-                }
-            }
-            return -1;
+            return snapshot.positionForTaskIndex(taskIndex);
         }
 
-        private List<ProjectTimelinePolicy.Entry> entries() {
-            return ProjectTimelinePolicy.entries(messages.size(), shouldShowOperationStatus(), latestPlan, taskItems, latestJob, buildLogVisible);
+        BuildJobRecord cachedBuildLogJob(ProjectTimelinePolicy.Entry entry) {
+            return snapshot.buildLogJob(entry);
+        }
+
+        BuildJobRecord cachedJobForMessage(ChatMessage message) {
+            return snapshot.jobForMessage(message);
         }
 
         private View bindOperationStatus(View convertView, ViewGroup parent) {
             View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_operation_status, parent, false) : convertView;
-            ((TextView) view.findViewById(R.id.operationStatusContent)).setText(operationStatus);
+            ((TextView) view.findViewById(R.id.operationStatusContent)).setText(ProjectOperationStatus.displayText(operationStatusWithProgress(), operationElapsedText()));
             return view;
         }
 
@@ -986,54 +1135,194 @@ public class ProjectActivity extends BaseActivity {
             return view;
         }
 
-        private View bindTask(ProjectTimelinePolicy.Entry entry, View convertView, ViewGroup parent) {
-            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_project_task, parent, false) : convertView;
-            TextView icon = view.findViewById(R.id.taskStatusIcon);
-            TextView title = view.findViewById(R.id.taskTitle);
-            TextView steps = view.findViewById(R.id.taskSteps);
-            TextView status = view.findViewById(R.id.taskStatus);
-            TextView log = view.findViewById(R.id.taskLog);
-            View copyLog = view.findViewById(R.id.taskCopyLog);
-            copyLog.setVisibility(View.GONE);
-            copyLog.setOnClickListener(null);
-            if (entry.kind == ProjectTimelinePolicy.Kind.EMPTY_TASKS || taskItems.isEmpty()) {
-                icon.setText("-");
-                title.setText(R.string.no_plan_tasks);
-                steps.setVisibility(View.GONE);
-                status.setText("");
-                log.setVisibility(View.GONE);
-                return view;
-            }
-            ProjectTaskRecord task = taskItems.get(entry.sourceIndex);
-            title.setText((task.sortOrder + 1) + ". " + task.title);
-            setTaskSteps(steps, task.instruction);
-            String taskStatus = task.status == null ? "pending" : task.status;
-            if (TaskRunningDisplayPolicy.shouldShowPredictedRunning(busy, entry.sourceIndex, taskStatus, taskItems)) {
-                icon.setText("...");
-                long startedAt = activeTaskStartedAt > 0 ? activeTaskStartedAt : System.currentTimeMillis();
-                status.setText(getString(R.string.task_running) + " · " + getString(R.string.elapsed_time, formatDuration(System.currentTimeMillis() - startedAt)));
-                setTaskLog(log, getString(R.string.task_running_log));
-                return view;
-            }
-            if ("done".equals(taskStatus)) {
-                icon.setText("✓");
-                status.setText(getString(R.string.task_done) + taskDurationSuffix(task));
-                setTaskLog(log, task.resultSummary);
-            } else if ("running".equals(taskStatus)) {
-                icon.setText("...");
-                status.setText(getString(R.string.task_running) + taskDurationSuffix(task));
-                setTaskLog(log, task.resultSummary == null || task.resultSummary.trim().isEmpty() ? getString(R.string.task_running_log) : task.resultSummary);
-            } else if ("failed".equals(taskStatus)) {
-                icon.setText("!");
-                status.setText(getString(R.string.task_failed) + taskDurationSuffix(task));
-                setTaskLog(log, task.resultSummary);
-                configureTaskLogCopy(copyLog, task.resultSummary);
-            } else {
-                icon.setText(String.valueOf(task.sortOrder + 1));
-                status.setText(R.string.task_pending);
-                log.setVisibility(View.GONE);
+        private View bindTaskGroup(View convertView, ViewGroup parent) {
+            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_project_tasks_card, parent, false) : convertView;
+            TextView icon = view.findViewById(R.id.tasksStatusIcon);
+            TextView title = view.findViewById(R.id.tasksTitle);
+            TextView summary = view.findViewById(R.id.tasksSummary);
+            TextView toggle = view.findViewById(R.id.tasksToggle);
+            LinearLayout container = view.findViewById(R.id.tasksContainer);
+
+            title.setText(R.string.task_card_title);
+            icon.setText(taskGroupIcon());
+            summary.setText(taskGroupSummary());
+            toggle.setText(tasksCollapsed ? R.string.expand_tasks : R.string.collapse_tasks);
+            View.OnClickListener toggleListener = v -> {
+                tasksCollapsed = !tasksCollapsed;
+                if (adapter != null) {
+                    adapter.notifyDataSetChanged();
+                }
+            };
+            toggle.setOnClickListener(toggleListener);
+            view.setOnClickListener(toggleListener);
+
+            container.removeAllViews();
+            container.setVisibility(tasksCollapsed ? View.GONE : View.VISIBLE);
+            if (!tasksCollapsed) {
+                for (int i = 0; i < taskItems.size(); i++) {
+                    container.addView(taskRowView(taskItems.get(i), i));
+                }
             }
             return view;
+        }
+
+        private View taskRowView(ProjectTaskRecord task, int index) {
+            LinearLayout row = new LinearLayout(ProjectActivity.this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.TOP);
+            row.setPadding(0, index == 0 ? 0 : dp(10), 0, 0);
+
+            TextView icon = new TextView(ProjectActivity.this);
+            icon.setGravity(android.view.Gravity.CENTER);
+            icon.setText(taskIcon(task, index));
+            icon.setTextSize(13);
+            icon.setTextColor(getResources().getColor(R.color.colorOnPrimaryContainer));
+            icon.setBackgroundResource(R.drawable.bg_status);
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(28), dp(28));
+            row.addView(icon, iconParams);
+
+            LinearLayout body = new LinearLayout(ProjectActivity.this);
+            body.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            bodyParams.setMarginStart(dp(10));
+            row.addView(body, bodyParams);
+
+            TextView taskTitle = new TextView(ProjectActivity.this);
+            taskTitle.setText((task.sortOrder + 1) + ". " + task.title);
+            taskTitle.setTextColor(getResources().getColor(R.color.colorOnSurface));
+            taskTitle.setTextSize(14);
+            taskTitle.setTypeface(taskTitle.getTypeface(), android.graphics.Typeface.BOLD);
+            body.addView(taskTitle);
+
+            TextView status = new TextView(ProjectActivity.this);
+            status.setText(taskStatusText(task, index));
+            status.setTextSize(13);
+            body.addView(status);
+
+            String stepsText = taskStepsText(task.instruction);
+            if (!stepsText.isEmpty()) {
+                TextView steps = new TextView(ProjectActivity.this);
+                steps.setText(stepsText);
+                steps.setTextSize(13);
+                LinearLayout.LayoutParams stepsParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                stepsParams.setMargins(0, dp(4), 0, 0);
+                body.addView(steps, stepsParams);
+            }
+
+            String logText = taskLogText(task, index);
+            if (!logText.isEmpty()) {
+                TextView log = new TextView(ProjectActivity.this);
+                log.setText(logText);
+                log.setTextSize(12);
+                log.setTypeface(android.graphics.Typeface.MONOSPACE);
+                log.setPadding(dp(8), dp(6), dp(8), dp(6));
+                log.setBackgroundResource(R.drawable.bg_log_md3);
+                log.setTextColor(getResources().getColor(R.color.colorInverseOnSurface));
+                log.setOnLongClickListener(v -> {
+                    copyText(getString(R.string.copy_log), logText);
+                    return true;
+                });
+                LinearLayout.LayoutParams logParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                logParams.setMargins(0, dp(6), 0, 0);
+                body.addView(log, logParams);
+            }
+            return row;
+        }
+
+        private String taskGroupIcon() {
+            if (taskItems.isEmpty()) {
+                return "-";
+            }
+            int failed = 0;
+            int running = 0;
+            int done = 0;
+            for (ProjectTaskRecord task : taskItems) {
+                String status = task.status == null ? "pending" : task.status;
+                if ("failed".equals(status)) {
+                    failed++;
+                } else if ("running".equals(status)) {
+                    running++;
+                } else if ("done".equals(status)) {
+                    done++;
+                }
+            }
+            if (failed > 0) {
+                return "!";
+            }
+            if (running > 0 || (autoExecutingPlan && currentTaskIndex() >= 0)) {
+                return "...";
+            }
+            if (done == taskItems.size()) {
+                return "✓";
+            }
+            return String.valueOf(taskItems.size());
+        }
+
+        private String taskGroupSummary() {
+            int done = 0;
+            int failed = 0;
+            int runningIndex = -1;
+            for (int i = 0; i < taskItems.size(); i++) {
+                String status = taskItems.get(i).status == null ? "pending" : taskItems.get(i).status;
+                if ("done".equals(status)) {
+                    done++;
+                } else if ("failed".equals(status)) {
+                    failed++;
+                } else if ("running".equals(status) || TaskRunningDisplayPolicy.shouldShowPredictedRunning(autoExecutingPlan, i, status, taskItems)) {
+                    runningIndex = i;
+                }
+            }
+            if (runningIndex >= 0) {
+                return getString(R.string.task_card_summary_running, taskItems.size(), done, failed, runningIndex + 1);
+            }
+            return getString(R.string.task_card_summary, taskItems.size(), done, failed);
+        }
+
+        private String taskIcon(ProjectTaskRecord task, int index) {
+            String status = task.status == null ? "pending" : task.status;
+            if (TaskRunningDisplayPolicy.shouldShowPredictedRunning(autoExecutingPlan, index, status, taskItems)) {
+                return "...";
+            }
+            if ("done".equals(status)) {
+                return "✓";
+            }
+            if ("running".equals(status)) {
+                return "...";
+            }
+            if ("failed".equals(status)) {
+                return "!";
+            }
+            return String.valueOf(task.sortOrder + 1);
+        }
+
+        private String taskStatusText(ProjectTaskRecord task, int index) {
+            String status = task.status == null ? "pending" : task.status;
+            if (TaskRunningDisplayPolicy.shouldShowPredictedRunning(autoExecutingPlan, index, status, taskItems)) {
+                long startedAt = activeTaskStartedAt > 0 ? activeTaskStartedAt : System.currentTimeMillis();
+                return getString(R.string.task_running) + " · " + getString(R.string.elapsed_time, formatDuration(System.currentTimeMillis() - startedAt));
+            }
+            if ("done".equals(status)) {
+                return getString(R.string.task_done) + taskDurationSuffix(task);
+            }
+            if ("running".equals(status)) {
+                return getString(R.string.task_running) + taskDurationSuffix(task);
+            }
+            if ("failed".equals(status)) {
+                return getString(R.string.task_failed) + taskDurationSuffix(task);
+            }
+            return getString(R.string.task_pending);
+        }
+
+        private String taskLogText(ProjectTaskRecord task, int index) {
+            String status = task.status == null ? "pending" : task.status;
+            if (TaskRunningDisplayPolicy.shouldShowPredictedRunning(autoExecutingPlan, index, status, taskItems)) {
+                return getString(R.string.task_running_log);
+            }
+            String summary = task.resultSummary == null ? "" : task.resultSummary.trim();
+            if ("running".equals(status) && summary.isEmpty()) {
+                return getString(R.string.task_running_log);
+            }
+            return summary;
         }
 
         private String messageTimeText(ChatMessage message) {
@@ -1041,7 +1330,7 @@ public class ProjectActivity extends BaseActivity {
             if (message.linkedBuildJobId == null) {
                 return time;
             }
-            BuildJobRecord job = repository.getBuildJob(message.linkedBuildJobId);
+            BuildJobRecord job = cachedJobForMessage(message);
             if (job == null) {
                 return time;
             }
@@ -1049,18 +1338,70 @@ public class ProjectActivity extends BaseActivity {
             return time + " · " + getString(R.string.elapsed_time, formatDuration(Math.max(0, end - job.createdAt)));
         }
 
-        private View bindBuildLog(View convertView, ViewGroup parent) {
+        private View bindBuildLog(ProjectTimelinePolicy.Entry entry, View convertView, ViewGroup parent) {
             View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_build_log, parent, false) : convertView;
-            BuildJobRecord job = latestJob;
+            BuildJobRecord job = cachedBuildLogJob(entry);
             boolean running = job != null && ("building".equals(job.status) || "queued".equals(job.status));
             ProgressBar progress = view.findViewById(R.id.buildProgress);
+            TextView title = view.findViewById(R.id.buildLogTitle);
             TextView content = view.findViewById(R.id.buildLogContent);
             View copyButton = view.findViewById(R.id.buildLogCopyButton);
+            TextView toggleButton = view.findViewById(R.id.buildLogToggleButton);
+            boolean expanded = job != null && expandedBuildLogJobIds.contains(job.id);
+            boolean showContent = ProjectBuildLogExpansionPolicy.shouldShowContent(job, expanded);
+            boolean showToggle = ProjectBuildLogExpansionPolicy.shouldShowToggle(job);
+            title.setText(buildLogTitleText(job));
             progress.setVisibility(running ? View.VISIBLE : View.GONE);
-            content.setText(job == null || job.logsPath == null ? getString(R.string.no_build_log) : readBuildLogPreview(job));
+            content.setText(showContent ? (job == null || job.logsPath == null ? getString(R.string.no_build_log) : readBuildLogPreview(job)) : "");
+            content.setVisibility(showContent ? View.VISIBLE : View.GONE);
             copyButton.setEnabled(job != null && job.logsPath != null);
             copyButton.setOnClickListener(v -> copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job)));
+            toggleButton.setVisibility(showToggle ? View.VISIBLE : View.GONE);
+            toggleButton.setText(expanded ? R.string.collapse_log : R.string.expand_log);
+            toggleButton.setOnClickListener(v -> {
+                if (job == null) {
+                    return;
+                }
+                if (expandedBuildLogJobIds.contains(job.id)) {
+                    expandedBuildLogJobIds.remove(job.id);
+                } else {
+                    expandedBuildLogJobIds.add(job.id);
+                }
+                if (adapter != null) {
+                    adapter.notifyDataSetChanged();
+                }
+            });
             return view;
+        }
+
+        private int buildLogTitle(BuildJobRecord job) {
+            ProjectBuildLogTitlePolicy.Title title = ProjectBuildLogTitlePolicy.titleFor(job);
+            if (title == ProjectBuildLogTitlePolicy.Title.BUILD_RUNNING) {
+                return R.string.build_log_running;
+            }
+            if (title == ProjectBuildLogTitlePolicy.Title.BUILD_SUCCESS) {
+                return R.string.build_log_success;
+            }
+            if (title == ProjectBuildLogTitlePolicy.Title.BUILD_FAILED) {
+                return R.string.build_log_failed;
+            }
+            if (title == ProjectBuildLogTitlePolicy.Title.REPAIR_RECORD) {
+                return R.string.repair_record;
+            }
+            return R.string.build_log;
+        }
+
+        private String buildLogTitleText(BuildJobRecord job) {
+            String title = getString(buildLogTitle(job));
+            if (job == null) {
+                return title;
+            }
+            long end = isRunningJob(job) ? System.currentTimeMillis() : Math.max(job.updatedAt, job.createdAt);
+            long elapsed = Math.max(0, end - job.createdAt);
+            if (job.createdAt <= 0 || elapsed <= 0) {
+                return title;
+            }
+            return title + " · " + getString(R.string.elapsed_time, formatDuration(elapsed));
         }
 
         private String taskDurationSuffix(ProjectTaskRecord task) {
@@ -1213,6 +1554,14 @@ public class ProjectActivity extends BaseActivity {
         }
         StringBuilder result = new StringBuilder();
         appendSnippet(result, "First log", logs, 0, Math.min(1600, logs.length()));
+        String missingFieldHints = BuildLogContextExtractor.missingFieldHints(logs);
+        if (!missingFieldHints.isEmpty()) {
+            appendSnippet(result, "Java API consistency hints", missingFieldHints, 0, missingFieldHints.length());
+        }
+        String javaDiagnostics = BuildLogContextExtractor.javaCompileDiagnostics(logs, 9000);
+        if (!javaDiagnostics.isEmpty()) {
+            appendSnippet(result, "Java compile diagnostics", javaDiagnostics, 0, javaDiagnostics.length());
+        }
         int[] anchors = failureAnchors(logs);
         for (int anchor : anchors) {
             if (anchor >= 0) {
@@ -1231,6 +1580,7 @@ public class ProjectActivity extends BaseActivity {
 
     private int[] failureAnchors(String logs) {
         return new int[]{
+                indexOfAny(logs, ".java:", "error: cannot find symbol", "has private access", "cannot be applied to given types", "actual and formal argument lists differ"),
                 indexOfAny(logs, "Android resource linking failed", "error: resource", "error: failed linking", "AAPT: error"),
                 indexOfAny(logs, "Namespace not specified", "Manifest merger failed", "package=\"", "> Task :app:processDebugResources FAILED", "Execution failed for task ':app:processDebugResources'", "* What went wrong:"),
                 indexOfAny(logs, "BUILD FAILED", "Caused by:")

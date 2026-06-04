@@ -210,6 +210,63 @@ public class AndroidSourceGuardTest {
         new AndroidSourceGuard().validate(root);
     }
 
+    @Test
+    public void blocksMissingCustomModelFieldAccess() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/CategorySum.java",
+                "package com.example;\nclass CategorySum { public final String name; CategorySum(String name) { this.name = name; } }");
+        write(root, "app/src/main/java/com/example/StatisticsAdapter.java",
+                "package com.example;\nclass StatisticsAdapter { void bind(CategorySum item) { String label = item.categoryName; } }");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertEquals("Generated source policy blocked missing model field: CategorySum.categoryName in StatisticsAdapter.java. Add the field/getter or update the caller to use an existing API.", error.getMessage());
+    }
+
+    @Test
+    public void blocksConstructorArgumentTypeMismatch() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/CategoryDAO.java",
+                "package com.example;\nimport android.content.Context;\nclass CategoryDAO { CategoryDAO(Context context) {} }");
+        write(root, "app/src/main/java/com/example/DBHelper.java",
+                "package com.example;\nclass DBHelper {}");
+        write(root, "app/src/main/java/com/example/StatisticsActivity.java",
+                "package com.example;\nclass StatisticsActivity { DBHelper dbHelper; void bind() { CategoryDAO dao = new CategoryDAO(dbHelper); } }");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertEquals("Generated source policy blocked constructor argument mismatch: new CategoryDAO(DBHelper) in StatisticsActivity.java, but available constructors are CategoryDAO(Context). Update the constructor or caller consistently.", error.getMessage());
+    }
+
+    @Test
+    public void allowsFieldDeclaredOnSecondaryClassInSameFile() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/Models.java",
+                "package com.example;\nclass Outer { String label; }\nclass CategorySum { String total; }");
+        write(root, "app/src/main/java/com/example/StatisticsAdapter.java",
+                "package com.example;\nclass StatisticsAdapter { void bind(CategorySum item) { String label = item.total; } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void allowsClassQualifiedResourceIdConstantsInsideAdapter() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/TransactionAdapter.java",
+                "package com.example;\nclass TransactionAdapter { static final int id = 1; static class ViewHolder {} int bind() { return TransactionAdapter.id; } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void doesNotTreatAdapterFieldAccessAsModelDtoPolicyFailure() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/TransactionAdapter.java",
+                "package com.example;\nclass TransactionAdapter { int bind(TransactionAdapter adapter) { return adapter.id; } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
     private void write(File root, String path, String content) throws Exception {
         FileUtils.writeText(new File(root, path), content);
     }

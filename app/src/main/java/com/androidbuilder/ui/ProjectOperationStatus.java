@@ -13,6 +13,15 @@ public final class ProjectOperationStatus {
         return busy || autoExecutingPlan || isRunningJob(latestJob);
     }
 
+    public static String displayText(String message, String elapsedText) {
+        String text = message == null ? "" : message.trim();
+        String elapsed = elapsedText == null ? "" : elapsedText.trim();
+        if (elapsed.isEmpty()) {
+            return text;
+        }
+        return text + " · " + elapsed;
+    }
+
     private static boolean isRunningJob(BuildJobRecord job) {
         if (job == null || job.status == null) {
             return false;

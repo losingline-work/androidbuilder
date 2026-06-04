@@ -13,13 +13,55 @@ final class PolicyRewriteInstruction {
                 .append(message)
                 .append("\nRewrite this task with the smallest necessary file changes.");
         instruction.append("\nKeep Java + XML only, obey the active dependency mode, and do not add blocked dependencies, plugins, imports, Kotlin, DataBinding, ViewBinding, or Compose.");
+        if (message.contains("Task operation list is empty")) {
+            instruction.append("\nDo not return an empty operations array. Return at least one write or delete operation that advances this task.");
+            instruction.append("\nIf the current source already contains part of the work, update the smallest relevant file with the remaining required change instead of returning no operations.");
+        }
+        if (message.contains("Task operation response did not contain a JSON object") || message.contains("Unsupported file operation action")) {
+            instruction.append("\nReturn only a compact JSON object with summary and operations. Each operation action must be exactly write or delete.");
+        }
+        if (message.contains("Unsafe generated file path")) {
+            instruction.append("\nUse only relative POSIX paths inside the Android project, such as app/src/main/java/... or app/src/main/res/layout/...");
+        }
+        if (message.contains("constructor argument mismatch")) {
+            instruction.append("\nA class is constructed with arguments that do not match its declared constructor. Make the caller and the class consistent.");
+            instruction.append("\nCheck the real constructor in the referenced class first, then either pass arguments whose types match an existing constructor, or change the class constructor to accept the types you actually pass.");
+            instruction.append("\nIf a helper/dependency is required (for example a DBHelper), construct that object first and pass it; do not pass an Activity/Context where a different type is expected.");
+        }
+        if (message.contains("missing model field")) {
+            instruction.append("\nThe code reads a field or getter that the referenced class does not declare. Keep the class and its callers consistent.");
+            instruction.append("\nEither add the missing field (and its getter if used) to that class, or change the caller to use a field/method that already exists on it. Do not invent fields that are not declared.");
+        }
+        if (message.contains("synthetic view access")) {
+            instruction.append("\nThis project does not use Kotlin synthetics, DataBinding or ViewBinding, so a view cannot be referenced by its id name directly.");
+            instruction.append("\nFor EVERY view you read or call methods on, first declare a local variable (or field) and assign it from findViewById before using it. Reuse the exact R.id name.");
+            instruction.append("\nExample: replace radioIncome.isChecked() with RadioButton radioIncome = findViewById(R.id.radioIncome); ... radioIncome.isChecked();");
+            instruction.append("\nInside an Activity use findViewById(R.id.xxx); inside a Fragment use rootView.findViewById(R.id.xxx) or requireView().findViewById(R.id.xxx).");
+            instruction.append("\nFix every view accessed this way in the named file, not only the one mentioned, so no synthetic access remains.");
+        }
+        if (message.contains("Fragment findViewById usage")) {
+            instruction.append("\nIn Fragments never call a bare findViewById(...). Resolve views from the inflated root view: View rootView = inflater.inflate(R.layout.xxx, container, false); TextView title = rootView.findViewById(R.id.title); and return rootView.");
+            instruction.append("\nOutside onCreateView use requireView().findViewById(R.id.xxx).");
+        }
+        if (message.contains("DataBinding/ViewBinding")) {
+            instruction.append("\nRemove all DataBinding/ViewBinding usage and the *Binding imports. Inflate layouts with LayoutInflater/setContentView and resolve views with findViewById(R.id.xxx) instead.");
+        }
         if (message.contains("Java lambda syntax") || message.contains("->")) {
             instruction.append("\nRemove every Java lambda and every -> token from all generated Java files. Use anonymous inner classes for listeners and callbacks.");
             instruction.append("\nExamples: use new View.OnClickListener() { public void onClick(View view) { ... } } instead of v -> ...; use new AdapterView.OnItemClickListener() { public void onItemClick(...) { ... } } instead of (parent, view, position, id) -> ... .");
             instruction.append("\nDo not use -> anywhere in the returned file contents.");
         }
+        if (message.contains("online Maven dependency") || message.contains("dynamic Maven version")) {
+            instruction.append("\nFor online dependency mode, only add Maven coordinates from trusted groups (" + OnlineDependencyPolicy.trustedGroupsSummary() + ") with an exact pinned version such as 1.2.3.");
+            instruction.append("\nRemove version ranges and + wildcards, and remove Compose, Room, Hilt, Dagger, any *-compiler annotation processor, and any Gradle plugin other than com.android.application. Prefer the Android SDK and plain Java/XML when a dependency is not essential.");
+        }
         if (message.contains("missing XML resource reference")) {
             instruction.append("\nFor every XML @mipmap/@style/@drawable/@string/@color/@layout reference, either add a matching resource file or values entry, or change the XML to use an existing resource.");
+        }
+        if (message.contains("appbar_scrolling_view_behavior")) {
+            instruction.append("\nDo not use @string/appbar_scrolling_view_behavior, CoordinatorLayout, AppBarLayout, CollapsingToolbarLayout, MaterialToolbar, or any Material/AndroidX behavior class unless the project explicitly declares and can resolve that dependency.");
+            instruction.append("\nFor offline-safe generated apps, replace that layout with Android SDK widgets such as LinearLayout, FrameLayout, ScrollView, Toolbar, ListView, or RecyclerView alternatives already available in the project.");
+            instruction.append("\nRemove app:layout_behavior and any appbar scrolling behavior attributes from the XML instead of adding a fake string resource that points to a missing class.");
         }
         if (message.contains("missing ") && message.contains("resource")) {
             instruction.append("\nFor every R.* or XML resource reference, make sure the referenced resource exists after your operations are applied.");

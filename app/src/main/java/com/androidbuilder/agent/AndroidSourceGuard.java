@@ -3,6 +3,10 @@ package com.androidbuilder.agent;
 import com.androidbuilder.util.FileUtils;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -23,6 +27,11 @@ public class AndroidSourceGuard {
     private static final Pattern FRAGMENT_CLASS = Pattern.compile("\\bclass\\s+\\w+[^\\n{]*(?:Fragment\\(|:\\s*Fragment\\b)");
     private static final Pattern NAKED_FIND_VIEW = Pattern.compile("(?<![A-Za-z0-9_.])findViewById\\s*(?:<|\\()");
     private static final Pattern DECLARED_VARIABLE = Pattern.compile("\\b(?:val|var)\\s+%s\\b|\\blateinit\\s+var\\s+%s\\b");
+    private static final Pattern JAVA_CLASS = Pattern.compile("\\bclass\\s+([A-Z][A-Za-z0-9_]*)\\b(?:\\s+extends\\s+([A-Za-z_][A-Za-z0-9_$.]*))?");
+    private static final Pattern JAVA_FIELD_DECLARATION = Pattern.compile("\\b(?:public|protected|private)?\\s*(?:static\\s+)?(?:final\\s+)?([A-Za-z_][A-Za-z0-9_$.<>?\\[\\]]*)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?=[=;,])");
+    private static final Pattern JAVA_VARIABLE_DECLARATION = Pattern.compile("\\b(?:final\\s+)?([A-Z][A-Za-z0-9_$.]*(?:\\s*<[^;(){}]+>)?(?:\\[\\])?)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b");
+    private static final Pattern JAVA_FIELD_ACCESS = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    private static final Pattern JAVA_NEW_EXPRESSION = Pattern.compile("\\bnew\\s+([A-Z][A-Za-z0-9_]*)\\s*\\(([^()]*)\\)");
 
     public void validate(File sourceDir) throws Exception {
         ResourceSymbols symbols = new ResourceSymbols();
@@ -32,7 +41,9 @@ public class AndroidSourceGuard {
         collectResourceFileNames(resDir, "drawable", symbols.drawables);
         collectResourceFileNames(resDir, "mipmap", symbols.mipmaps);
         collectValueResources(resDir, symbols);
-        validateFiles(sourceDir, symbols);
+        JavaApiSymbols javaSymbols = new JavaApiSymbols();
+        collectJavaApiSymbols(sourceDir, javaSymbols);
+        validateFiles(sourceDir, symbols, javaSymbols);
     }
 
     private void collectXmlIds(File file, Set<String> ids) throws Exception {
@@ -179,7 +190,7 @@ public class AndroidSourceGuard {
         }
     }
 
-    private void validateFiles(File file, ResourceSymbols symbols) throws Exception {
+    private void validateFiles(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols) throws Exception {
         if (file == null || !file.exists()) {
             return;
         }
@@ -189,7 +200,7 @@ public class AndroidSourceGuard {
                 throw new IllegalArgumentException("Generated source policy blocked Kotlin source file: " + name + ". Use Java source files (.java) only.");
             }
             if (name.endsWith(".java")) {
-                validateSourceFile(file, symbols);
+                validateSourceFile(file, symbols, javaSymbols);
             } else if (name.endsWith(".xml")) {
                 validateXmlFile(file, symbols);
             }
@@ -200,11 +211,11 @@ public class AndroidSourceGuard {
             return;
         }
         for (File child : children) {
-            validateFiles(child, symbols);
+            validateFiles(child, symbols, javaSymbols);
         }
     }
 
-    private void validateSourceFile(File file, ResourceSymbols symbols) throws Exception {
+    private void validateSourceFile(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols) throws Exception {
         String content = FileUtils.readText(file);
         if (content.contains("kotlinx.android.synthetic")) {
             throw new IllegalArgumentException("Generated source policy blocked Kotlin synthetic view imports in " + file.getName() + ". Use findViewById on the inflated root/dialog view.");
@@ -230,6 +241,507 @@ public class AndroidSourceGuard {
         if (content.contains("->")) {
             throw new IllegalArgumentException("Generated source policy blocked Java lambda syntax in " + file.getName() + ". Use anonymous listener classes instead of ->.");
         }
+        String sanitized = stripJavaCommentsAndStrings(content);
+        validateCustomFieldAccess(file, sanitized, javaSymbols);
+        validateConstructorCalls(file, sanitized, javaSymbols);
+    }
+
+    private void collectJavaApiSymbols(File file, JavaApiSymbols symbols) throws Exception {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        if (file.isFile()) {
+            if (file.getName().endsWith(".java")) {
+                collectJavaApiSymbolsFromFile(file, symbols);
+            }
+            return;
+        }
+        File[] children = file.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            collectJavaApiSymbols(child, symbols);
+        }
+    }
+
+    private void collectJavaApiSymbolsFromFile(File file, JavaApiSymbols symbols) throws Exception {
+        String content = stripJavaCommentsAndStrings(FileUtils.readText(file));
+        List<ClassSpan> classSpans = new ArrayList<>();
+        Matcher classMatcher = JAVA_CLASS.matcher(content);
+        while (classMatcher.find()) {
+            String className = classMatcher.group(1);
+            symbols.ensureClass(className);
+            String superClass = simpleType(classMatcher.group(2));
+            if (!superClass.isEmpty()) {
+                symbols.superClassByClass.put(className, superClass);
+            }
+            int bodyStart = content.indexOf('{', classMatcher.end());
+            int bodyEnd = bodyStart < 0 ? content.length() : matchingBrace(content, bodyStart);
+            classSpans.add(new ClassSpan(className, bodyStart, bodyEnd));
+        }
+        if (classSpans.isEmpty()) {
+            return;
+        }
+        Matcher fieldMatcher = JAVA_FIELD_DECLARATION.matcher(content);
+        while (fieldMatcher.find()) {
+            String fieldName = fieldMatcher.group(2);
+            if (isJavaKeyword(fieldName)) {
+                continue;
+            }
+            String owner = enclosingClass(classSpans, fieldMatcher.start());
+            if (owner != null) {
+                symbols.fieldsByClass.get(owner).add(fieldName);
+            }
+        }
+        for (ClassSpan span : classSpans) {
+            Pattern constructorPattern = Pattern.compile("\\b(?:public|protected|private)?\\s*" + Pattern.quote(span.className) + "\\s*\\(([^)]*)\\)");
+            Matcher constructorMatcher = constructorPattern.matcher(content);
+            while (constructorMatcher.find()) {
+                if (isNewExpressionReference(content, constructorMatcher.start())) {
+                    continue;
+                }
+                symbols.constructorsByClass.get(span.className).add(parseParameterTypes(constructorMatcher.group(1)));
+            }
+        }
+    }
+
+    private int matchingBrace(String content, int openIndex) {
+        int depth = 0;
+        for (int i = openIndex; i < content.length(); i++) {
+            char c = content.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return content.length();
+    }
+
+    private String enclosingClass(List<ClassSpan> classSpans, int position) {
+        String owner = null;
+        int bestSpan = Integer.MAX_VALUE;
+        for (ClassSpan span : classSpans) {
+            if (span.bodyStart < 0 || position <= span.bodyStart || position >= span.bodyEnd) {
+                continue;
+            }
+            int width = span.bodyEnd - span.bodyStart;
+            if (width < bestSpan) {
+                bestSpan = width;
+                owner = span.className;
+            }
+        }
+        return owner;
+    }
+
+    private boolean isNewExpressionReference(String content, int start) {
+        int cursor = start - 1;
+        while (cursor >= 0 && Character.isWhitespace(content.charAt(cursor))) {
+            cursor--;
+        }
+        int end = cursor + 1;
+        while (cursor >= 0 && Character.isJavaIdentifierPart(content.charAt(cursor))) {
+            cursor--;
+        }
+        return "new".equals(content.substring(cursor + 1, end));
+    }
+
+    private void validateCustomFieldAccess(File file, String content, JavaApiSymbols javaSymbols) {
+        Map<String, String> variableTypes = collectVariableTypes(content);
+        String currentClass = firstClassName(content);
+        if (!currentClass.isEmpty()) {
+            variableTypes.put("this", currentClass);
+        }
+        Matcher matcher = JAVA_FIELD_ACCESS.matcher(content);
+        while (matcher.find()) {
+            if (isMethodCall(content, matcher.end())) {
+                continue;
+            }
+            String variableName = matcher.group(1);
+            String fieldName = matcher.group(2);
+            String type = variableTypes.get(variableName);
+            if (type == null || !javaSymbols.hasClass(type) || !isLikelyModelType(type)) {
+                continue;
+            }
+            if (!javaSymbols.hasField(type, fieldName)) {
+                throw new IllegalArgumentException("Generated source policy blocked missing model field: " + type + "." + fieldName + " in " + file.getName() + ". Add the field/getter or update the caller to use an existing API.");
+            }
+        }
+    }
+
+    private boolean isMethodCall(String content, int end) {
+        int cursor = end;
+        while (cursor < content.length() && Character.isWhitespace(content.charAt(cursor))) {
+            cursor++;
+        }
+        return cursor < content.length() && content.charAt(cursor) == '(';
+    }
+
+    private void validateConstructorCalls(File file, String content, JavaApiSymbols javaSymbols) {
+        Map<String, String> variableTypes = collectVariableTypes(content);
+        String currentClass = firstClassName(content);
+        Matcher matcher = JAVA_NEW_EXPRESSION.matcher(content);
+        while (matcher.find()) {
+            String className = matcher.group(1);
+            if (!javaSymbols.hasClass(className)) {
+                continue;
+            }
+            List<String> argumentTypes = inferArgumentTypes(splitArguments(matcher.group(2)), variableTypes, currentClass);
+            List<List<String>> constructors = javaSymbols.availableConstructors(className);
+            boolean hasMatchingArity = hasMatchingArity(constructors, argumentTypes.size());
+            if (!hasMatchingArity || (allKnown(argumentTypes) && !matchesAnyConstructor(argumentTypes, constructors, javaSymbols))) {
+                throw new IllegalArgumentException("Generated source policy blocked constructor argument mismatch: new " + className + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ", but available constructors are " + describeConstructors(className, constructors) + ". Update the constructor or caller consistently.");
+            }
+        }
+    }
+
+    private Map<String, String> collectVariableTypes(String content) {
+        Map<String, String> variableTypes = new HashMap<>();
+        Matcher matcher = JAVA_VARIABLE_DECLARATION.matcher(content);
+        while (matcher.find()) {
+            String type = simpleType(matcher.group(1));
+            String name = matcher.group(2);
+            if (!type.isEmpty() && !isJavaKeyword(name)) {
+                variableTypes.put(name, type);
+            }
+        }
+        return variableTypes;
+    }
+
+    private String firstClassName(String content) {
+        Matcher matcher = JAVA_CLASS.matcher(content);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return "";
+    }
+
+    private List<String> parseParameterTypes(String parameters) {
+        List<String> types = new ArrayList<>();
+        for (String parameter : splitArguments(parameters)) {
+            String type = typeFromDeclaration(parameter);
+            if (!type.isEmpty()) {
+                types.add(type);
+            }
+        }
+        return types;
+    }
+
+    private String typeFromDeclaration(String declaration) {
+        String value = declaration == null ? "" : declaration.trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+        value = value.replaceAll("@[A-Za-z_][A-Za-z0-9_.]*(?:\\([^)]*\\))?\\s*", "");
+        value = value.replaceAll("\\bfinal\\s+", "");
+        int split = lastWhitespaceOutsideGenerics(value);
+        if (split <= 0) {
+            return "";
+        }
+        return simpleType(value.substring(0, split).replace("...", "[]"));
+    }
+
+    private int lastWhitespaceOutsideGenerics(String value) {
+        int depth = 0;
+        int split = -1;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '<') {
+                depth++;
+            } else if (c == '>' && depth > 0) {
+                depth--;
+            } else if (Character.isWhitespace(c) && depth == 0) {
+                split = i;
+            }
+        }
+        return split;
+    }
+
+    private List<String> splitArguments(String arguments) {
+        List<String> values = new ArrayList<>();
+        String value = arguments == null ? "" : arguments.trim();
+        if (value.isEmpty()) {
+            return values;
+        }
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '(' || c == '[' || c == '<') {
+                depth++;
+            } else if ((c == ')' || c == ']' || c == '>') && depth > 0) {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                values.add(value.substring(start, i).trim());
+                start = i + 1;
+            }
+        }
+        values.add(value.substring(start).trim());
+        return values;
+    }
+
+    private List<String> inferArgumentTypes(List<String> arguments, Map<String, String> variableTypes, String currentClass) {
+        List<String> types = new ArrayList<>();
+        for (String argument : arguments) {
+            types.add(inferArgumentType(argument, variableTypes, currentClass));
+        }
+        return types;
+    }
+
+    private String inferArgumentType(String argument, Map<String, String> variableTypes, String currentClass) {
+        String value = argument == null ? "" : argument.trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+        Matcher castMatcher = Pattern.compile("^\\(([^)]+)\\)").matcher(value);
+        if (castMatcher.find()) {
+            return simpleType(castMatcher.group(1));
+        }
+        if ("this".equals(value)) {
+            return currentClass == null ? "" : currentClass;
+        }
+        if (value.endsWith(".this")) {
+            return simpleType(value.substring(0, value.length() - 5));
+        }
+        Matcher newMatcher = Pattern.compile("^new\\s+([A-Z][A-Za-z0-9_]*)\\b").matcher(value);
+        if (newMatcher.find()) {
+            return newMatcher.group(1);
+        }
+        Matcher variableMatcher = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$").matcher(value);
+        if (variableMatcher.find()) {
+            String type = variableTypes.get(value);
+            return type == null ? "" : type;
+        }
+        if (value.startsWith("\"")) {
+            return "String";
+        }
+        if ("true".equals(value) || "false".equals(value)) {
+            return "boolean";
+        }
+        if (value.matches("-?\\d+[lL]")) {
+            return "long";
+        }
+        if (value.matches("-?\\d+")) {
+            return "int";
+        }
+        if (value.matches("-?\\d+\\.\\d+[fF]?")) {
+            return value.endsWith("f") || value.endsWith("F") ? "float" : "double";
+        }
+        return "";
+    }
+
+    private boolean hasMatchingArity(List<List<String>> constructors, int arity) {
+        for (List<String> constructor : constructors) {
+            if (constructor.size() == arity) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean allKnown(List<String> types) {
+        for (String type : types) {
+            if (type == null || type.isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean matchesAnyConstructor(List<String> argumentTypes, List<List<String>> constructors, JavaApiSymbols javaSymbols) {
+        for (List<String> constructor : constructors) {
+            if (constructor.size() != argumentTypes.size()) {
+                continue;
+            }
+            boolean matches = true;
+            for (int i = 0; i < constructor.size(); i++) {
+                if (!isAssignable(argumentTypes.get(i), constructor.get(i), javaSymbols)) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isAssignable(String actualType, String expectedType, JavaApiSymbols javaSymbols) {
+        String actual = simpleType(actualType);
+        String expected = simpleType(expectedType);
+        if (actual.isEmpty() || expected.isEmpty()) {
+            return false;
+        }
+        if (actual.equals(expected) || "Object".equals(expected)) {
+            return true;
+        }
+        if ("Context".equals(expected) && (actual.endsWith("Activity") || actual.endsWith("Service") || "Application".equals(actual))) {
+            return true;
+        }
+        String parent = javaSymbols.superClassByClass.get(actual);
+        Set<String> visited = new HashSet<>();
+        while (parent != null && visited.add(parent)) {
+            if (expected.equals(parent)) {
+                return true;
+            }
+            if ("Context".equals(expected) && (parent.endsWith("Activity") || parent.endsWith("Service") || "Application".equals(parent))) {
+                return true;
+            }
+            parent = javaSymbols.superClassByClass.get(parent);
+        }
+        return false;
+    }
+
+    private boolean isLikelyModelType(String type) {
+        String value = simpleType(type);
+        if (value.isEmpty()) {
+            return false;
+        }
+        return !(value.endsWith("Activity") ||
+                value.endsWith("Adapter") ||
+                value.endsWith("DAO") ||
+                value.endsWith("Dao") ||
+                value.endsWith("Database") ||
+                value.endsWith("Helper") ||
+                value.endsWith("OpenHelper") ||
+                value.endsWith("ViewHolder") ||
+                value.endsWith("Holder") ||
+                value.endsWith("Fragment") ||
+                value.endsWith("Service") ||
+                value.endsWith("Receiver") ||
+                value.endsWith("Dialog") ||
+                value.endsWith("View") ||
+                value.endsWith("Button") ||
+                value.endsWith("TextView") ||
+                value.endsWith("ImageView"));
+    }
+
+    private String describeConstructors(String className, List<List<String>> constructors) {
+        List<String> values = new ArrayList<>();
+        for (List<String> constructor : constructors) {
+            values.add(className + "(" + joinTypes(constructor) + ")");
+        }
+        return joinValues(values);
+    }
+
+    private String joinTypes(List<String> types) {
+        List<String> values = new ArrayList<>();
+        for (String type : types) {
+            values.add(type == null || type.isEmpty() ? "unknown" : type);
+        }
+        return joinValues(values);
+    }
+
+    private String joinValues(List<String> values) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(values.get(i));
+        }
+        return builder.toString();
+    }
+
+    private String simpleType(String type) {
+        String value = type == null ? "" : type.trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+        value = value.replace("?", "").trim();
+        value = value.replaceAll("\\bextends\\s+", "");
+        value = value.replaceAll("\\bsuper\\s+", "");
+        int generic = value.indexOf('<');
+        if (generic >= 0) {
+            value = value.substring(0, generic);
+        }
+        while (value.endsWith("[]")) {
+            value = value.substring(0, value.length() - 2);
+        }
+        int dot = value.lastIndexOf('.');
+        if (dot >= 0) {
+            value = value.substring(dot + 1);
+        }
+        return value.trim();
+    }
+
+    private boolean isJavaKeyword(String value) {
+        return "class".equals(value) || "interface".equals(value) || "enum".equals(value) || "return".equals(value) || "new".equals(value);
+    }
+
+    private String stripJavaCommentsAndStrings(String content) {
+        StringBuilder builder = new StringBuilder(content.length());
+        boolean inString = false;
+        boolean inChar = false;
+        boolean inLineComment = false;
+        boolean inBlockComment = false;
+        for (int i = 0; i < content.length(); i++) {
+            char c = content.charAt(i);
+            char next = i + 1 < content.length() ? content.charAt(i + 1) : '\0';
+            if (inLineComment) {
+                if (c == '\n') {
+                    inLineComment = false;
+                    builder.append(c);
+                } else {
+                    builder.append(' ');
+                }
+            } else if (inBlockComment) {
+                if (c == '*' && next == '/') {
+                    inBlockComment = false;
+                    builder.append(' ');
+                    builder.append(' ');
+                    i++;
+                } else {
+                    builder.append(c == '\n' ? c : ' ');
+                }
+            } else if (inString) {
+                if (c == '\\' && next != '\0') {
+                    builder.append(' ');
+                    builder.append(' ');
+                    i++;
+                } else if (c == '"') {
+                    inString = false;
+                    builder.append(' ');
+                } else {
+                    builder.append(c == '\n' ? c : ' ');
+                }
+            } else if (inChar) {
+                if (c == '\\' && next != '\0') {
+                    builder.append(' ');
+                    builder.append(' ');
+                    i++;
+                } else if (c == '\'') {
+                    inChar = false;
+                    builder.append(' ');
+                } else {
+                    builder.append(c == '\n' ? c : ' ');
+                }
+            } else if (c == '/' && next == '/') {
+                inLineComment = true;
+                builder.append(' ');
+                builder.append(' ');
+                i++;
+            } else if (c == '/' && next == '*') {
+                inBlockComment = true;
+                builder.append(' ');
+                builder.append(' ');
+                i++;
+            } else if (c == '"') {
+                inString = true;
+                builder.append(' ');
+            } else if (c == '\'') {
+                inChar = true;
+                builder.append(' ');
+            } else {
+                builder.append(c);
+            }
+        }
+        return builder.toString();
     }
 
     private void validateXmlFile(File file, ResourceSymbols symbols) throws Exception {
@@ -317,5 +829,63 @@ public class AndroidSourceGuard {
         final Set<String> drawables = new HashSet<>();
         final Set<String> mipmaps = new HashSet<>();
         final Set<String> styles = new HashSet<>();
+    }
+
+    private static class ClassSpan {
+        final String className;
+        final int bodyStart;
+        final int bodyEnd;
+
+        ClassSpan(String className, int bodyStart, int bodyEnd) {
+            this.className = className;
+            this.bodyStart = bodyStart;
+            this.bodyEnd = bodyEnd;
+        }
+    }
+
+    private static class JavaApiSymbols {
+        final Map<String, Set<String>> fieldsByClass = new HashMap<>();
+        final Map<String, List<List<String>>> constructorsByClass = new HashMap<>();
+        final Map<String, String> superClassByClass = new HashMap<>();
+
+        void ensureClass(String className) {
+            if (!fieldsByClass.containsKey(className)) {
+                fieldsByClass.put(className, new HashSet<String>());
+            }
+            if (!constructorsByClass.containsKey(className)) {
+                constructorsByClass.put(className, new ArrayList<List<String>>());
+            }
+        }
+
+        boolean hasClass(String className) {
+            return fieldsByClass.containsKey(className);
+        }
+
+        boolean hasField(String className, String fieldName) {
+            Set<String> fields = fieldsByClass.get(className);
+            if (fields != null && fields.contains(fieldName)) {
+                return true;
+            }
+            String parent = superClassByClass.get(className);
+            Set<String> visited = new HashSet<>();
+            while (parent != null && visited.add(parent)) {
+                fields = fieldsByClass.get(parent);
+                if (fields != null && fields.contains(fieldName)) {
+                    return true;
+                }
+                parent = superClassByClass.get(parent);
+            }
+            return false;
+        }
+
+        List<List<String>> availableConstructors(String className) {
+            List<List<String>> constructors = constructorsByClass.get(className);
+            if (constructors == null || constructors.isEmpty()) {
+                List<List<String>> defaultConstructor = new ArrayList<>();
+                defaultConstructor.add(new ArrayList<String>());
+                return defaultConstructor;
+            }
+            return constructors;
+        }
     }
 }

@@ -76,4 +76,14 @@ public class BuildFailureClassifierTest {
         assertEquals(BuildFailureClassifier.Kind.DEPENDENCY_CONFLICT, result.kind);
         assertFalse(result.repairableByModel);
     }
+
+    @Test
+    public void javacSymbolErrorsAreModelRepairable() {
+        BuildFailureClassifier.Result result = BuildFailureClassifier.classify(
+                "embedded_runtime_finished",
+                "Execution failed for task ':app:compileDebugJavaWithJavac'. StatisticsActivity.java:102: error: cannot find symbol");
+
+        assertEquals(BuildFailureClassifier.Kind.JAVA_COMPILE, result.kind);
+        assertTrue(result.repairableByModel);
+    }
 }

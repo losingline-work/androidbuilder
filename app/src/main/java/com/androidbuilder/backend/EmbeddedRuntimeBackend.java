@@ -2,6 +2,7 @@ package com.androidbuilder.backend;
 
 import android.content.Context;
 
+import com.androidbuilder.agent.BuildLogContextExtractor;
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.embeddedruntime.EmbeddedRuntime;
 import com.androidbuilder.model.BuildJobRecord;
@@ -66,7 +67,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                         "Install a full Android arm64 runtime bootstrap, then retry the build.\n";
                 FileUtils.appendText(log, error);
                 repository.updateBuildJob(job.id, "failed", "embedded_runtime_missing_tools", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", "Embedded build failed: Android runtime toolchain is incomplete.", job.id);
+                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -78,7 +79,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 String error = context.getString(com.androidbuilder.R.string.dependency_network_failed, "Google Maven / Maven Central");
                 FileUtils.appendText(log, error + "\n");
                 repository.updateBuildJob(job.id, "failed", "dependency_network_unavailable", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", error, job.id);
+                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -95,7 +96,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                         "Install or bundle a GPL-compatible Android arm64 bootstrap that provides shell/coreutils/JDK/Gradle/Android SDK/aapt2.\n";
                 FileUtils.appendText(log, error);
                 repository.updateBuildJob(job.id, "failed", "embedded_runtime_missing_tools", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", "Embedded build failed: missing runtime tools. See build log.", job.id);
+                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -106,7 +107,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 boolean timeout = version.exitCode == 124;
                 String error = summarizeFailure(timeout ? "Gradle smoke test timed out" : "Gradle smoke test failed", version);
                 repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "embedded_runtime_gradle_start_failed", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", "Build failed before Gradle could start:\n" + error, job.id);
+                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -128,23 +129,41 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 FileUtils.copyRecursively(apk, artifact);
                 repository.addArtifact(job.projectId, job.id, "apk", artifact.getAbsolutePath());
                 repository.updateBuildJob(job.id, "success", "embedded_runtime_finished", log.getAbsolutePath(), artifact.getAbsolutePath(), null, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", "Build result: success: APK built with embedded runtime", job.id);
+                repository.addMessage(job.projectId, "assistant", context.getString(com.androidbuilder.R.string.build_summary_success), job.id);
             } else {
                 boolean timeout = build.exitCode == 124;
                 String error = summarizeFailure(timeout ? "embedded runtime build timed out" : "embedded runtime build exited with " + build.exitCode + (apk == null ? " and did not produce an APK" : ""), build);
                 FileUtils.appendText(log, error + "\n");
                 repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "embedded_runtime_finished", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", "Build result: failed\n" + error, job.id);
+                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
             }
         } catch (Exception error) {
+            String message = error.getMessage() == null ? error.toString() : error.getMessage();
             try {
-                FileUtils.appendText(log, "Embedded runtime error: " + error.getMessage() + "\n");
+                FileUtils.appendText(log, "Embedded runtime error: " + message + "\n");
             } catch (Exception ignored) {
             }
-            repository.updateBuildJob(job.id, "failed", "embedded_runtime_error", log.getAbsolutePath(), null, error.getMessage(), job.retryCount);
-            repository.addMessage(job.projectId, "assistant", "Embedded build failed: " + error.getMessage(), job.id);
+            repository.updateBuildJob(job.id, "failed", "embedded_runtime_error", log.getAbsolutePath(), null, message, job.retryCount);
+            repository.addMessage(job.projectId, "assistant", buildFailureMessage(message), job.id);
         }
         listener.onJobChanged(job.projectId, job.id);
+    }
+
+    private String buildFailureMessage(String detail) {
+        return context.getString(com.androidbuilder.R.string.build_summary_failed, firstDetailLine(detail));
+    }
+
+    private String firstDetailLine(String detail) {
+        if (detail != null) {
+            String[] lines = detail.split("\\r?\\n");
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (!trimmed.isEmpty()) {
+                    return trimmed.length() > 240 ? trimmed.substring(0, 240).trim() + "..." : trimmed;
+                }
+            }
+        }
+        return context.getString(com.androidbuilder.R.string.build_summary_detail_missing);
     }
 
     private void initializeLayout(File log) throws Exception {
@@ -551,8 +570,8 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 }
                 if (contextLines > 0) {
                     failureContext.append(line).append('\n');
-                    if (failureContext.length() > 9000) {
-                        failureContext.delete(0, failureContext.length() - 9000);
+                    if (failureContext.length() > 20000) {
+                        failureContext.delete(0, failureContext.length() - 20000);
                     }
                     contextLines--;
                 }
@@ -605,9 +624,24 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         if (tail.length() > 1800) {
             tail = tail.substring(tail.length() - 1800);
         }
+        String javaDiagnostics = BuildLogContextExtractor.javaCompileDiagnostics(
+                (result.head == null ? "" : result.head) + "\n" +
+                        (result.context == null ? "" : result.context) + "\n" +
+                        (result.tail == null ? "" : result.tail),
+                7000);
+        String missingFieldHints = BuildLogContextExtractor.missingFieldHints(
+                (result.head == null ? "" : result.head) + "\n" +
+                        (result.context == null ? "" : result.context) + "\n" +
+                        (result.tail == null ? "" : result.tail));
         StringBuilder summary = new StringBuilder(prefix);
         if (!head.isEmpty()) {
             summary.append("\n\nFirst log:\n").append(head);
+        }
+        if (!missingFieldHints.isEmpty()) {
+            summary.append("\n\nJava API consistency hints:\n").append(missingFieldHints);
+        }
+        if (!javaDiagnostics.isEmpty()) {
+            summary.append("\n\nJava compile diagnostics:\n").append(javaDiagnostics);
         }
         if (!context.isEmpty() && !context.equals(head) && !context.equals(tail)) {
             summary.append("\n\nFailure context:\n").append(context);

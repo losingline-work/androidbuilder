@@ -1,0 +1,8 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/action_source_files"
+        android:icon="@drawable/ic_folder"
+        android:title="@string/source_files"
+        app:showAsAction="always" />
+</menu>
