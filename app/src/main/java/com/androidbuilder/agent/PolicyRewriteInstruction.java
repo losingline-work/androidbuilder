@@ -32,6 +32,16 @@ final class PolicyRewriteInstruction {
             instruction.append("\nThe code reads a field or getter that the referenced class does not declare. Keep the class and its callers consistent.");
             instruction.append("\nEither add the missing field (and its getter if used) to that class, or change the caller to use a field/method that already exists on it. Do not invent fields that are not declared.");
         }
+        if (message.contains("missing class field")) {
+            instruction.append("\nA class-qualified field/constant is referenced but not declared. For database code, keep DBHelper table/column constants and DAO callers synchronized.");
+            instruction.append("\nIf the caller uses a constant such as DBHelper.COL_CATEGORY_ID, declare that exact table/column constant in DBHelper, or update the DAO to use an existing DBHelper constant.");
+            instruction.append("\nDo not leave DAO SQL, ContentValues, Cursor reads, or where clauses pointing at undeclared constants.");
+        }
+        if (message.contains("missing method") || message.contains("method argument mismatch")) {
+            instruction.append("\nA custom class method call has no matching declaration. Keep the method signature and every caller consistent.");
+            instruction.append("\nFor DAO APIs such as RecordDao.update(Record), delete(long), countByCategory(long), or queryByType(int), either add the exact DAO method with matching parameter types or change the Activity/Adapter caller to an existing method.");
+            instruction.append("\nWhen changing database screens, update DBHelper, model, DAO, Activity, and Adapter together in the same response.");
+        }
         if (message.contains("synthetic view access")) {
             instruction.append("\nThis project does not use Kotlin synthetics, DataBinding or ViewBinding, so a view cannot be referenced by its id name directly.");
             instruction.append("\nFor EVERY view you read or call methods on, first declare a local variable (or field) and assign it from findViewById before using it. Reuse the exact R.id name.");

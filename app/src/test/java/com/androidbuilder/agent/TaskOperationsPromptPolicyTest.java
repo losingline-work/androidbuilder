@@ -40,4 +40,15 @@ public class TaskOperationsPromptPolicyTest {
         assertTrue(taskPrompt.contains("appbar_scrolling_view_behavior"));
         assertTrue(taskPrompt.contains("LinearLayout"));
     }
+
+    @Test
+    public void promptsRequireDatabaseLayerContractsToStaySynchronized() {
+        String projectPrompt = OpenAiClient.projectFilesSystemPromptForTest(false);
+        String taskPrompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(projectPrompt.contains("DBHelper.COL_"));
+        assertTrue(projectPrompt.contains("DAO method"));
+        assertTrue(taskPrompt.contains("DBHelper.COL_"));
+        assertTrue(taskPrompt.contains("update(Record)"));
+    }
 }

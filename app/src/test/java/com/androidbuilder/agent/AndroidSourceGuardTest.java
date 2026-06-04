@@ -239,6 +239,80 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void blocksMissingDbHelperColumnConstants() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/DBHelper.java",
+                "package com.example;\nclass DBHelper { static final String TABLE_CATEGORY = \"categories\"; }");
+        write(root, "app/src/main/java/com/example/CategoryDao.java",
+                "package com.example;\nclass CategoryDao { String order() { return DBHelper.COL_CATEGORY_ID + \" ASC\"; } }");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertEquals("Generated source policy blocked missing class field: DBHelper.COL_CATEGORY_ID in CategoryDao.java. Add the constant/field to DBHelper or update the caller to use an existing API.", error.getMessage());
+    }
+
+    @Test
+    public void allowsClassLiteralOnGeneratedApiClass() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/DBHelper.java",
+                "package com.example;\nclass DBHelper { String name() { synchronized (DBHelper.class) { return DBHelper.class.getName(); } } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void allowsSqliteOpenHelperInheritedDatabaseMethods() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/DBHelper.java",
+                "package com.example;\nclass DBHelper extends SQLiteOpenHelper { }");
+        write(root, "app/src/main/java/com/example/CategoryDao.java",
+                "package com.example;\nclass CategoryDao { DBHelper dbHelper; void save() { dbHelper.getWritableDatabase(); dbHelper.getReadableDatabase(); dbHelper.close(); } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void allowsAnonymousClassForNestedListenerInterface() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/Record.java",
+                "package com.example;\nclass Record { }");
+        write(root, "app/src/main/java/com/example/TimelineAdapter.java",
+                "package com.example;\nclass TimelineAdapter { interface OnRecordClickListener { void onRecordClick(Record record); } void setOnRecordClickListener(OnRecordClickListener listener) { } }");
+        write(root, "app/src/main/java/com/example/TimelineFragment.java",
+                "package com.example;\nclass TimelineFragment { TimelineAdapter adapter; void bind() { adapter.setOnRecordClickListener(new TimelineAdapter.OnRecordClickListener() { public void onRecordClick(Record record) { } }); } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void blocksMissingDaoMethodCalls() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/Record.java",
+                "package com.example;\nclass Record { }");
+        write(root, "app/src/main/java/com/example/RecordDao.java",
+                "package com.example;\nclass RecordDao { long insert(Record record) { return 1; } }");
+        write(root, "app/src/main/java/com/example/AddRecordActivity.java",
+                "package com.example;\nclass AddRecordActivity { RecordDao recordDao; void save(Record record) { recordDao.update(record); } }");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertEquals("Generated source policy blocked missing method: RecordDao.update(Record) in AddRecordActivity.java. Add the method or update the caller to use an existing API.", error.getMessage());
+    }
+
+    @Test
+    public void allowsExistingDaoMethodCalls() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/Record.java",
+                "package com.example;\nclass Record { }");
+        write(root, "app/src/main/java/com/example/RecordDao.java",
+                "package com.example;\nclass RecordDao { long insert(Record record) { return 1; } void update(Record record) { } }");
+        write(root, "app/src/main/java/com/example/AddRecordActivity.java",
+                "package com.example;\nclass AddRecordActivity { RecordDao recordDao; void save(Record record) { recordDao.update(record); } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
     public void allowsFieldDeclaredOnSecondaryClassInSameFile() throws Exception {
         File root = temporaryFolder.newFolder("source");
         write(root, "app/src/main/java/com/example/Models.java",

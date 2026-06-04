@@ -6,7 +6,7 @@ package com.androidbuilder.ui;
  *
  * <p>This is a display-only filter: the message stays in the database, it is just not rendered
  * as its own row. Substantive messages (user prompts, plan content, generated-source notes,
- * capability assessment, repair summaries and every error/failure notice) are always kept.
+ * capability assessment, and every error/failure notice) are always kept.
  */
 public final class ProjectTimelineMessageVisibilityPolicy {
     private ProjectTimelineMessageVisibilityPolicy() {
@@ -18,11 +18,9 @@ public final class ProjectTimelineMessageVisibilityPolicy {
         }
         String text = content == null ? "" : content;
 
-        // KEEP-wins: repair summaries and failure notices look superficially similar to the
-        // hidden "done"/"complete" chatter, so exclude them before the generic matches below.
-        if (text.contains("Build repair complete") || text.contains("已完成构建修复") ||
-                text.contains("Repair failed") || text.contains("修复失败") ||
-                text.contains("Repairing the current source") || text.contains("正在根据构建日志修复") ||
+        // KEEP-wins: failure notices look superficially similar to hidden status chatter,
+        // so exclude them before the generic matches below.
+        if (text.contains("Repair failed") || text.contains("修复失败") ||
                 text.contains("Build complete: failed") || text.contains("构建完成：失败")) {
             return false;
         }
@@ -31,6 +29,12 @@ public final class ProjectTimelineMessageVisibilityPolicy {
         if (text.contains("Embedded build started") || text.contains("Termux build started") ||
                 text.contains("已启动内置构建") || text.contains("已启动 Termux 构建") ||
                 text.contains("Build complete: success") || text.contains("构建完成：成功")) {
+            return true;
+        }
+
+        // Repair start / completion chatter — the REPAIR_RECORD row carries the state and log.
+        if (text.contains("Repairing the current source") || text.contains("正在根据构建日志修复") ||
+                text.contains("Build repair complete") || text.contains("已完成构建修复")) {
             return true;
         }
 

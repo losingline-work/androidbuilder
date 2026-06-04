@@ -39,15 +39,19 @@ public class ProjectTimelineMessageVisibilityPolicyTest {
     }
 
     @Test
-    public void keepsRepairAndFailureMessages() {
-        assertFalse(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Build repair complete: rewired adapter binding"));
-        assertFalse(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "已完成构建修复：修正了适配器绑定"));
+    public void hidesRepairStatusChatter() {
+        assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Build repair complete: rewired adapter binding"));
+        assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "已完成构建修复：修正了适配器绑定"));
+        assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Repairing the current source from the build log."));
+        assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "正在根据构建日志修复当前源码。"));
+    }
+
+    @Test
+    public void keepsRepairFailuresAndBuildFailures() {
         assertFalse(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Repair failed: model returned no operations"));
         assertFalse(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "修复失败：模型没有返回操作"));
         assertFalse(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Build complete: failed. Gradle task assembleDebug FAILED"));
         assertFalse(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "构建完成：失败。Gradle 任务失败"));
-        assertFalse(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Repairing the current source from the build log."));
-        assertFalse(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "正在根据构建日志修复当前源码。"));
     }
 
     @Test

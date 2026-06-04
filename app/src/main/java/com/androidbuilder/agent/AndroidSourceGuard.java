@@ -31,6 +31,8 @@ public class AndroidSourceGuard {
     private static final Pattern JAVA_FIELD_DECLARATION = Pattern.compile("\\b(?:public|protected|private)?\\s*(?:static\\s+)?(?:final\\s+)?([A-Za-z_][A-Za-z0-9_$.<>?\\[\\]]*)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?=[=;,])");
     private static final Pattern JAVA_VARIABLE_DECLARATION = Pattern.compile("\\b(?:final\\s+)?([A-Z][A-Za-z0-9_$.]*(?:\\s*<[^;(){}]+>)?(?:\\[\\])?)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b");
     private static final Pattern JAVA_FIELD_ACCESS = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    private static final Pattern JAVA_METHOD_DECLARATION = Pattern.compile("\\b(?:public|protected|private)?\\s*(?:static\\s+)?(?:final\\s+)?(?:synchronized\\s+)?(?:[A-Za-z_][A-Za-z0-9_$.<>?\\[\\]]*\\s+)+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(([^)]*)\\)\\s*(?:throws\\s+[A-Za-z0-9_.,\\s]+)?[\\{;]");
+    private static final Pattern JAVA_METHOD_CALL = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\s*\\(([^()]*)\\)");
     private static final Pattern JAVA_NEW_EXPRESSION = Pattern.compile("\\bnew\\s+([A-Z][A-Za-z0-9_]*)\\s*\\(([^()]*)\\)");
 
     public void validate(File sourceDir) throws Exception {
@@ -242,8 +244,10 @@ public class AndroidSourceGuard {
             throw new IllegalArgumentException("Generated source policy blocked Java lambda syntax in " + file.getName() + ". Use anonymous listener classes instead of ->.");
         }
         String sanitized = stripJavaCommentsAndStrings(content);
+        validateClassFieldAccess(file, sanitized, javaSymbols);
         validateCustomFieldAccess(file, sanitized, javaSymbols);
         validateConstructorCalls(file, sanitized, javaSymbols);
+        validateCustomMethodCalls(file, sanitized, javaSymbols);
     }
 
     private void collectJavaApiSymbols(File file, JavaApiSymbols symbols) throws Exception {
@@ -303,6 +307,18 @@ public class AndroidSourceGuard {
                 }
                 symbols.constructorsByClass.get(span.className).add(parseParameterTypes(constructorMatcher.group(1)));
             }
+        }
+        Matcher methodMatcher = JAVA_METHOD_DECLARATION.matcher(content);
+        while (methodMatcher.find()) {
+            String owner = enclosingClass(classSpans, methodMatcher.start());
+            if (owner == null) {
+                continue;
+            }
+            String methodName = methodMatcher.group(1);
+            if (owner.equals(methodName) || isJavaKeyword(methodName)) {
+                continue;
+            }
+            symbols.addMethod(owner, methodName, parseParameterTypes(methodMatcher.group(2)));
         }
     }
 
@@ -373,6 +389,26 @@ public class AndroidSourceGuard {
         }
     }
 
+    private void validateClassFieldAccess(File file, String content, JavaApiSymbols javaSymbols) {
+        Matcher matcher = JAVA_FIELD_ACCESS.matcher(content);
+        while (matcher.find()) {
+            if (isMethodCall(content, matcher.end())) {
+                continue;
+            }
+            String className = matcher.group(1);
+            String fieldName = matcher.group(2);
+            if ("class".equals(fieldName)) {
+                continue;
+            }
+            if (!javaSymbols.hasClass(className) || !isLikelyGeneratedApiClass(className)) {
+                continue;
+            }
+            if (!javaSymbols.hasField(className, fieldName)) {
+                throw new IllegalArgumentException("Generated source policy blocked missing class field: " + className + "." + fieldName + " in " + file.getName() + ". Add the constant/field to " + className + " or update the caller to use an existing API.");
+            }
+        }
+    }
+
     private boolean isMethodCall(String content, int end) {
         int cursor = end;
         while (cursor < content.length() && Character.isWhitespace(content.charAt(cursor))) {
@@ -397,6 +433,69 @@ public class AndroidSourceGuard {
                 throw new IllegalArgumentException("Generated source policy blocked constructor argument mismatch: new " + className + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ", but available constructors are " + describeConstructors(className, constructors) + ". Update the constructor or caller consistently.");
             }
         }
+    }
+
+    private void validateCustomMethodCalls(File file, String content, JavaApiSymbols javaSymbols) {
+        Map<String, String> variableTypes = collectVariableTypes(content);
+        String currentClass = firstClassName(content);
+        if (!currentClass.isEmpty()) {
+            variableTypes.put("this", currentClass);
+        }
+        Matcher matcher = JAVA_METHOD_CALL.matcher(content);
+        while (matcher.find()) {
+            if (isNewExpressionReference(content, matcher.start())) {
+                continue;
+            }
+            String receiver = matcher.group(1);
+            String methodName = matcher.group(2);
+            String type = variableTypes.get(receiver);
+            if (type == null && javaSymbols.hasClass(receiver)) {
+                type = receiver;
+            }
+            if (type == null || !javaSymbols.hasClass(type) || !isLikelyGeneratedApiClass(type)) {
+                continue;
+            }
+            List<String> argumentTypes = inferArgumentTypes(splitArguments(matcher.group(3)), variableTypes, currentClass);
+            if (isKnownInheritedPlatformMethod(type, methodName, javaSymbols)) {
+                continue;
+            }
+            if (!javaSymbols.hasMethod(type, methodName)) {
+                throw new IllegalArgumentException("Generated source policy blocked missing method: " + type + "." + methodName + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ". Add the method or update the caller to use an existing API.");
+            }
+            if (allKnown(argumentTypes) && !javaSymbols.hasMethodSignature(type, methodName, argumentTypes, this)) {
+                throw new IllegalArgumentException("Generated source policy blocked method argument mismatch: " + type + "." + methodName + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ". Update the method signature or caller consistently.");
+            }
+        }
+    }
+
+    private boolean isKnownInheritedPlatformMethod(String type, String methodName, JavaApiSymbols javaSymbols) {
+        if (isJavaObjectMethod(methodName)) {
+            return true;
+        }
+        String parent = javaSymbols.superClassByClass.get(simpleType(type));
+        Set<String> visited = new HashSet<>();
+        while (parent != null && visited.add(parent)) {
+            if ("SQLiteOpenHelper".equals(parent) && isSqliteOpenHelperMethod(methodName)) {
+                return true;
+            }
+            parent = javaSymbols.superClassByClass.get(parent);
+        }
+        return false;
+    }
+
+    private boolean isJavaObjectMethod(String methodName) {
+        return "toString".equals(methodName) ||
+                "hashCode".equals(methodName) ||
+                "equals".equals(methodName) ||
+                "getClass".equals(methodName);
+    }
+
+    private boolean isSqliteOpenHelperMethod(String methodName) {
+        return "getWritableDatabase".equals(methodName) ||
+                "getReadableDatabase".equals(methodName) ||
+                "close".equals(methodName) ||
+                "getDatabaseName".equals(methodName) ||
+                "setWriteAheadLoggingEnabled".equals(methodName);
     }
 
     private Map<String, String> collectVariableTypes(String content) {
@@ -619,6 +718,24 @@ public class AndroidSourceGuard {
                 value.endsWith("Button") ||
                 value.endsWith("TextView") ||
                 value.endsWith("ImageView"));
+    }
+
+    private boolean isLikelyGeneratedApiClass(String type) {
+        String value = simpleType(type);
+        if (value.isEmpty()) {
+            return false;
+        }
+        return !(value.endsWith("Activity") ||
+                value.endsWith("Fragment") ||
+                value.endsWith("Service") ||
+                value.endsWith("Receiver") ||
+                value.endsWith("Dialog") ||
+                value.endsWith("View") ||
+                value.endsWith("Button") ||
+                value.endsWith("TextView") ||
+                value.endsWith("ImageView") ||
+                value.endsWith("ViewHolder") ||
+                value.endsWith("Holder"));
     }
 
     private String describeConstructors(String className, List<List<String>> constructors) {
@@ -845,6 +962,7 @@ public class AndroidSourceGuard {
 
     private static class JavaApiSymbols {
         final Map<String, Set<String>> fieldsByClass = new HashMap<>();
+        final Map<String, Map<String, List<List<String>>>> methodsByClass = new HashMap<>();
         final Map<String, List<List<String>>> constructorsByClass = new HashMap<>();
         final Map<String, String> superClassByClass = new HashMap<>();
 
@@ -852,9 +970,23 @@ public class AndroidSourceGuard {
             if (!fieldsByClass.containsKey(className)) {
                 fieldsByClass.put(className, new HashSet<String>());
             }
+            if (!methodsByClass.containsKey(className)) {
+                methodsByClass.put(className, new HashMap<String, List<List<String>>>());
+            }
             if (!constructorsByClass.containsKey(className)) {
                 constructorsByClass.put(className, new ArrayList<List<String>>());
             }
+        }
+
+        void addMethod(String className, String methodName, List<String> parameterTypes) {
+            ensureClass(className);
+            Map<String, List<List<String>>> methods = methodsByClass.get(className);
+            List<List<String>> signatures = methods.get(methodName);
+            if (signatures == null) {
+                signatures = new ArrayList<>();
+                methods.put(methodName, signatures);
+            }
+            signatures.add(parameterTypes);
         }
 
         boolean hasClass(String className) {
@@ -874,6 +1006,64 @@ public class AndroidSourceGuard {
                     return true;
                 }
                 parent = superClassByClass.get(parent);
+            }
+            return false;
+        }
+
+        boolean hasMethod(String className, String methodName) {
+            if (methodsByClass.containsKey(className) && methodsByClass.get(className).containsKey(methodName)) {
+                return true;
+            }
+            String parent = superClassByClass.get(className);
+            Set<String> visited = new HashSet<>();
+            while (parent != null && visited.add(parent)) {
+                Map<String, List<List<String>>> methods = methodsByClass.get(parent);
+                if (methods != null && methods.containsKey(methodName)) {
+                    return true;
+                }
+                parent = superClassByClass.get(parent);
+            }
+            return false;
+        }
+
+        boolean hasMethodSignature(String className, String methodName, List<String> argumentTypes, AndroidSourceGuard guard) {
+            if (hasMethodSignatureInClass(className, methodName, argumentTypes, guard)) {
+                return true;
+            }
+            String parent = superClassByClass.get(className);
+            Set<String> visited = new HashSet<>();
+            while (parent != null && visited.add(parent)) {
+                if (hasMethodSignatureInClass(parent, methodName, argumentTypes, guard)) {
+                    return true;
+                }
+                parent = superClassByClass.get(parent);
+            }
+            return false;
+        }
+
+        private boolean hasMethodSignatureInClass(String className, String methodName, List<String> argumentTypes, AndroidSourceGuard guard) {
+            Map<String, List<List<String>>> methods = methodsByClass.get(className);
+            if (methods == null) {
+                return false;
+            }
+            List<List<String>> signatures = methods.get(methodName);
+            if (signatures == null) {
+                return false;
+            }
+            for (List<String> signature : signatures) {
+                if (signature.size() != argumentTypes.size()) {
+                    continue;
+                }
+                boolean matches = true;
+                for (int i = 0; i < signature.size(); i++) {
+                    if (!guard.isAssignable(argumentTypes.get(i), signature.get(i), this)) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (matches) {
+                    return true;
+                }
             }
             return false;
         }

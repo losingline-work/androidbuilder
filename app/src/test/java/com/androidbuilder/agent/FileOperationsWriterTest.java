@@ -64,6 +64,25 @@ public class FileOperationsWriterTest {
     }
 
     @Test
+    public void fillsMissingDbHelperColumnConstantsBeforeSourceGuardRuns() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+        write(root, "app/src/main/java/com/example/DBHelper.java",
+                "package com.example;\nclass DBHelper {\n    public static final String TABLE_CATEGORY = \"categories\";\n}\n");
+
+        TaskOperations operations = new TaskOperations("add category dao", Collections.singletonList(
+                new FileOperation("write", "app/src/main/java/com/example/CategoryDao.java",
+                        "package com.example;\nclass CategoryDao { String where() { return DBHelper.COL_CATEGORY_ID + \"=?\"; } }\n")
+        ));
+
+        new FileOperationsWriter().apply(root, operations);
+
+        String helper = FileUtils.readText(new File(root, "app/src/main/java/com/example/DBHelper.java"));
+        assertTrue(helper.contains("public static final String COL_CATEGORY_ID = \"category_id\";"));
+        assertTrue(new File(root, "app/src/main/java/com/example/CategoryDao.java").exists());
+    }
+
+    @Test
     public void rejectedOperationsCannotRemoveRequiredProjectFiles() throws Exception {
         File root = temporaryFolder.newFolder("source");
         writeRequiredProjectFiles(root);

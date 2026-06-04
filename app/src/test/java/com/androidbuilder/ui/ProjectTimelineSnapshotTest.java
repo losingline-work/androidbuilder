@@ -65,4 +65,24 @@ public class ProjectTimelineSnapshotTest {
         assertNotNull(snapshot.jobForMessage(new ChatMessage(3, 1, "assistant", "copy", 300, 7L)));
         assertEquals(1, lookups.get());
     }
+
+    @Test
+    public void collapsesRepairStatusMessagesIntoSingleRepairRecord() {
+        BuildJobRecord job = new BuildJobRecord(7, 1, "generated", "repairing_build_failure", "/tmp/build.log", null, null, 0, 100, 300);
+
+        ProjectTimelineSnapshot snapshot = ProjectTimelineSnapshot.create(
+                Arrays.asList(
+                        new ChatMessage(1, 1, "assistant", "正在根据构建日志修复当前源码。", 100, 7L),
+                        new ChatMessage(2, 1, "assistant", "已完成构建修复：修复 DAO 字段。", 300, 7L)),
+                false,
+                null,
+                Collections.emptyList(),
+                job,
+                id -> job);
+
+        assertEquals(1, snapshot.size());
+        assertEquals(ProjectTimelinePolicy.Kind.BUILD_LOG, snapshot.entryAt(0).kind);
+        assertEquals(1, snapshot.entryAt(0).sourceIndex);
+        assertNotNull(snapshot.buildLogJob(snapshot.entryAt(0)));
+    }
 }

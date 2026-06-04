@@ -586,6 +586,7 @@ public class OpenAiClient {
                 "Set android.namespace in app/build.gradle and do not set package=\"...\" in AndroidManifest.xml. " +
                 VersionUpgradePolicy.prompt() + " " +
                 dependencyProvidedResourcePolicyPrompt() + " " +
+                databaseContractPolicyPrompt() + " " +
                 "Before returning the project, cross-check Java API consistency across every file: every method call must have a matching declaration, every constructor call must match an existing constructor, and every directly accessed DTO/model field such as item.total must actually be declared and visible in that type or replaced with a getter. Keep Activity, Adapter, DAO, helper, and model field names synchronized. " +
                 "For aggregate/statistics DTOs used by adapters, do not access item.categoryName, item.percent, or similar display fields unless that exact field exists in the DTO; otherwise add fields/getters or update adapter binding to existing fields. For DAO/helper wiring, pass the exact constructor type, e.g. do not call new CategoryDAO(dbHelper) when CategoryDAO(Context) is declared; use context or change the constructor and all callers consistently. " +
                 dependencyPolicyPrompt + " " +
@@ -623,6 +624,7 @@ public class OpenAiClient {
                 "When writing Java files, keep package names consistent with Gradle namespace. Set android.namespace in app/build.gradle and do not set package=\"...\" in AndroidManifest.xml. " +
                 VersionUpgradePolicy.prompt() + " " +
                 dependencyProvidedResourcePolicyPrompt() + " " +
+                databaseContractPolicyPrompt() + " " +
                 "Before returning operations, cross-check Java API consistency across all touched files: every method call must have a matching declaration, every constructor call must match an existing constructor, and every directly accessed DTO/model field such as item.total must actually be declared and visible in that type or replaced with a getter/setter. Update Activity, Adapter, DAO, helper, and model files together when their APIs interact. " +
                 "For aggregate/statistics DTOs used by adapters, do not access item.categoryName, item.percent, or similar display fields unless that exact field exists in the DTO; otherwise add fields/getters or update adapter binding to existing fields. For DAO/helper wiring, pass the exact constructor type, e.g. do not call new CategoryDAO(dbHelper) when CategoryDAO(Context) is declared; use context or change the constructor and all callers consistently. " +
                 "Declare every view variable with findViewById from the Activity, inflated root view, or dialog view before using it; never use bare view ids such as fabAdd.setOnClickListener or textIncomeAmount.setText. " +
@@ -631,6 +633,10 @@ public class OpenAiClient {
 
     private static String dependencyProvidedResourcePolicyPrompt() {
         return "Do not reference dependency-provided XML resources or behavior strings such as @string/appbar_scrolling_view_behavior, and do not use CoordinatorLayout, AppBarLayout, CollapsingToolbarLayout, MaterialToolbar, or app:layout_behavior unless the dependency is explicitly declared and resolvable. In offline-safe projects, use Android SDK layouts such as LinearLayout, FrameLayout, ScrollView, ListView, or plain Toolbar instead.";
+    }
+
+    private static String databaseContractPolicyPrompt() {
+        return "For SQLite features, keep the database contract synchronized as one unit: DBHelper table names and DBHelper.COL_ column constants, CREATE TABLE SQL, model fields/getters/setters, DAO CRUD/query method signatures, Activity callers, and Adapter binders must all agree. If a caller uses DBHelper.COL_CATEGORY_ID, DBHelper must declare that exact constant; if a screen calls update(Record), delete(long), countByCategory(long), or queryByType(int), the DAO must declare that exact method or the caller must use an existing DAO method.";
     }
 
     private String dependencyPolicyPrompt() {

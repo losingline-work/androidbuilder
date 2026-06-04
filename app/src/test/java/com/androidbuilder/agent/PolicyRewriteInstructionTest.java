@@ -56,6 +56,30 @@ public class PolicyRewriteInstructionTest {
     }
 
     @Test
+    public void missingClassFieldProducesDatabaseConstantHint() {
+        String instruction = PolicyRewriteInstruction.create(
+                "Add category DAO",
+                "Generated source policy blocked missing class field: DBHelper.COL_CATEGORY_ID in CategoryDao.java. Add the constant/field to DBHelper or update the caller to use an existing API.",
+                2);
+
+        assertTrue(instruction.contains("DBHelper.COL_CATEGORY_ID"));
+        assertTrue(instruction.contains("table/column constants"));
+        assertTrue(instruction.contains("DAO"));
+    }
+
+    @Test
+    public void missingMethodProducesDaoApiHint() {
+        String instruction = PolicyRewriteInstruction.create(
+                "Update record editing",
+                "Generated source policy blocked missing method: RecordDao.update(Record) in AddRecordActivity.java. Add the method or update the caller to use an existing API.",
+                2);
+
+        assertTrue(instruction.contains("RecordDao.update(Record)"));
+        assertTrue(instruction.contains("method signature"));
+        assertTrue(instruction.contains("caller"));
+    }
+
+    @Test
     public void fragmentFindViewByIdProducesRootViewHint() {
         String instruction = PolicyRewriteInstruction.create(
                 "Repair build failure",

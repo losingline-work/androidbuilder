@@ -43,6 +43,7 @@ public class FileOperationsWriter {
         }
         try {
             applyToDirectory(tempDir, taskOperations);
+            DatabaseContractNormalizer.normalize(tempDir);
             validateRequiredProjectFiles(tempDir);
             try {
                 sourceGuard.validate(tempDir);
