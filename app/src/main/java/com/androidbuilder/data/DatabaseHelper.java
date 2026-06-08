@@ -11,9 +11,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     static final String TABLE_ARTIFACTS = "artifacts";
     static final String TABLE_PROJECT_PLANS = "project_plans";
     static final String TABLE_PROJECT_TASKS = "project_tasks";
+    static final String TABLE_AI_CONVERSATIONS = "ai_conversations";
 
     private static final String DB_NAME = "android_builder.db";
-    private static final int DB_VERSION = 4;
+    private static final int DB_VERSION = 5;
 
     public DatabaseHelper(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -64,6 +65,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 ")");
         createProjectPlansTable(db);
         createProjectTasksTable(db);
+        createAiConversationsTable(db);
         db.execSQL("CREATE INDEX idx_messages_project ON messages(project_id, created_at)");
         db.execSQL("CREATE INDEX idx_jobs_project ON build_jobs(project_id, created_at)");
     }
@@ -83,6 +85,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 db.execSQL("ALTER TABLE project_tasks ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0");
                 db.execSQL("ALTER TABLE project_tasks ADD COLUMN completed_at INTEGER NOT NULL DEFAULT 0");
             }
+        }
+        if (oldVersion < 5) {
+            createAiConversationsTable(db);
         }
     }
 
@@ -123,5 +128,23 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE" +
                 ")");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_project ON project_tasks(project_id, sort_order)");
+    }
+
+    private void createAiConversationsTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS ai_conversations (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "project_id INTEGER NOT NULL," +
+                "source TEXT NOT NULL," +
+                "title TEXT NOT NULL DEFAULT ''," +
+                "request_text TEXT NOT NULL DEFAULT ''," +
+                "response_text TEXT NOT NULL DEFAULT ''," +
+                "status TEXT NOT NULL DEFAULT ''," +
+                "metadata TEXT NOT NULL DEFAULT ''," +
+                "linked_build_job_id INTEGER," +
+                "created_at INTEGER NOT NULL," +
+                "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE," +
+                "FOREIGN KEY(linked_build_job_id) REFERENCES build_jobs(id) ON DELETE SET NULL" +
+                ")");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_ai_conversations_project ON ai_conversations(project_id, created_at)");
     }
 }

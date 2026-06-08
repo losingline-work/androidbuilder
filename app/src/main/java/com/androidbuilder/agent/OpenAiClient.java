@@ -25,7 +25,7 @@ public class OpenAiClient {
     private static final int DEFAULT_READ_TIMEOUT_MS = MODEL_READ_TIMEOUT_MS;
     private static final int TASKS_READ_TIMEOUT_MS = MODEL_READ_TIMEOUT_MS;
     private static final int CODING_READ_TIMEOUT_MS = MODEL_READ_TIMEOUT_MS;
-    private static final int SOCKET_ABORT_RETRIES = 1;
+    private static final int SOCKET_ABORT_RETRIES = 2;
     private static final int SOCKET_ABORT_RETRY_DELAY_MS = 1500;
     private static final int PROGRESS_EMIT_CHARS = 120;
 
@@ -91,6 +91,18 @@ public class OpenAiClient {
         return !apiKeyForProvider(prefs, provider).trim().isEmpty();
     }
 
+    public String currentProvider() {
+        return prefs.getString(KEY_PROVIDER, PROVIDER_OPENAI);
+    }
+
+    public String currentModel() {
+        return modelForProvider(prefs, currentProvider());
+    }
+
+    public String currentEndpoint() {
+        return endpointForProvider(prefs, currentProvider());
+    }
+
     public String createSpecJson(List<ChatMessage> messages, String latestPrompt, boolean chinese) throws Exception {
         return completeChat(specSystemPrompt(chinese), messages, "Latest approved implementation request: " + latestPrompt, 0.2, chinese, DEFAULT_READ_TIMEOUT_MS);
     }
@@ -107,8 +119,12 @@ public class OpenAiClient {
         return completeChat(tasksSystemPrompt(chinese), java.util.Collections.emptyList(), "Approved engineering plan:\n\n" + plan, 0.2, chinese, TASKS_READ_TIMEOUT_MS);
     }
 
-    public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, boolean chinese) throws Exception {
+    public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, boolean chinese) throws Exception {
+        String requirementsSection = recentRequirements == null || recentRequirements.trim().isEmpty()
+                ? ""
+                : "\n\nRecent user requirements and clarifications (honor these even if the plan omits them):\n" + recentRequirements.trim();
         String prompt = "Approved engineering plan:\n\n" + plan +
+                requirementsSection +
                 "\n\nCurrent source tree:\n" + sourceSnapshot +
                 "\n\nExecute exactly this task:\nTitle: " + taskTitle +
                 "\nInstruction: " + taskInstruction;
@@ -315,6 +331,10 @@ public class OpenAiClient {
 
     static int codingReadTimeoutMsForTest() {
         return CODING_READ_TIMEOUT_MS;
+    }
+
+    static int socketAbortRetriesForTest() {
+        return SOCKET_ABORT_RETRIES;
     }
 
     private void sleepBeforeRetry() {
@@ -582,7 +602,7 @@ public class OpenAiClient {
                 "files must be an array of objects with path and content. Paths must be relative POSIX paths. " +
                 "The file list must include settings.gradle, build.gradle, app/build.gradle, app/src/main/AndroidManifest.xml, all Java source files, XML layouts, and resources needed to compile. " +
                 "Keep each source file focused and small, ideally under about 250 lines; split large screens into separate Adapter, Helper, Dialog, or model classes instead of one giant file. " +
-                "Use Gradle plugin com.android.application 8.7.3, compileSdk 34, minSdk 31, targetSdk 34, and Java 8-compatible source/target. Do not use Java records, switch expressions, var, lambdas/-> syntax, streams-heavy code, org.jetbrains.kotlin.android, kotlinOptions, Kotlin Gradle DSL, or any .kt file. Use anonymous listener classes instead of lambdas. " +
+                "Use Gradle plugin com.android.application 8.7.3, compileSdk 34, minSdk 31, targetSdk 34, and Java 8-compatible source/target. Do not use Java records, switch expressions, var, lambda arrow syntax, streams-heavy code, org.jetbrains.kotlin.android, kotlinOptions, Kotlin Gradle DSL, or any .kt file. Use anonymous listener classes instead of lambdas, and avoid arrow-style examples in comments/Javadocs/strings. " +
                 "Set android.namespace in app/build.gradle and do not set package=\"...\" in AndroidManifest.xml. " +
                 VersionUpgradePolicy.prompt() + " " +
                 dependencyProvidedResourcePolicyPrompt() + " " +
@@ -620,7 +640,7 @@ public class OpenAiClient {
                 "Do not return an empty operations array; every task response must include at least one write or delete operation that advances the task. " +
                 "Do not return markdown, comments outside JSON, explanations, build logs, or base64. " +
                 "Keep the generated source buildable with Android Gradle Plugin 8.7.3, compileSdk 34, minSdk 31, targetSdk 34, and Java 8-compatible source/target. " +
-                "Use Java + XML only. Do not write Kotlin, .kt files, kotlinOptions, Kotlin Gradle plugins, DataBinding, ViewBinding, Compose, Java lambdas, or -> syntax. Use anonymous listener classes instead of lambdas. " + dependencyPolicyPrompt + " " +
+                "Use Java + XML only. Do not write Kotlin, .kt files, kotlinOptions, Kotlin Gradle plugins, DataBinding, ViewBinding, Compose, Java lambdas, or arrow syntax. Use anonymous listener classes instead of lambdas, and do not include arrow-style examples in comments/Javadocs/strings. Prefer org.json over Gson unless a Gson dependency is already declared and allowed. " + dependencyPolicyPrompt + " " +
                 "When writing Java files, keep package names consistent with Gradle namespace. Set android.namespace in app/build.gradle and do not set package=\"...\" in AndroidManifest.xml. " +
                 VersionUpgradePolicy.prompt() + " " +
                 dependencyProvidedResourcePolicyPrompt() + " " +
@@ -636,7 +656,7 @@ public class OpenAiClient {
     }
 
     private static String databaseContractPolicyPrompt() {
-        return "For SQLite features, keep the database contract synchronized as one unit: DBHelper table names and DBHelper.COL_ column constants, CREATE TABLE SQL, model fields/getters/setters, DAO CRUD/query method signatures, Activity callers, and Adapter binders must all agree. If a caller uses DBHelper.COL_CATEGORY_ID, DBHelper must declare that exact constant; if a screen calls update(Record), delete(long), countByCategory(long), or queryByType(int), the DAO must declare that exact method or the caller must use an existing DAO method.";
+        return "For SQLite features, keep the database contract synchronized as one unit: DBHelper table names and DBHelper.COL_ column constants, CREATE TABLE SQL, model fields/getters/setters, DAO CRUD/query method signatures, Activity callers, and Adapter binders must all agree. If a caller uses DBHelper.COL_CATEGORY_ID, DBHelper must declare that exact constant; if a screen or helper such as JsonBackup.java calls RecordDao.listAll(), update(Record), delete(long), countByCategory(long), or queryByType(int), the DAO must declare that exact method or the caller must use an existing DAO method.";
     }
 
     private String dependencyPolicyPrompt() {

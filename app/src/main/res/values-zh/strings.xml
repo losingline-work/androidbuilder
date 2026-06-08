@@ -4,6 +4,7 @@
     <string name="app_tagline">从本地工作台生成、构建和安装安卓 App</string>
     <string name="project_workspace">项目工作台</string>
     <string name="model_configuration">模型配置</string>
+    <string name="local_guard_assistant">本地源码守卫助手</string>
     <string name="runtime_configuration">运行环境配置</string>
     <string name="compatibility_mode">兼容模式</string>
     <string name="build_log">构建日志</string>
@@ -23,6 +24,15 @@
     <string name="message">消息</string>
     <string name="status">状态</string>
     <string name="source_files">源码文件</string>
+    <string name="log_query">AI 对话日志</string>
+    <string name="search_logs">搜索用户、云端模型、本地模型对话</string>
+    <string name="log_query_count">显示 %1$d / %2$d 条记录</string>
+    <string name="log_query_empty">没有匹配的日志。</string>
+    <string name="log_type_ai">AI 对话</string>
+    <string name="log_type_message">用户沟通</string>
+    <string name="log_type_task">操作日志</string>
+    <string name="log_type_build">构建/修复日志</string>
+    <string name="view_log_record">日志记录</string>
     <string name="file_browser">源码文件</string>
     <string name="parent_directory">上一级目录</string>
     <string name="empty_directory">这个目录是空的。</string>
@@ -57,11 +67,27 @@
     <string name="offline_maven_ready">已准备 %1$d 个本地 Maven 产物：%2$s</string>
     <string name="offline_maven_imported">已导入离线 Maven 缓存。</string>
     <string name="offline_maven_import_failed">离线 Maven 导入失败：%1$s</string>
+    <string name="local_guard_enabled">启用本地 AI 助手</string>
+    <string name="local_guard_hint">在本机运行用户导入的 GGUF 小模型。主职是「构建日志分诊」：把失败的构建日志提炼成给云端模型的精准修复指令；更高档位还会额外提供写入前/策略错误的辅助提示。最终放行仍由确定性源码守卫决定。</string>
+    <string name="local_guard_mode">本地 AI 介入程度</string>
+    <string name="local_guard_mode_off">关闭</string>
+    <string name="local_guard_mode_policy_error_only">构建分诊 + 策略错误提示</string>
+    <string name="local_guard_mode_preflight_and_policy_error">构建分诊 + 写入前预审 + 策略错误提示</string>
+    <string name="import_local_guard_model">导入 GGUF 模型</string>
+    <string name="remove_local_guard_model">移除本地模型</string>
+    <string name="local_guard_no_model">尚未导入 GGUF 模型。构建失败仍会用确定性指令修复，只是没有本地分诊。</string>
+    <string name="local_guard_native_unavailable">当前构建或设备暂不可用本地守卫。v1 需要已打包的 arm64 llama.cpp 运行库。</string>
+    <string name="local_guard_ready">%1$s（%2$s）· %3$s</string>
+    <string name="local_guard_enabled_status">已启用</string>
+    <string name="local_guard_disabled_status">未启用</string>
+    <string name="local_guard_model_imported">已导入本地守卫模型。</string>
+    <string name="local_guard_model_import_failed">本地守卫模型导入失败：%1$s</string>
+    <string name="local_guard_model_removed">已移除本地守卫模型。</string>
     <string name="api_key_hint">API Key</string>
     <string name="endpoint_preset">地址环境</string>
     <string name="endpoint_preset_custom">自定义地址</string>
-    <string name="minimax_endpoint_china">MiniMax 国内/内网</string>
-    <string name="minimax_endpoint_international">MiniMax 国际/外网</string>
+    <string name="minimax_endpoint_china">MiniMax 国内</string>
+    <string name="minimax_endpoint_international">MiniMax 国际</string>
     <string name="deepseek_endpoint_official">DeepSeek 官方地址</string>
     <string name="deepseek_endpoint_openai_compatible">DeepSeek OpenAI 兼容 /v1</string>
     <string name="endpoint">接口地址</string>
@@ -192,5 +218,5 @@
     <string name="termux_permission_denied">权限被拒绝。请在本 App 权限中启用“Run commands in Termux environment”。</string>
     <string name="termux_overlay_required">请为 Termux 开启“显示在其他应用上层/悬浮窗”权限，然后返回再次点击初始化。</string>
     <string name="termux_help">Termux 设置：\n\n这里有两个不同权限：\n\n1. Android Builder 需要“Run commands in Termux environment”。这个权限属于 Android Builder，不在 Termux 权限页里。如果系统设置里找不到，点击“请求 Termux 命令权限”。部分 OPPO/ColorOS 会隐藏这个自定义权限，此时使用 ADB 授权命令兜底。\n\n2. Termux 需要“显示在其他应用上层/悬浮窗”，用于从后台启动终端会话。\n\n普通安卓上不能静默安装 Termux 本体。请先安装 Termux，打开一次，然后启用外部命令：\n   mkdir -p ~/.termux\n   echo allow-external-apps=true >> ~/.termux/termux.properties\n重启 Termux。\n\n之后点击“自动初始化 Termux”。复制按钮是备用方案。</string>
-    <string name="third_party_notices_body">Android Builder 预留了内置运行环境接入点，用于集成 GPLv3 兼容的 Termux 组件。\n\nTermux app：GPLv3-only。源码：https://github.com/termux/termux-app\nTermux packages：https://github.com/termux/termux-packages\n如果打包 terminal-emulator、terminal-view 或其他 Termux 代码，需要保留对应版权和许可证声明。\n\n如果 APK 分发时包含 Termux GPLv3 代码或二进制文件，需要按 GPLv3 提供对应源码、许可证文本、版权声明和本地修改。\n\n内置后端会在 files/runtime 下创建私有运行环境。Bootstrap zip 可以包含 usr/bin、usr/android-sdk、home，或直接包含 bin/android-sdk，安装器会放到私有运行环境。</string>
+    <string name="third_party_notices_body">Android Builder 预留了内置运行环境接入点，用于集成 GPLv3 兼容的 Termux 组件。\n\nTermux app：GPLv3-only。源码：https://github.com/termux/termux-app\nTermux packages：https://github.com/termux/termux-packages\n如果打包 terminal-emulator、terminal-view 或其他 Termux 代码，需要保留对应版权和许可证声明。\n\n如果 APK 分发时包含 Termux GPLv3 代码或二进制文件，需要按 GPLv3 提供对应源码、许可证文本、版权声明和本地修改。\n\n内置后端会在 files/runtime 下创建私有运行环境。Bootstrap zip 可以包含 usr/bin、usr/android-sdk、home，或直接包含 bin/android-sdk，安装器会放到私有运行环境。\n\n本地源码守卫助手集成 llama.cpp / ggml 原生运行库。llama.cpp 和 ggml 使用 MIT 许可证。源码：https://github.com/ggml-org/llama.cpp。本项目不分发模型权重；用户自行导入 GGUF 模型文件，并自行确认模型许可证。</string>
 </resources>

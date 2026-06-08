@@ -3,6 +3,7 @@
 .runtime-bootstrap/
 build/
 **/build/
+**/.cxx/
 
 # Android / local SDK config
 local.properties

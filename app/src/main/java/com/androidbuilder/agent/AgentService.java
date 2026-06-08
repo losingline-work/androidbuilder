@@ -28,7 +28,12 @@ public class AgentService {
     private static final int SOURCE_FILE_PREVIEW_LIMIT = 3500;
     private static final int SOURCE_FOCUS_FILE_LIMIT = 12000;
     private static final int BUILD_LOG_PREVIEW_LIMIT = 7000;
-    private static final int POLICY_REWRITE_ATTEMPTS = 3;
+    private static final int POLICY_REWRITE_ATTEMPTS = 5;
+    private static final int AI_LOG_TEXT_LIMIT = 80000;
+    // Conversation context sent to the cloud: drop status chatter, keep a recent window.
+    private static final int PLANNING_HISTORY_WINDOW = 16;
+    private static final int CODING_USER_REQUIREMENTS_WINDOW = 6;
+    private static final int CODING_USER_REQUIREMENTS_CHARS = 1500;
 
     public interface Callback {
         void onComplete(BuildJobRecord job);
@@ -40,19 +45,36 @@ public class AgentService {
         void onError(Exception error);
     }
 
+    private interface AiTextCall {
+        String run() throws Exception;
+    }
+
     private final Context context;
     private final AppRepository repository;
     private final OpenAiClient openAiClient;
     private final GeneratedProjectWriter writer = new GeneratedProjectWriter();
     private final FileOperationsWriter operationsWriter;
+    private final LocalGuardAssistant localGuardAssistant;
 
     public AgentService(Context context, AppRepository repository) {
+        this(context, repository, null);
+    }
+
+    AgentService(Context context, AppRepository repository, LocalGuardAssistant localGuardAssistant) {
         this.context = context.getApplicationContext();
         this.repository = repository;
         this.openAiClient = new OpenAiClient(context);
         this.operationsWriter = new FileOperationsWriter(new DependencyGuard(
                 BuildBackendSettings.dependencyMode(this.context),
                 BuildBackendSettings.offlineMavenDir(this.context)));
+        this.localGuardAssistant = localGuardAssistant == null
+                ? new LlamaLocalGuardAssistant(this.context)
+                : localGuardAssistant;
+    }
+
+    /** Releases the cached local-guard model/engine. Call when the owning screen is destroyed. */
+    public void release() {
+        localGuardAssistant.close();
     }
 
     public void setProgressListener(OpenAiClient.ProgressListener listener) {
@@ -145,9 +167,15 @@ public class AgentService {
         }
         repository.updateBuildJob(job.id, "generating", "cloud_spec", null, null, null, 0);
 
-        List<ChatMessage> history = repository.listMessages(projectId);
+        List<ChatMessage> history = ConversationContextPolicy.planningHistory(repository.listMessages(projectId), PLANNING_HISTORY_WINDOW);
         boolean chinese = AppSettings.isChinese(context);
-        String specJson = openAiClient.createSpecJson(history, prompt, chinese);
+        String specRequest = "Latest approved implementation request: " + prompt + "\n\nConversation history:\n" + historyForAiLog(history);
+        String specJson = recordCloudAiCall(
+                projectId,
+                job.id,
+                chinese ? "云端 AI · 项目规格生成" : "Cloud AI · project spec",
+                specRequest,
+                () -> openAiClient.createSpecJson(history, prompt, chinese));
         AppSpec spec = AppSpecParser.fromJson(specJson, prompt, project.name, chinese);
         String packageName = NameUtils.isPackageName(project.packageName) ? project.packageName : spec.packageName;
         if (!NameUtils.isPackageName(packageName)) {
@@ -178,10 +206,15 @@ public class AgentService {
         }
         repository.addMessage(projectId, "user", prompt, null);
         repository.saveProjectPlan(projectId, "", "planning", null);
-        List<ChatMessage> history = repository.listMessages(projectId);
+        List<ChatMessage> history = ConversationContextPolicy.planningHistory(repository.listMessages(projectId), PLANNING_HISTORY_WINDOW);
         boolean chinese = AppSettings.isChinese(context);
         String planPrompt = prompt + "\n\nProject package/applicationId: " + project.packageName + "\nUse this package and namespace consistently.";
-        String plan = openAiClient.createEngineeringPlan(history, planPrompt, chinese).trim();
+        String plan = recordCloudAiCall(
+                projectId,
+                null,
+                chinese ? "云端 AI · 工程计划生成" : "Cloud AI · engineering plan",
+                "Latest requirement or plan change:\n" + planPrompt + "\n\nConversation history:\n" + historyForAiLog(history),
+                () -> openAiClient.createEngineeringPlan(history, planPrompt, chinese)).trim();
         if (chinese && !plan.startsWith("# 工程计划")) {
             plan = "# 工程计划\n\n" + plan;
         } else if (!chinese && !plan.startsWith("# Engineering Plan")) {
@@ -216,7 +249,7 @@ public class AgentService {
         try {
             repository.updateProjectPlanStatus(projectId, "coding", job.id);
             repository.updateBuildJob(job.id, "generating", "cloud_spec", null, null, null, 0);
-            ensureImplementationTasks(projectId, plan, chinese);
+            ensureImplementationTasks(projectId, job.id, plan, chinese);
             runningTask = repository.nextPendingProjectTask(projectId);
             if (runningTask == null) {
                 repository.updateProjectPlanStatus(projectId, "generated", job.id);
@@ -227,18 +260,21 @@ public class AgentService {
             repository.updateProjectTask(runningTask.id, "running", "");
             repository.addMessage(projectId, "assistant", (chinese ? "执行下一步：" : "Executing next step: ") + runningTask.title, job.id);
 
+            File jobDir = repository.jobDir(projectId, job.id);
+            File logs = new File(jobDir, "build.log");
+            FileUtils.writeText(logs, (chinese ? "正在执行计划任务：" : "Executing plan task: ") + runningTask.title + "\n");
+            repository.updateBuildJob(job.id, "generating", "cloud_spec", logs.getAbsolutePath(), null, null, 0);
+
             File sourceDir = repository.sourceDir(projectId);
             String snapshot = sourceSnapshot(sourceDir);
-            TaskOperations operations = createAndApplyTaskOperations(sourceDir, plan.content, runningTask.title, runningTask.instruction, snapshot, chinese);
+            TaskOperations operations = createAndApplyTaskOperations(projectId, job.id, sourceDir, plan.content, runningTask.title, runningTask.instruction, snapshot, logs, chinese);
             repository.updateProjectTask(runningTask.id, "done", operations.summary);
             ProjectTaskRecord next = repository.nextPendingProjectTask(projectId);
             repository.updateProjectPlanStatus(projectId, next == null ? "generated" : "planned", job.id);
 
-            File jobDir = repository.jobDir(projectId, job.id);
             File projectZip = new File(jobDir, "project.zip");
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
-            File logs = new File(jobDir, "build.log");
-            FileUtils.writeText(logs, "Executed plan task: " + runningTask.title + "\n" + operations.summary + "\n");
+            FileUtils.appendText(logs, (chinese ? "计划任务完成：" : "Executed plan task: ") + runningTask.title + "\n" + operations.summary + "\n");
 
             String message = (chinese ? "已完成：" : "Done: ") + runningTask.title + (next == null ? (chinese ? "。所有任务已完成，可以构建。" : ". All tasks are complete; ready to build.") : (chinese ? "。可以继续执行下一步。" : ". Continue with the next step."));
             repository.addMessage(projectId, "assistant", message, job.id);
@@ -272,15 +308,27 @@ public class AgentService {
             repository.updateBuildJob(job.id, "generating", "repairing_build_failure", logs.getAbsolutePath(), null, null, 0);
             repository.addMessage(projectId, "assistant", chinese ? "正在根据构建日志修复当前源码。" : "Repairing the current source from the build log.", job.id);
 
-            String instruction = repairInstruction(buildLog, chinese);
             File sourceDir = repository.sourceDir(projectId);
             String snapshot = sourceSnapshot(sourceDir, buildLog);
+            // Local build-log triage: let the on-device model turn the raw log into a focused fix
+            // instruction for the cloud model. Falls back to the deterministic instruction if the
+            // local model is off, unavailable, times out, or finds no actionable source cause.
+            String baseInstruction = repairInstruction(buildLog, chinese);
+            LocalGuardResult triage = triageBuildFailureWithLocalGuard(projectId, job.id, buildLog, snapshot, chinese);
+            appendLocalGuardLog(logs, chinese ? "本地守卫构建日志分诊" : "Local guard build triage", triage);
+            String instruction = triage.usable && triage.decision == LocalGuardResult.Decision.REWRITE
+                    && triage.additionalInstruction != null && !triage.additionalInstruction.trim().isEmpty()
+                    ? LocalGuardInstructionComposer.forBuildTriage(baseInstruction, triage.additionalInstruction)
+                    : baseInstruction;
             TaskOperations operations = createAndApplyTaskOperations(
+                    projectId,
+                    job.id,
                     sourceDir,
                     planContent,
                     chinese ? "修复构建失败" : "Repair build failure",
                     instruction,
                     snapshot,
+                    logs,
                     chinese);
 
             File projectZip = new File(jobDir, "project.zip");
@@ -303,13 +351,32 @@ public class AgentService {
         }
     }
 
-    private TaskOperations createAndApplyTaskOperations(File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, boolean chinese) throws Exception {
+    private TaskOperations createAndApplyTaskOperations(long projectId, Long linkedBuildJobId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese) throws Exception {
         String instruction = taskInstruction;
+        // Recent user requirements live in chat but may never have reached the plan text; feed them
+        // to the coding/repair model so it honors intent the plan dropped.
+        String recentRequirements = ConversationContextPolicy.recentUserRequirements(
+                repository.listMessages(projectId), CODING_USER_REQUIREMENTS_WINDOW, CODING_USER_REQUIREMENTS_CHARS);
         IllegalArgumentException lastPolicyError = null;
         for (int attempt = 1; attempt <= POLICY_REWRITE_ATTEMPTS; attempt++) {
-            String operationsJson = openAiClient.createTaskOperations(planContent, taskTitle, instruction, snapshot, chinese);
+            String requestLog = taskOperationsRequestForAiLog(planContent, taskTitle, instruction, snapshot, attempt);
+            final String attemptInstruction = instruction;
+            final String attemptSnapshot = snapshot;
+            String operationsJson = recordCloudAiCall(
+                    projectId,
+                    linkedBuildJobId,
+                    (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
+                    requestLog,
+                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, chinese));
             try {
                 TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
+                LocalGuardResult preflight = reviewOperationsWithLocalGuard(projectId, linkedBuildJobId, planContent, taskTitle, instruction, snapshot, operations, chinese);
+                appendLocalGuardLog(logs, chinese ? "本地守卫预审" : "Local guard preflight", preflight);
+                if (shouldRetryFromLocalGuard(preflight, attempt)) {
+                    instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, preflight.additionalInstruction);
+                    snapshot = sourceSnapshot(sourceDir);
+                    continue;
+                }
                 operationsWriter.apply(sourceDir, operations);
                 return operations;
             } catch (IllegalArgumentException policyError) {
@@ -317,17 +384,216 @@ public class AgentService {
                     throw policyError;
                 }
                 lastPolicyError = policyError;
-                instruction = PolicyRewriteInstruction.create(taskInstruction, policyError.getMessage(), attempt + 1);
                 // Refocus the snapshot on the files/types named in the rejection so the next attempt
                 // sees the offending caller and the real class declarations in full (untruncated).
                 snapshot = sourceSnapshot(sourceDir, policyError.getMessage());
+                String policyInstruction = PolicyRewriteInstruction.create(instruction, policyError.getMessage(), attempt + 1);
+                LocalGuardResult localRewrite = rewritePolicyFailureWithLocalGuard(projectId, linkedBuildJobId, instruction, policyError.getMessage(), snapshot, attempt + 1, chinese);
+                appendLocalGuardLog(logs, chinese ? "本地守卫策略错误提示" : "Local guard policy-error hint", localRewrite);
+                instruction = localRewrite.usable && localRewrite.decision == LocalGuardResult.Decision.REWRITE
+                        ? LocalGuardInstructionComposer.forPolicyRewrite(policyInstruction, localRewrite.additionalInstruction)
+                        : policyInstruction;
             }
         }
         throw lastPolicyError == null ? new IllegalStateException("Task operation generation failed.") : lastPolicyError;
     }
 
+    private boolean shouldRetryFromLocalGuard(LocalGuardResult result, int attempt) {
+        return result != null
+                && result.usable
+                && result.decision == LocalGuardResult.Decision.REWRITE
+                && result.additionalInstruction != null
+                && !result.additionalInstruction.trim().isEmpty()
+                && attempt < POLICY_REWRITE_ATTEMPTS;
+    }
+
+    private LocalGuardResult reviewOperationsWithLocalGuard(long projectId, Long linkedBuildJobId, String planContent, String taskTitle, String taskInstruction, String snapshot, TaskOperations operations, boolean chinese) {
+        String prompt = LocalGuardPromptBuilder.reviewOperationsPrompt(planContent, taskTitle, taskInstruction, snapshot, operations);
+        try {
+            LocalGuardResult result = localGuardAssistant.reviewOperations(planContent, taskTitle, taskInstruction, snapshot, operations);
+            recordLocalGuardAi(projectId, linkedBuildJobId, chinese ? "本地 AI · 源码写入前预审" : "Local AI · source guard preflight", prompt, result);
+            return result;
+        } catch (Exception error) {
+            LocalGuardResult result = LocalGuardResult.unusable("Local guard preflight failed: " + localGuardErrorMessage(error));
+            recordLocalGuardAi(projectId, linkedBuildJobId, chinese ? "本地 AI · 源码写入前预审" : "Local AI · source guard preflight", prompt, result);
+            return result;
+        }
+    }
+
+    private LocalGuardResult rewritePolicyFailureWithLocalGuard(long projectId, Long linkedBuildJobId, String taskInstruction, String policyError, String focusedSnapshot, int attempt, boolean chinese) {
+        String prompt = LocalGuardPromptBuilder.policyFailurePrompt(taskInstruction, policyError, focusedSnapshot, attempt);
+        try {
+            LocalGuardResult result = localGuardAssistant.rewritePolicyFailure(taskInstruction, policyError, focusedSnapshot, attempt);
+            recordLocalGuardAi(projectId, linkedBuildJobId, (chinese ? "本地 AI · 策略错误提示优化" : "Local AI · policy-error hint") + " #" + attempt, prompt, result);
+            return result;
+        } catch (Exception error) {
+            LocalGuardResult result = LocalGuardResult.unusable("Local guard policy-error rewrite failed: " + localGuardErrorMessage(error));
+            recordLocalGuardAi(projectId, linkedBuildJobId, (chinese ? "本地 AI · 策略错误提示优化" : "Local AI · policy-error hint") + " #" + attempt, prompt, result);
+            return result;
+        }
+    }
+
+    private LocalGuardResult triageBuildFailureWithLocalGuard(long projectId, Long linkedBuildJobId, String buildLog, String focusedSnapshot, boolean chinese) {
+        String prompt = LocalGuardPromptBuilder.triageBuildFailurePrompt(buildLog, focusedSnapshot);
+        try {
+            LocalGuardResult result = localGuardAssistant.triageBuildFailure(buildLog, focusedSnapshot);
+            recordLocalGuardAi(projectId, linkedBuildJobId, chinese ? "本地 AI · 构建日志分诊" : "Local AI · build-log triage", prompt, result);
+            return result;
+        } catch (Exception error) {
+            LocalGuardResult result = LocalGuardResult.unusable("Local guard build triage failed: " + localGuardErrorMessage(error));
+            recordLocalGuardAi(projectId, linkedBuildJobId, chinese ? "本地 AI · 构建日志分诊" : "Local AI · build-log triage", prompt, result);
+            return result;
+        }
+    }
+
+    private String localGuardErrorMessage(Exception error) {
+        return error.getMessage() == null ? error.toString() : error.getMessage();
+    }
+
+    private void appendLocalGuardLog(File logs, String prefix, LocalGuardResult result) {
+        if (logs == null || result == null || result.summary == null || result.summary.trim().isEmpty()) {
+            return;
+        }
+        try {
+            String status = result.usable ? result.decision.name().toLowerCase(java.util.Locale.ROOT) : "fallback";
+            FileUtils.appendText(logs, prefix + " [" + status + "]: " + result.summary.trim() + "\n");
+            if (result.usable && result.decision == LocalGuardResult.Decision.REWRITE
+                    && result.additionalInstruction != null
+                    && !result.additionalInstruction.trim().isEmpty()) {
+                FileUtils.appendText(logs, "Local guard instruction: " + result.additionalInstruction.trim() + "\n");
+            }
+        } catch (Exception ignored) {
+            // Local guard logs are diagnostic only and must never block code generation.
+        }
+    }
+
+    private String recordCloudAiCall(long projectId, Long linkedBuildJobId, String title, String requestText, AiTextCall call) throws Exception {
+        try {
+            String response = call.run();
+            recordAiConversationSafely(
+                    projectId,
+                    "cloud",
+                    title,
+                    requestText,
+                    response,
+                    "success",
+                    cloudAiMetadata(),
+                    linkedBuildJobId);
+            return response;
+        } catch (Exception error) {
+            String message = error.getMessage() == null ? error.toString() : error.getMessage();
+            recordAiConversationSafely(
+                    projectId,
+                    "cloud",
+                    title,
+                    requestText,
+                    message,
+                    "failed",
+                    cloudAiMetadata(),
+                    linkedBuildJobId);
+            throw error;
+        }
+    }
+
+    private void recordLocalGuardAi(long projectId, Long linkedBuildJobId, String title, String requestText, LocalGuardResult result) {
+        if (result == null || ((result.summary == null || result.summary.trim().isEmpty())
+                && (result.additionalInstruction == null || result.additionalInstruction.trim().isEmpty()))) {
+            return;
+        }
+        String status = result.usable ? result.decision.name().toLowerCase(java.util.Locale.ROOT) : "fallback";
+        String response = "decision: " + status
+                + "\nsummary: " + (result.summary == null ? "" : result.summary)
+                + "\nadditionalInstruction: " + (result.additionalInstruction == null ? "" : result.additionalInstruction);
+        recordAiConversationSafely(
+                projectId,
+                "local",
+                title,
+                requestText,
+                response,
+                status,
+                localGuardMetadata(),
+                linkedBuildJobId);
+    }
+
+    private void recordAiConversationSafely(long projectId, String source, String title, String requestText, String responseText, String status, String metadata, Long linkedBuildJobId) {
+        try {
+            repository.addAiConversation(
+                    projectId,
+                    source,
+                    title,
+                    truncateAiLog(requestText),
+                    truncateAiLog(responseText),
+                    status,
+                    metadata,
+                    linkedBuildJobId);
+        } catch (Exception ignored) {
+            // AI conversation logs are diagnostic and must never block generation, repair, or build.
+        }
+    }
+
+    private String cloudAiMetadata() {
+        return "provider=" + openAiClient.currentProvider()
+                + "\nmodel=" + openAiClient.currentModel()
+                + "\nendpoint=" + openAiClient.currentEndpoint();
+    }
+
+    private String localGuardMetadata() {
+        File model = LocalGuardSettings.modelFile(context);
+        return "provider=local-llama.cpp"
+                + "\nmodel=" + LocalGuardSettings.modelName(context)
+                + "\npath=" + model.getAbsolutePath()
+                + "\nmode=" + LocalGuardSettings.mode(context).name();
+    }
+
+    private String historyForAiLog(List<ChatMessage> history) {
+        if (history == null || history.isEmpty()) {
+            return "(empty)";
+        }
+        StringBuilder text = new StringBuilder();
+        int start = Math.max(0, history.size() - 12);
+        if (start > 0) {
+            text.append("...[older messages omitted]\n");
+        }
+        for (int i = start; i < history.size(); i++) {
+            ChatMessage message = history.get(i);
+            text.append(message.role == null ? "message" : message.role)
+                    .append(": ")
+                    .append(truncateForInlineLog(message.content, 4000))
+                    .append("\n\n");
+        }
+        return text.toString().trim();
+    }
+
+    private String taskOperationsRequestForAiLog(String planContent, String taskTitle, String instruction, String snapshot, int attempt) {
+        return "Attempt: " + attempt
+                + "\n\nApproved engineering plan:\n" + truncateForInlineLog(planContent, 12000)
+                + "\n\nTask title:\n" + taskTitle
+                + "\n\nTask instruction:\n" + instruction
+                + "\n\nCurrent source tree:\n" + truncateForInlineLog(snapshot, 24000);
+    }
+
+    private String truncateAiLog(String value) {
+        String text = value == null ? "" : value;
+        if (text.length() <= AI_LOG_TEXT_LIMIT) {
+            return text;
+        }
+        return text.substring(0, AI_LOG_TEXT_LIMIT) + "\n...[ai log truncated]";
+    }
+
+    private String truncateForInlineLog(String value, int limit) {
+        String text = value == null ? "" : value;
+        if (text.length() <= limit) {
+            return text;
+        }
+        return text.substring(0, limit) + "\n...[truncated]";
+    }
+
     private boolean isRewriteablePolicyError(IllegalArgumentException error) {
         return TaskOperationErrorPolicy.shouldRequestRewrite(error);
+    }
+
+    static int policyRewriteAttemptsForTest() {
+        return POLICY_REWRITE_ATTEMPTS;
     }
 
     private CapabilityAssessment assessCapability(String text) {
@@ -374,7 +640,7 @@ public class AgentService {
                     + "统计/汇总 DTO 给 Adapter 展示时，不要访问未声明的 item.categoryName、item.percent 等字段；要么补齐 DTO 字段/getter，要么把 Adapter 改为真实存在的字段。DAO/helper 构造函数必须按声明传参，例如 CategoryDAO(Context) 不能传 DBHelper，必须改传 context 或同步修改构造函数与所有调用点。"
                     + "修改 Activity/Adapter 时必须同步更新 DAO、model、helper 中对应的方法签名和字段。"
                     + "如果计划或需求涉及版本升级、发版、测试版、APK 迭代或构建号，必须保持或修正 app/build.gradle 中的 versionCode/versionName：versionCode 必须大于当前旧值，versionName 按需求指定版本或递增补丁号，禁止降级。"
-                    + "不要使用 Java lambda 或 -> 语法，监听器必须写成匿名内部类；"
+                    + "不要使用 Java lambda 或箭头语法，监听器必须写成匿名内部类；注释、Javadoc、字符串示例里也不要写箭头式示例；"
                     + "如果是 Java 引用错误：Fragment 中不要直接调用 findViewById，要使用 inflated root view.findViewById 或 requireView().findViewById；"
                     + "不要使用 Kotlin synthetic 视图变量（例如 btn_save.setOnClickListener），必须先从 dialog/root view 中 findViewById 声明局部变量；"
                     + "所有 R.* 代码引用和 XML 中的 @mipmap/@style/@drawable/@string/@color/@layout 引用都必须有对应资源，缺失时补资源或改用已有资源。\n\n构建日志：\n" + log;
@@ -384,7 +650,7 @@ public class AgentService {
                 + "If these are javac diagnostics, fix every diagnostic, not just the first one. Every method call must have an existing declaration with matching argument count and types. Every direct DTO/model field access must actually exist and be visible; for example item.total requires CategorySum to declare total or expose a matching getter. Use getters/setters or adjust DTO field visibility consistently. When changing an Activity or Adapter, update the corresponding DAO, model, and helper APIs in the same repair. "
                 + "For aggregate/statistics DTOs used by adapters, do not access undeclared item.categoryName, item.percent, or similar fields; either add DTO fields/getters or update the adapter to real fields. DAO/helper constructor calls must pass the declared type, e.g. CategoryDAO(Context) cannot receive DBHelper; pass context or update the constructor and every caller consistently. "
                 + VersionUpgradePolicy.prompt() + " "
-                + "Do not use Java lambdas or -> syntax; listeners must use anonymous inner classes. "
+                + "Do not use Java lambdas or arrow syntax; listeners must use anonymous inner classes, and comments/Javadocs/string examples must not include arrow-style examples. "
                 + "For Java reference errors: in Fragments, do not call findViewById directly; use the inflated root view.findViewById or requireView().findViewById. "
                 + "Do not use Kotlin synthetic view variables such as btn_save.setOnClickListener; first declare local variables from the dialog/root view using findViewById. "
                 + "Every R.* code reference and every XML @mipmap/@style/@drawable/@string/@color/@layout reference must have a matching resource; add the resource or use an existing one.\n\nBuild log:\n" + log;
@@ -397,11 +663,16 @@ public class AgentService {
         return "# Engineering Plan\n\nRepair the current Android project, preserve existing behavior, and make it build successfully.";
     }
 
-    private void ensureImplementationTasks(long projectId, ProjectPlanRecord plan, boolean chinese) throws Exception {
+    private void ensureImplementationTasks(long projectId, Long linkedBuildJobId, ProjectPlanRecord plan, boolean chinese) throws Exception {
         if (!repository.listProjectTasks(projectId).isEmpty()) {
             return;
         }
-        String tasksJson = openAiClient.createImplementationTasks(plan.content, chinese);
+        String tasksJson = recordCloudAiCall(
+                projectId,
+                linkedBuildJobId,
+                chinese ? "云端 AI · 执行任务拆分" : "Cloud AI · implementation task split",
+                "Approved engineering plan:\n\n" + plan.content,
+                () -> openAiClient.createImplementationTasks(plan.content, chinese));
         List<ProjectTaskRecord> tasks = ImplementationTaskParser.fromJson(tasksJson);
         repository.replaceProjectTasks(projectId, tasks);
         repository.addMessage(projectId, "assistant", taskListMessage(tasks, chinese), null);
@@ -423,8 +694,98 @@ public class AgentService {
         StringBuilder snapshot = new StringBuilder();
         Set<String> seen = new HashSet<>();
         appendFocusedSourceFiles(sourceDir, focusText, snapshot, seen);
-        appendSourceSnapshot(sourceDir, sourceDir, snapshot, seen);
+        // General tree, ordered most-relevant first so that, if the budget runs out, the files
+        // dropped are the least relevant (assets/configs) rather than Java/layouts.
+        List<File> candidates = new java.util.ArrayList<>();
+        collectSourceFiles(sourceDir, candidates);
+        sortByRelevance(sourceDir, candidates);
+        for (File file : candidates) {
+            appendSourceFile(sourceDir, file, snapshot, seen, false);
+        }
+        // Tell the model exactly which source files it cannot see, so it stops aligning against
+        // files it has not been shown (a common cause of cross-file API mismatches).
+        appendOmittedFilesNote(sourceDir, candidates, seen, snapshot);
         return snapshot.length() == 0 ? "(empty)" : snapshot.toString();
+    }
+
+    private void collectSourceFiles(File file, List<File> out) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children == null) {
+                return;
+            }
+            for (File child : children) {
+                collectSourceFiles(child, out);
+            }
+            return;
+        }
+        if (isTextSourceFile(file.getName())) {
+            out.add(file);
+        }
+    }
+
+    static boolean isTextSourceFile(String name) {
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        return lower.endsWith(".java") || lower.endsWith(".kt") || lower.endsWith(".xml")
+                || lower.endsWith(".gradle") || lower.endsWith(".kts")
+                || lower.endsWith(".properties") || lower.endsWith(".json") || lower.endsWith(".pro");
+    }
+
+    private void sortByRelevance(File root, List<File> files) {
+        java.util.Collections.sort(files, (a, b) -> {
+            int byScore = Integer.compare(relevanceScore(relativePath(root, a)), relevanceScore(relativePath(root, b)));
+            return byScore != 0 ? byScore : relativePath(root, a).compareTo(relativePath(root, b));
+        });
+    }
+
+    static int relevanceScore(String path) {
+        String lower = path.toLowerCase(java.util.Locale.ROOT);
+        if (lower.endsWith(".java") || lower.endsWith(".kt")) {
+            return 0;
+        }
+        if (lower.contains("/res/layout") && lower.endsWith(".xml")) {
+            return 1;
+        }
+        if (lower.endsWith("androidmanifest.xml")) {
+            return 2;
+        }
+        if (lower.endsWith(".xml")) {
+            return 3;
+        }
+        if (lower.endsWith(".gradle") || lower.endsWith(".kts") || lower.endsWith(".properties")) {
+            return 4;
+        }
+        return 5;
+    }
+
+    private String relativePath(File root, File file) {
+        return root.toURI().relativize(file.toURI()).getPath();
+    }
+
+    private void appendOmittedFilesNote(File root, List<File> candidates, Set<String> seen, StringBuilder snapshot) {
+        List<String> omitted = new java.util.ArrayList<>();
+        for (File file : candidates) {
+            String path = relativePath(root, file);
+            if (!seen.contains(path)) {
+                omitted.add(path);
+            }
+        }
+        if (omitted.isEmpty()) {
+            return;
+        }
+        int shown = Math.min(omitted.size(), 40);
+        snapshot.append("\n--- context note ---\n");
+        snapshot.append("The project is larger than the context budget, so ").append(omitted.size())
+                .append(" source file(s) below were omitted from this snapshot. Do not assume their contents; only reference or modify files shown above, and keep every change consistent with the APIs you can actually see. Omitted files:\n");
+        for (int i = 0; i < shown; i++) {
+            snapshot.append("- ").append(omitted.get(i)).append('\n');
+        }
+        if (omitted.size() > shown) {
+            snapshot.append("- ...and ").append(omitted.size() - shown).append(" more\n");
+        }
     }
 
     private void appendFocusedSourceFiles(File root, String focusText, StringBuilder snapshot, Set<String> seen) {

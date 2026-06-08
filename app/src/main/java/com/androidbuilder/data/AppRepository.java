@@ -6,6 +6,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
 import com.androidbuilder.model.ArtifactRecord;
+import com.androidbuilder.model.AiConversationRecord;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
 import com.androidbuilder.model.ProjectPlanRecord;
@@ -111,6 +112,44 @@ public class AppRepository {
         try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_MESSAGES, null, "project_id = ?", new String[]{String.valueOf(projectId)}, null, null, "created_at ASC")) {
             while (cursor.moveToNext()) {
                 rows.add(readMessage(cursor));
+            }
+        }
+        return rows;
+    }
+
+    public synchronized AiConversationRecord addAiConversation(
+            long projectId,
+            String source,
+            String title,
+            String requestText,
+            String responseText,
+            String status,
+            String metadata,
+            Long linkedBuildJobId) {
+        ContentValues values = new ContentValues();
+        values.put("project_id", projectId);
+        values.put("source", source == null ? "" : source);
+        values.put("title", title == null ? "" : title);
+        values.put("request_text", requestText == null ? "" : requestText);
+        values.put("response_text", responseText == null ? "" : responseText);
+        values.put("status", status == null ? "" : status);
+        values.put("metadata", metadata == null ? "" : metadata);
+        if (linkedBuildJobId == null) {
+            values.putNull("linked_build_job_id");
+        } else {
+            values.put("linked_build_job_id", linkedBuildJobId);
+        }
+        values.put("created_at", System.currentTimeMillis());
+        long id = helper.getWritableDatabase().insertOrThrow(DatabaseHelper.TABLE_AI_CONVERSATIONS, null, values);
+        touchProject(projectId);
+        return getAiConversation(id);
+    }
+
+    public synchronized List<AiConversationRecord> listAiConversations(long projectId) {
+        List<AiConversationRecord> rows = new ArrayList<>();
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_AI_CONVERSATIONS, null, "project_id = ?", new String[]{String.valueOf(projectId)}, null, null, "created_at ASC")) {
+            while (cursor.moveToNext()) {
+                rows.add(readAiConversation(cursor));
             }
         }
         return rows;
@@ -390,6 +429,13 @@ public class AppRepository {
         }
     }
 
+    private AiConversationRecord getAiConversation(long id) {
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_AI_CONVERSATIONS, null, "id = ?", new String[]{String.valueOf(id)}, null, null, null)) {
+            cursor.moveToFirst();
+            return readAiConversation(cursor);
+        }
+    }
+
     private ChatMessage readMessage(Cursor cursor) {
         int linkedIndex = cursor.getColumnIndexOrThrow("linked_build_job_id");
         Long linked = cursor.isNull(linkedIndex) ? null : cursor.getLong(linkedIndex);
@@ -400,6 +446,23 @@ public class AppRepository {
                 cursor.getString(cursor.getColumnIndexOrThrow("content")),
                 cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
                 linked
+        );
+    }
+
+    private AiConversationRecord readAiConversation(Cursor cursor) {
+        int linkedIndex = cursor.getColumnIndexOrThrow("linked_build_job_id");
+        Long linked = cursor.isNull(linkedIndex) ? null : cursor.getLong(linkedIndex);
+        return new AiConversationRecord(
+                cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("project_id")),
+                cursor.getString(cursor.getColumnIndexOrThrow("source")),
+                cursor.getString(cursor.getColumnIndexOrThrow("title")),
+                cursor.getString(cursor.getColumnIndexOrThrow("request_text")),
+                cursor.getString(cursor.getColumnIndexOrThrow("response_text")),
+                cursor.getString(cursor.getColumnIndexOrThrow("status")),
+                cursor.getString(cursor.getColumnIndexOrThrow("metadata")),
+                linked,
+                cursor.getLong(cursor.getColumnIndexOrThrow("created_at"))
         );
     }
 

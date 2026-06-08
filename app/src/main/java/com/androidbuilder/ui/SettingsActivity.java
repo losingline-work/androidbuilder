@@ -18,6 +18,9 @@ import android.widget.Toast;
 
 import com.androidbuilder.BuildConfig;
 import com.androidbuilder.R;
+import com.androidbuilder.agent.LocalGuardMode;
+import com.androidbuilder.agent.LocalGuardSettings;
+import com.androidbuilder.agent.LocalLlamaEngine;
 import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.backend.BuildBackendSettings;
 import com.androidbuilder.backend.RuntimeInstaller;
@@ -35,10 +38,12 @@ import java.util.Map;
 public class SettingsActivity extends BaseActivity {
     private static final int REQUEST_TERMUX_RUN_COMMAND = 8001;
     private static final int REQUEST_OFFLINE_MAVEN_ZIP = 8002;
+    private static final int REQUEST_LOCAL_GUARD_GGUF = 8003;
     private String[] providerLabels;
     private String[] languageLabels;
     private String[] backendLabels;
     private String[] dependencyModeLabels;
+    private String[] localGuardModeLabels;
     private String[] openaiModelLabels;
     private String[] deepseekModelLabels;
     private String[] minimaxModelLabels;
@@ -55,6 +60,7 @@ public class SettingsActivity extends BaseActivity {
     private AutoCompleteTextView languageSpinner;
     private AutoCompleteTextView backendSpinner;
     private AutoCompleteTextView dependencyModeSpinner;
+    private AutoCompleteTextView localGuardModeSpinner;
     private View termuxSection;
     private View openaiModelLayout;
     private View deepseekModelLayout;
@@ -66,6 +72,8 @@ public class SettingsActivity extends BaseActivity {
     private EditText runtimeBootstrapUrlInput;
     private TextView runtimeStatusText;
     private TextView offlineMavenStatusText;
+    private TextView localGuardStatusText;
+    private androidx.appcompat.widget.SwitchCompat localGuardEnabledSwitch;
     private final Map<String, ProviderDraft> providerDrafts = new HashMap<>();
     private SharedPreferences cloudPrefs;
     private String selectedProvider = OpenAiClient.PROVIDER_OPENAI;
@@ -95,10 +103,13 @@ public class SettingsActivity extends BaseActivity {
         languageSpinner = findViewById(R.id.languageSpinner);
         backendSpinner = findViewById(R.id.backendSpinner);
         dependencyModeSpinner = findViewById(R.id.dependencyModeSpinner);
+        localGuardModeSpinner = findViewById(R.id.localGuardModeSpinner);
+        localGuardEnabledSwitch = findViewById(R.id.localGuardEnabledSwitch);
         termuxSection = findViewById(R.id.termuxSection);
         runtimeBootstrapUrlInput = findViewById(R.id.runtimeBootstrapUrlInput);
         runtimeStatusText = findViewById(R.id.runtimeStatusText);
         offlineMavenStatusText = findViewById(R.id.offlineMavenStatusText);
+        localGuardStatusText = findViewById(R.id.localGuardStatusText);
         configureSpinners();
         cloudPrefs = getSharedPreferences(OpenAiClient.PREFS, MODE_PRIVATE);
         selectedProvider = cloudPrefs.getString(OpenAiClient.KEY_PROVIDER, OpenAiClient.PROVIDER_OPENAI);
@@ -107,9 +118,13 @@ public class SettingsActivity extends BaseActivity {
         select(languageSpinner, languageLabels, languageIndex(AppSettings.language(this)));
         select(backendSpinner, backendLabels, backendIndex(BuildBackendSettings.selected(this)));
         select(dependencyModeSpinner, dependencyModeLabels, dependencyModeIndex(BuildBackendSettings.dependencyMode(this)));
+        localGuardEnabledSwitch.setChecked(LocalGuardSettings.isEnabled(this));
+        select(localGuardModeSpinner, localGuardModeLabels, localGuardModeIndex(LocalGuardSettings.mode(this)));
         runtimeBootstrapUrlInput.setText(BuildBackendSettings.prefs(this).getString(BuildBackendSettings.KEY_BOOTSTRAP_URL, ""));
         findViewById(R.id.saveSettingsButton).setOnClickListener(v -> save());
         findViewById(R.id.importOfflineMavenButton).setOnClickListener(v -> importOfflineMaven());
+        findViewById(R.id.importLocalGuardModelButton).setOnClickListener(v -> importLocalGuardModel());
+        findViewById(R.id.removeLocalGuardModelButton).setOnClickListener(v -> removeLocalGuardModel());
         findViewById(R.id.refreshRuntimeStatusButton).setOnClickListener(v -> refreshRuntimeStatus());
         findViewById(R.id.installBundledRuntimeButton).setOnClickListener(v -> installBundledRuntime());
         findViewById(R.id.downloadRuntimeButton).setOnClickListener(v -> downloadRuntime());
@@ -125,6 +140,7 @@ public class SettingsActivity extends BaseActivity {
         updateTermuxSectionVisibility();
         updateModelInputVisibility();
         refreshOfflineMavenStatus();
+        refreshLocalGuardStatus();
         refreshRuntimeStatus();
     }
 
@@ -133,6 +149,10 @@ public class SettingsActivity extends BaseActivity {
         languageLabels = new String[]{getString(R.string.language_system), "English", "中文"};
         backendLabels = new String[]{getString(R.string.backend_embedded), getString(R.string.backend_external_termux)};
         dependencyModeLabels = new String[]{getString(R.string.dependency_mode_offline_safe), getString(R.string.dependency_mode_local_cache), getString(R.string.dependency_mode_online)};
+        localGuardModeLabels = new String[]{
+                getString(R.string.local_guard_mode_off),
+                getString(R.string.local_guard_mode_policy_error_only),
+                getString(R.string.local_guard_mode_preflight_and_policy_error)};
         openaiModelLabels = OpenAiClient.openAiModels();
         deepseekModelLabels = new String[]{getString(R.string.deepseek_model_v4_flash), getString(R.string.deepseek_model_v4_pro)};
         minimaxModelLabels = new String[]{
@@ -148,6 +168,7 @@ public class SettingsActivity extends BaseActivity {
         configureDropdown(languageSpinner, languageLabels);
         configureDropdown(backendSpinner, backendLabels);
         configureDropdown(dependencyModeSpinner, dependencyModeLabels);
+        configureDropdown(localGuardModeSpinner, localGuardModeLabels);
         configureDropdown(openaiModelSpinner, openaiModelLabels);
         configureDropdown(deepseekModelSpinner, deepseekModelLabels);
         configureDropdown(minimaxModelSpinner, minimaxModelLabels);
@@ -344,6 +365,8 @@ public class SettingsActivity extends BaseActivity {
         BuildBackendSettings.setSelected(this, backendAt(selectedIndex(backendSpinner, backendLabels)));
         BuildBackendSettings.setDependencyMode(this, dependencyModeAt(selectedIndex(dependencyModeSpinner, dependencyModeLabels)));
         BuildBackendSettings.prefs(this).edit().putString(BuildBackendSettings.KEY_BOOTSTRAP_URL, runtimeBootstrapUrlInput.getText().toString().trim()).apply();
+        LocalGuardSettings.setEnabled(this, localGuardEnabledSwitch.isChecked());
+        LocalGuardSettings.setMode(this, localGuardModeAt(selectedIndex(localGuardModeSpinner, localGuardModeLabels)));
         Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show();
         recreate();
     }
@@ -491,11 +514,20 @@ public class SettingsActivity extends BaseActivity {
         startActivityForResult(intent, REQUEST_OFFLINE_MAVEN_ZIP);
     }
 
+    private void importLocalGuardModel() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, REQUEST_LOCAL_GUARD_GGUF);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_OFFLINE_MAVEN_ZIP && resultCode == RESULT_OK && data != null && data.getData() != null) {
             installOfflineMaven(data.getData());
+        } else if (requestCode == REQUEST_LOCAL_GUARD_GGUF && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            installLocalGuardModel(data.getData());
         }
     }
 
@@ -519,6 +551,31 @@ public class SettingsActivity extends BaseActivity {
                 });
             }
         }, "offline-maven-import").start();
+    }
+
+    private void installLocalGuardModel(Uri uri) {
+        new Thread(() -> {
+            try {
+                LocalGuardSettings.saveImportedModel(this, uri);
+                runOnUiThread(() -> {
+                    localGuardEnabledSwitch.setChecked(true);
+                    refreshLocalGuardStatus();
+                    Toast.makeText(this, R.string.local_guard_model_imported, Toast.LENGTH_LONG).show();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    Toast.makeText(this, getString(R.string.local_guard_model_import_failed, error.getMessage()), Toast.LENGTH_LONG).show();
+                    refreshLocalGuardStatus();
+                });
+            }
+        }, "local-guard-import").start();
+    }
+
+    private void removeLocalGuardModel() {
+        LocalGuardSettings.clearModel(this);
+        localGuardEnabledSwitch.setChecked(false);
+        refreshLocalGuardStatus();
+        Toast.makeText(this, R.string.local_guard_model_removed, Toast.LENGTH_SHORT).show();
     }
 
     private void unzipOfflineMaven(Uri uri, java.io.File targetDir) throws Exception {
@@ -557,6 +614,37 @@ public class SettingsActivity extends BaseActivity {
         offlineMavenStatusText.setText(artifacts == 0
                 ? getString(R.string.offline_maven_empty)
                 : getString(R.string.offline_maven_ready, artifacts, dir.getAbsolutePath()));
+    }
+
+    private void refreshLocalGuardStatus() {
+        if (!LocalLlamaEngine.isNativeAvailable()) {
+            localGuardStatusText.setText(getString(R.string.local_guard_native_unavailable));
+            return;
+        }
+        if (!LocalGuardSettings.isModelReady(this)) {
+            localGuardStatusText.setText(getString(R.string.local_guard_no_model));
+            return;
+        }
+        String name = LocalGuardSettings.modelName(this);
+        long size = LocalGuardSettings.modelSize(this);
+        String enabled = LocalGuardSettings.isEnabled(this)
+                ? getString(R.string.local_guard_enabled_status)
+                : getString(R.string.local_guard_disabled_status);
+        localGuardStatusText.setText(getString(R.string.local_guard_ready, name, readableBytes(size), enabled));
+    }
+
+    private String readableBytes(long bytes) {
+        if (bytes <= 0) {
+            return "0 B";
+        }
+        double value = bytes;
+        String[] units = new String[]{"B", "KB", "MB", "GB"};
+        int unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+            value = value / 1024.0;
+            unit++;
+        }
+        return String.format(java.util.Locale.US, unit == 0 ? "%.0f %s" : "%.1f %s", value, units[unit]);
     }
 
     private int countFiles(java.io.File dir, String... suffixes) {
@@ -798,5 +886,25 @@ public class SettingsActivity extends BaseActivity {
             return BuildBackendSettings.DEPENDENCY_ONLINE;
         }
         return BuildBackendSettings.DEPENDENCY_OFFLINE_SAFE;
+    }
+
+    private int localGuardModeIndex(LocalGuardMode mode) {
+        if (mode == LocalGuardMode.OFF) {
+            return 0;
+        }
+        if (mode == LocalGuardMode.POLICY_ERROR_ONLY) {
+            return 1;
+        }
+        return 2;
+    }
+
+    private LocalGuardMode localGuardModeAt(int position) {
+        if (position == 0) {
+            return LocalGuardMode.OFF;
+        }
+        if (position == 1) {
+            return LocalGuardMode.POLICY_ERROR_ONLY;
+        }
+        return LocalGuardMode.PREFLIGHT_AND_POLICY_ERROR;
     }
 }

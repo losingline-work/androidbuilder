@@ -5,6 +5,7 @@ plugins {
 android {
     namespace "com.androidbuilder"
     compileSdk 35
+    ndkVersion "27.2.12479018"
 
     defaultConfig {
         applicationId "com.androidbuilder"
@@ -14,6 +15,14 @@ android {
         targetSdk 28
         versionCode 3
         versionName "0.2.1"
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
     }
 
     compileOptions {
@@ -27,6 +36,13 @@ android {
 
     lint {
         disable "ExpiredTargetSdkVersion"
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file("src/main/cpp/CMakeLists.txt")
+            version "3.22.1"
+        }
     }
 }
 

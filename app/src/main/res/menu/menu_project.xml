@@ -5,4 +5,9 @@
         android:icon="@drawable/ic_folder"
         android:title="@string/source_files"
         app:showAsAction="always" />
+    <item
+        android:id="@+id/action_log_query"
+        android:icon="@drawable/ic_log_search"
+        android:title="@string/log_query"
+        app:showAsAction="always" />
 </menu>

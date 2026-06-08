@@ -1,6 +1,11 @@
 package com.androidbuilder.agent;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 final class PolicyRewriteInstruction {
+    private static final Pattern MISSING_DRAWABLE = Pattern.compile("missing drawable resource:\\s*R\\.drawable\\.([A-Za-z_][A-Za-z0-9_]*)\\s+in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
+
     private PolicyRewriteInstruction() {
     }
 
@@ -39,7 +44,8 @@ final class PolicyRewriteInstruction {
         }
         if (message.contains("missing method") || message.contains("method argument mismatch")) {
             instruction.append("\nA custom class method call has no matching declaration. Keep the method signature and every caller consistent.");
-            instruction.append("\nFor DAO APIs such as RecordDao.update(Record), delete(long), countByCategory(long), or queryByType(int), either add the exact DAO method with matching parameter types or change the Activity/Adapter caller to an existing method.");
+            instruction.append("\nFor DAO APIs such as RecordDao.listAll(), RecordDao.update(Record), delete(long), countByCategory(long), or queryByType(int), either add the exact DAO method with matching parameter types or change the Activity/Adapter/helper caller to an existing method.");
+            instruction.append("\nIf JsonBackup.java calls RecordDao.listAll(), either implement RecordDao.listAll() with the return type JsonBackup expects, or update JsonBackup.java to use a DAO query method that already exists.");
             instruction.append("\nWhen changing database screens, update DBHelper, model, DAO, Activity, and Adapter together in the same response.");
         }
         if (message.contains("synthetic view access")) {
@@ -76,6 +82,25 @@ final class PolicyRewriteInstruction {
         if (message.contains("missing ") && message.contains("resource")) {
             instruction.append("\nFor every R.* or XML resource reference, make sure the referenced resource exists after your operations are applied.");
         }
+        appendMissingDrawableHint(instruction, message);
         return instruction.toString();
+    }
+
+    private static void appendMissingDrawableHint(StringBuilder instruction, String message) {
+        Matcher matcher = MISSING_DRAWABLE.matcher(message == null ? "" : message);
+        if (!matcher.find()) {
+            return;
+        }
+        String name = matcher.group(1);
+        String file = matcher.group(2);
+        instruction.append("\n")
+                .append(file)
+                .append(" references R.drawable.")
+                .append(name)
+                .append(", but that drawable does not exist. In the next operations, either add app/src/main/res/drawable/")
+                .append(name)
+                .append(".xml as a valid vector/shape drawable resource, or change ")
+                .append(file)
+                .append(" to reference an existing drawable. If IconRes.java maps multiple built-in icon names, add every mapped drawable resource in the same response.");
     }
 }

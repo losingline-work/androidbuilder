@@ -75,6 +75,7 @@ public class PolicyRewriteInstructionTest {
                 2);
 
         assertTrue(instruction.contains("RecordDao.update(Record)"));
+        assertTrue(instruction.contains("RecordDao.listAll()"));
         assertTrue(instruction.contains("method signature"));
         assertTrue(instruction.contains("caller"));
     }
@@ -99,6 +100,19 @@ public class PolicyRewriteInstructionTest {
 
         assertTrue(instruction.contains("@mipmap/@style/@drawable/@string/@color/@layout"));
         assertTrue(instruction.contains("matching resource"));
+    }
+
+    @Test
+    public void missingDrawablePolicyErrorProducesExactDrawableHint() {
+        String instruction = PolicyRewriteInstruction.create(
+                "Add icon resolver",
+                "Generated source policy blocked missing drawable resource: R.drawable.ic_food in IconRes.java.",
+                3);
+
+        assertTrue(instruction.contains("R.drawable.ic_food"));
+        assertTrue(instruction.contains("IconRes.java"));
+        assertTrue(instruction.contains("app/src/main/res/drawable/ic_food.xml"));
+        assertTrue(instruction.contains("vector"));
     }
 
     @Test

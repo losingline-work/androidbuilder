@@ -48,7 +48,9 @@ public class TaskOperationsPromptPolicyTest {
 
         assertTrue(projectPrompt.contains("DBHelper.COL_"));
         assertTrue(projectPrompt.contains("DAO method"));
+        assertTrue(projectPrompt.contains("RecordDao.listAll()"));
         assertTrue(taskPrompt.contains("DBHelper.COL_"));
         assertTrue(taskPrompt.contains("update(Record)"));
+        assertTrue(taskPrompt.contains("RecordDao.listAll()"));
     }
 }

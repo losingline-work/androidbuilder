@@ -6,6 +6,8 @@ import android.content.Context;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.text.method.ScrollingMovementMethod;
 import android.view.View;
 import android.view.ViewGroup;
@@ -30,8 +32,10 @@ import com.androidbuilder.backend.BuildBackendFactory;
 import com.androidbuilder.backend.BuildBackendSettings;
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.install.ApkInstaller;
+import com.androidbuilder.model.AiConversationRecord;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
+import com.androidbuilder.model.ProjectLogEntry;
 import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
@@ -57,6 +61,7 @@ public class ProjectActivity extends BaseActivity {
     private static final long MAX_PREVIEW_BYTES = 80 * 1024;
     private static final int BUILD_LOG_INLINE_LIMIT = 9000;
     private static final int BUILD_LOG_CONTEXT_RADIUS = 2500;
+    private static final int LOG_RESULT_PREVIEW_LIMIT = 420;
 
     private AppRepository repository;
     private AgentService agentService;
@@ -65,18 +70,25 @@ public class ProjectActivity extends BaseActivity {
     private final List<ChatMessage> messages = new ArrayList<>();
     private final List<FileItem> fileItems = new ArrayList<>();
     private final List<ProjectTaskRecord> taskItems = new ArrayList<>();
+    private final List<ProjectLogEntry> logEntries = new ArrayList<>();
+    private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedBuildLogJobIds = new HashSet<>();
     private boolean tasksCollapsed;
     private TimelineAdapter adapter;
     private FileAdapter fileAdapter;
+    private LogQueryAdapter logQueryAdapter;
     private ListView messageList;
     private ListView fileList;
+    private ListView logResultList;
     private MaterialToolbar projectToolbar;
     private TextView status;
     private TextView currentPathText;
+    private TextView logResultCount;
     private EditText promptInput;
+    private EditText logSearchInput;
     private View projectContent;
     private View fileBrowserPanel;
+    private View logQueryPanel;
     private View fileDrawerScrim;
     private boolean busy;
     private boolean autoExecutingPlan;
@@ -118,6 +130,10 @@ public class ProjectActivity extends BaseActivity {
                 toggleFileBrowser();
                 return true;
             }
+            if (item.getItemId() == R.id.action_log_query) {
+                toggleLogQuery();
+                return true;
+            }
             return false;
         });
         repository = ((AndroidBuilderApp) getApplication()).repository();
@@ -130,8 +146,11 @@ public class ProjectActivity extends BaseActivity {
         promptInput = findViewById(R.id.promptInput);
         projectContent = findViewById(R.id.projectContent);
         fileBrowserPanel = findViewById(R.id.fileBrowserPanel);
+        logQueryPanel = findViewById(R.id.logQueryPanel);
         fileDrawerScrim = findViewById(R.id.fileDrawerScrim);
         currentPathText = findViewById(R.id.currentPathText);
+        logSearchInput = findViewById(R.id.logSearchInput);
+        logResultCount = findViewById(R.id.logResultCount);
         adapter = new TimelineAdapter();
         messageList = findViewById(R.id.messageList);
         messageList.setAdapter(adapter);
@@ -143,12 +162,29 @@ public class ProjectActivity extends BaseActivity {
         fileList = findViewById(R.id.fileList);
         fileList.setAdapter(fileAdapter);
         fileList.setOnItemClickListener((parent, view, position, id) -> openFileItem(fileItems.get(position)));
+        logQueryAdapter = new LogQueryAdapter();
+        logResultList = findViewById(R.id.logResultList);
+        logResultList.setAdapter(logQueryAdapter);
+        logResultList.setOnItemClickListener((parent, view, position, id) -> showLogEntry(logResults.get(position)));
+        logResultList.setOnItemLongClickListener((parent, view, position, id) -> {
+            ProjectLogEntry entry = logResults.get(position);
+            copyText(entry.title.isEmpty() ? getString(R.string.log_query) : entry.title, entry.copyText);
+            return true;
+        });
+        logSearchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                refreshLogQueryResults();
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
         findViewById(R.id.sendButton).setOnClickListener(v -> {
             hideKeyboard();
             generatePlan();
         });
-        fileDrawerScrim.setOnClickListener(v -> closeFileBrowser());
+        fileDrawerScrim.setOnClickListener(v -> closeDrawers());
         findViewById(R.id.closeFilesButton).setOnClickListener(v -> closeFileBrowser());
+        findViewById(R.id.closeLogsButton).setOnClickListener(v -> closeLogQuery());
         findViewById(R.id.executePlanButton).setOnClickListener(v -> executePlan());
         findViewById(R.id.buildButton).setOnClickListener(v -> buildLatest());
         findViewById(R.id.repairButton).setOnClickListener(v -> repairLatest());
@@ -185,12 +221,19 @@ public class ProjectActivity extends BaseActivity {
         if (buildServer != null) {
             buildServer.stop();
         }
+        if (agentService != null) {
+            agentService.release();
+        }
         clearKeepScreenOn();
         elapsedHandler.removeCallbacks(elapsedTicker);
     }
 
     @Override
     public void onBackPressed() {
+        if (logQueryPanel != null && logQueryPanel.getVisibility() == View.VISIBLE) {
+            closeLogQuery();
+            return;
+        }
         if (fileBrowserPanel != null && fileBrowserPanel.getVisibility() == View.VISIBLE) {
             if (currentSourceDir != null && !sameFile(currentSourceDir, sourceRoot)) {
                 loadSourceDirectory(currentSourceDir.getParentFile(), false);
@@ -219,6 +262,11 @@ public class ProjectActivity extends BaseActivity {
         adapter.notifyDataSetChanged();
         loadSourceDirectory(currentSourceDir == null ? sourceRoot : currentSourceDir, false);
         updateFileBrowserButton();
+        updateLogQueryButton();
+        if (isLogQueryOpen()) {
+            rebuildLogEntries();
+            refreshLogQueryResults();
+        }
         updateBuildLogPanel();
         updateActionButtons();
         updateKeepScreenOn();
@@ -248,6 +296,10 @@ public class ProjectActivity extends BaseActivity {
         }
         if (adapter != null) {
             adapter.notifyDataSetChanged();
+        }
+        if (isLogQueryOpen()) {
+            rebuildLogEntries();
+            refreshLogQueryResults();
         }
         if (tasksChanged) {
             scrollToCurrentTask();
@@ -286,12 +338,11 @@ public class ProjectActivity extends BaseActivity {
         if (fileBrowserPanel == null) {
             return;
         }
+        closeLogQuery();
         loadSourceDirectory(currentSourceDir == null ? sourceRoot : currentSourceDir, false);
-        if (fileDrawerScrim != null) {
-            fileDrawerScrim.setVisibility(View.VISIBLE);
-        }
         fileBrowserPanel.setVisibility(View.VISIBLE);
         fileBrowserPanel.bringToFront();
+        updateDrawerScrim();
         updateFileBrowserButton();
     }
 
@@ -300,10 +351,63 @@ public class ProjectActivity extends BaseActivity {
             return;
         }
         fileBrowserPanel.setVisibility(View.GONE);
-        if (fileDrawerScrim != null) {
-            fileDrawerScrim.setVisibility(View.GONE);
-        }
+        updateDrawerScrim();
         updateFileBrowserButton();
+    }
+
+    private void toggleLogQuery() {
+        if (logQueryPanel == null) {
+            return;
+        }
+        if (isLogQueryOpen()) {
+            closeLogQuery();
+        } else {
+            openLogQuery();
+        }
+    }
+
+    private void openLogQuery() {
+        if (logQueryPanel == null) {
+            return;
+        }
+        closeFileBrowser();
+        rebuildLogEntries();
+        refreshLogQueryResults();
+        logQueryPanel.setVisibility(View.VISIBLE);
+        logQueryPanel.bringToFront();
+        updateDrawerScrim();
+        updateLogQueryButton();
+        if (logSearchInput != null) {
+            logSearchInput.requestFocus();
+        }
+    }
+
+    private void closeLogQuery() {
+        if (logQueryPanel == null) {
+            return;
+        }
+        logQueryPanel.setVisibility(View.GONE);
+        updateDrawerScrim();
+        updateLogQueryButton();
+    }
+
+    private void closeDrawers() {
+        closeFileBrowser();
+        closeLogQuery();
+    }
+
+    private boolean isFileBrowserOpen() {
+        return fileBrowserPanel != null && fileBrowserPanel.getVisibility() == View.VISIBLE;
+    }
+
+    private boolean isLogQueryOpen() {
+        return logQueryPanel != null && logQueryPanel.getVisibility() == View.VISIBLE;
+    }
+
+    private void updateDrawerScrim() {
+        if (fileDrawerScrim != null) {
+            fileDrawerScrim.setVisibility(isFileBrowserOpen() || isLogQueryOpen() ? View.VISIBLE : View.GONE);
+        }
     }
 
     private void updateFileBrowserButton() {
@@ -313,6 +417,16 @@ public class ProjectActivity extends BaseActivity {
         android.view.MenuItem item = projectToolbar.getMenu().findItem(R.id.action_source_files);
         if (item != null) {
             item.setTitle(fileBrowserPanel.getVisibility() == View.VISIBLE ? R.string.hide_source_files : R.string.show_source_files);
+        }
+    }
+
+    private void updateLogQueryButton() {
+        if (projectToolbar == null || logQueryPanel == null) {
+            return;
+        }
+        android.view.MenuItem item = projectToolbar.getMenu().findItem(R.id.action_log_query);
+        if (item != null) {
+            item.setTitle(R.string.log_query);
         }
     }
 
@@ -365,6 +479,110 @@ public class ProjectActivity extends BaseActivity {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         clipboard.setPrimaryClip(ClipData.newPlainText(label, text == null ? "" : text));
         Toast.makeText(this, getString(R.string.copied, label), Toast.LENGTH_SHORT).show();
+    }
+
+    private void rebuildLogEntries() {
+        logEntries.clear();
+        for (AiConversationRecord record : repository.listAiConversations(projectId)) {
+            logEntries.add(aiConversationLogEntry(record));
+        }
+        for (ChatMessage message : repository.listMessages(projectId)) {
+            logEntries.add(messageLogEntry(message));
+        }
+    }
+
+    private void refreshLogQueryResults() {
+        if (logQueryAdapter == null) {
+            return;
+        }
+        String query = logSearchInput == null ? "" : logSearchInput.getText().toString();
+        logResults.clear();
+        logResults.addAll(ProjectLogQueryPolicy.filter(logEntries, query));
+        logQueryAdapter.notifyDataSetChanged();
+        if (logResultCount != null) {
+            logResultCount.setText(logResults.isEmpty()
+                    ? getString(R.string.log_query_empty)
+                    : getString(R.string.log_query_count, logResults.size(), logEntries.size()));
+        }
+    }
+
+    private ProjectLogEntry messageLogEntry(ChatMessage message) {
+        String role = message.role == null ? "" : message.role.toUpperCase(Locale.ROOT);
+        String title = getString(R.string.log_type_message) + (role.isEmpty() ? "" : " · " + role);
+        String subtitle = fileTimeFormat.format(new Date(message.createdAt));
+        if (message.linkedBuildJobId != null) {
+            subtitle += " · job #" + message.linkedBuildJobId;
+        }
+        return new ProjectLogEntry(
+                ProjectLogEntry.Kind.MESSAGE,
+                message.id,
+                message.createdAt,
+                message.createdAt,
+                title,
+                subtitle,
+                message.content,
+                message.content,
+                message.role);
+    }
+
+    private ProjectLogEntry aiConversationLogEntry(AiConversationRecord record) {
+        String title = record.title == null || record.title.trim().isEmpty()
+                ? getString(R.string.log_type_ai)
+                : record.title;
+        String subtitle = fileTimeFormat.format(new Date(record.createdAt))
+                + " · " + record.source
+                + (record.linkedBuildJobId == null ? "" : " · job #" + record.linkedBuildJobId)
+                + (record.status == null || record.status.trim().isEmpty() ? "" : " · " + record.status);
+        String body = joinNonEmpty(
+                record.metadata == null || record.metadata.trim().isEmpty() ? "" : "Metadata:\n" + record.metadata,
+                "Request:\n" + record.requestText,
+                "Response:\n" + record.responseText);
+        return new ProjectLogEntry(
+                ProjectLogEntry.Kind.AI,
+                record.id,
+                record.createdAt,
+                record.createdAt,
+                title,
+                subtitle,
+                body,
+                title + "\n" + subtitle + "\n\n" + body,
+                record.status);
+    }
+
+    private String joinNonEmpty(String... values) {
+        StringBuilder result = new StringBuilder();
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            String text = value == null ? "" : value.trim();
+            if (text.isEmpty()) {
+                continue;
+            }
+            if (result.length() > 0) {
+                result.append("\n\n");
+            }
+            result.append(text);
+        }
+        return result.toString();
+    }
+
+    private void showLogEntry(ProjectLogEntry entry) {
+        TextView preview = new TextView(this);
+        preview.setText(entry.copyText);
+        preview.setTextColor(getResources().getColor(R.color.ink));
+        preview.setTextSize(entry.kind == ProjectLogEntry.Kind.AI ? 12 : 14);
+        if (entry.kind == ProjectLogEntry.Kind.AI) {
+            preview.setTypeface(android.graphics.Typeface.MONOSPACE);
+        }
+        preview.setPadding(24, 18, 24, 18);
+        preview.setMovementMethod(new ScrollingMovementMethod());
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(entry.title.isEmpty() ? getString(R.string.view_log_record) : entry.title)
+                .setView(preview)
+                .setPositiveButton(R.string.copy_message, (dialog, which) -> copyText(entry.title, entry.copyText))
+                .setNegativeButton(R.string.close, null)
+                .show();
     }
 
     private void hideKeyboard() {
@@ -1484,6 +1702,38 @@ public class ProjectActivity extends BaseActivity {
             }
             copyLog.setVisibility(View.VISIBLE);
             copyLog.setOnClickListener(v -> copyText(getString(R.string.copy_log), text));
+        }
+    }
+
+    private class LogQueryAdapter extends BaseAdapter {
+        @Override public int getCount() { return logResults.size(); }
+        @Override public Object getItem(int position) { return logResults.get(position); }
+        @Override public long getItemId(int position) { return logResults.get(position).sourceId; }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_project_log_entry, parent, false) : convertView;
+            ProjectLogEntry entry = logResults.get(position);
+            ((TextView) view.findViewById(R.id.logEntryTitle)).setText(entry.title);
+            ((TextView) view.findViewById(R.id.logEntryMeta)).setText(logEntryMeta(entry));
+            ((TextView) view.findViewById(R.id.logEntryPreview)).setText(ProjectLogQueryPolicy.preview(entry.body, LOG_RESULT_PREVIEW_LIMIT));
+            View copyButton = view.findViewById(R.id.logEntryCopyButton);
+            copyButton.setOnClickListener(v -> copyText(entry.title, entry.copyText));
+            return view;
+        }
+
+        private String logEntryMeta(ProjectLogEntry entry) {
+            String type;
+            if (entry.kind == ProjectLogEntry.Kind.AI) {
+                type = getString(R.string.log_type_ai);
+            } else if (entry.kind == ProjectLogEntry.Kind.TASK) {
+                type = getString(R.string.log_type_task);
+            } else if (entry.kind == ProjectLogEntry.Kind.BUILD) {
+                type = getString(R.string.log_type_build);
+            } else {
+                type = getString(R.string.log_type_message);
+            }
+            return type + " · " + entry.subtitle;
         }
     }
 

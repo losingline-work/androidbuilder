@@ -122,6 +122,11 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void socketAbortRetriesAllowMultipleTransientInterruptions() {
+        assertTrue(OpenAiClient.socketAbortRetriesForTest() >= 2);
+    }
+
+    @Test
     public void normalizesDeepSeekOfficialAndOpenAiCompatibleBaseUrls() {
         assertEquals("https://api.deepseek.com/chat/completions",
                 OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_DEEPSEEK, "https://api.deepseek.com"));
