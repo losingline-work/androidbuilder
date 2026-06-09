@@ -1,45 +1,45 @@
-# Hermes Execution Pipeline Design
+# Hermes 执行流水线设计
 
-## Goal
+## 目标
 
-Add an in-app Hermes-style multi-role execution pipeline to improve generated Android project build success. Hermes should coordinate planning, context gathering, code generation, review, and build-failure triage inside Android Builder while preserving the existing local build backends and validation guards.
+在 App 内加入 Hermes 风格的多角色执行流水线，用来提升自动生成 Android 项目的构建成功率。Hermes 负责编排规划、上下文收集、代码生成、写入前审查和构建失败分诊；现有本地构建后端和确定性校验防线继续保留。
 
-## Approved Approach
+## 已确认方案
 
-Introduce Hermes as an orchestration layer above the current `AgentService` coding flow. The first version should focus on execution and repair quality, not on replacing Embedded Runtime, Termux, Gradle, or APK installation.
+Hermes 作为当前 `AgentService` 编码流程之上的编排层。第一版聚焦执行质量和修复质量，不替换 Embedded Runtime、Termux、Gradle 或 APK 安装流程。
 
-Hermes breaks the current broad cloud-model responsibility into bounded roles:
+Hermes 将目前云端模型承担的宽泛职责拆成边界清晰的角色：
 
-- `HermesPlanner`: turns requirements and approved plans into smaller work packages with expected files, acceptance checks, and risk notes.
-- `HermesContextScout`: gathers the right project context before coding, including recent requirements, previous failures, relevant source files, completed-task summaries, and build-log excerpts.
-- `HermesCoder`: produces small `TaskOperations` JSON patches only.
-- `HermesReviewer`: reviews generated operations before write/apply and asks for a rewrite when the patch is too broad, inconsistent, or likely to fail validation.
-- `HermesBuildTriage`: classifies build failures into source, resource, Gradle/dependency, or environment/tooling categories and creates focused repair context.
-- `HermesOrchestrator`: owns the state machine, role call limits, logging, fallback behavior, and transition to the next task.
+- `HermesPlanner`：把用户需求和已批准工程计划拆成更小的工作包，包含预期文件、验收检查和风险提示。
+- `HermesContextScout`：编码前收集正确的项目上下文，包括最近需求、历史失败、相关源码、已完成任务摘要和构建日志片段。
+- `HermesCoder`：只生成小范围 `TaskOperations` JSON patch。
+- `HermesReviewer`：写入前审查模型生成的 operations；当 patch 过宽、跨文件不一致或明显可能失败时，要求重写。
+- `HermesBuildTriage`：把构建失败分类为源码、资源、Gradle/依赖、环境/工具链等类别，并生成聚焦修复上下文。
+- `HermesOrchestrator`：负责状态机、角色调用上限、日志、fallback 行为和任务流转。
 
-## Non-Goals
+## 非目标
 
-- Do not replace `EmbeddedRuntimeBackend`, `ExternalTermuxBackend`, `LocalBuildServer`, or APK install flow in the first version.
-- Do not auto-run unbounded repair loops. User-triggered Build and Repair remain the outer control points unless a later design explicitly changes this.
-- Do not weaken `FileOperationsWriter`, `DependencyGuard`, `AndroidSourceGuard`, or required-project-file validation.
-- Do not require a new model provider. Hermes uses the existing OpenAI-compatible settings and local guard capabilities.
+- 第一版不替换 `EmbeddedRuntimeBackend`、`ExternalTermuxBackend`、`LocalBuildServer` 或 APK 安装流程。
+- 第一版不自动运行无上限修复循环。除非后续设计明确调整，否则 Build 和 Repair 仍由用户触发。
+- 不削弱 `FileOperationsWriter`、`DependencyGuard`、`AndroidSourceGuard` 或必需工程文件校验。
+- 不要求新增模型供应商。Hermes 使用现有 OpenAI-compatible 设置和本地 guard 能力。
 
-## Relationship To Background Context Negotiation
+## 与后台上下文协商的关系
 
-The background context negotiation design becomes Hermes phase 1 rather than a separate competing path.
+已设计的后台上下文协商不再是独立竞争路径，而是 Hermes 的第一阶段。
 
-Mapping:
+映射关系：
 
-- `ContextNegotiation` becomes the first `HermesContextScout` response shape.
-- `patchIntent` becomes part of the `HermesCoder` prompt input.
-- `riskNotes` become `HermesReviewer` and retry context input.
-- AI conversation log titles move toward role-based names such as `Hermes · Context Scout`, `Hermes · Coder`, `Hermes · Reviewer`, and `Hermes · Build Triage`.
+- `ContextNegotiation` 成为第一版 `HermesContextScout` 的响应形态。
+- `patchIntent` 成为 `HermesCoder` 的输入。
+- `riskNotes` 成为 `HermesReviewer` 和 retry context 的输入。
+- AI 对话日志标题逐步改为角色化名称，例如 `Hermes · Context Scout`、`Hermes · Coder`、`Hermes · Reviewer`、`Hermes · Build Triage`。
 
-The existing `Background Context Negotiation` implementation plan can still be executed first. It should name new classes in a way that can either stand alone or be promoted into Hermes namespaces later.
+现有 `Background Context Negotiation` 实现计划仍可优先执行。新增类名应能独立工作，也能后续平滑迁移到 Hermes 命名空间。
 
-## Pipeline
+## 流水线
 
-The target pipeline is:
+目标流水线：
 
 ```text
 user requirement
@@ -54,28 +54,28 @@ user requirement
   -> focused repair task
 ```
 
-For the first implementation, this pipeline should be enabled for:
+第一版启用范围：
 
-- executing a planned task
-- retrying a failed planned task
-- repairing a build failure
+- 执行已规划任务
+- 重试 failed 任务
+- 修复构建失败
 
-Direct one-shot project generation may keep the current flow until Hermes proves stable.
+直接的一次性项目生成可以暂时保留现有流程，等 Hermes 在计划执行链路稳定后再接入。
 
-## Role Contracts
+## 角色协议
 
-All role outputs should be compact JSON. A role may include short human-readable strings inside JSON fields, but it must not return markdown or free-form prose as the primary contract.
+所有角色输出都应是 compact JSON。角色可以在 JSON 字段里包含短文本，但主协议不能返回 markdown 或自由文本。
 
 ### HermesPlanner
 
-Input:
+输入：
 
-- user requirement or approved engineering plan
+- 用户需求或已批准工程计划
 - package/applicationId
-- recent conversation context
-- dependency mode
+- 最近对话上下文
+- 依赖模式
 
-Output:
+输出：
 
 ```json
 {
@@ -99,20 +99,20 @@ Output:
 }
 ```
 
-First version may keep the existing `ImplementationTaskParser` and add optional fields later. If optional fields are absent, Hermes falls back to title and instruction.
+第一版可以继续使用现有 `ImplementationTaskParser`，后续再增加可选字段。若可选字段缺失，Hermes 回退到只使用 `title` 和 `instruction`。
 
 ### HermesContextScout
 
-Input:
+输入：
 
-- current task
-- approved plan
-- current source snapshot
-- recent user requirements
-- failed task summary, policy error, or build-log triage when present
-- completed task summaries
+- 当前任务
+- 已批准计划
+- 当前源码快照
+- 最近用户需求
+- failed task summary、policy error 或 build-log triage
+- 已完成任务摘要
 
-Output:
+输出：
 
 ```json
 {
@@ -131,20 +131,20 @@ Output:
 }
 ```
 
-This is the same contract as the background context negotiation design.
+该协议与后台上下文协商设计保持一致。
 
 ### HermesCoder
 
-Input:
+输入：
 
-- approved plan
-- task title and instruction
+- 已批准计划
+- 任务标题和任务指令
 - focused source snapshot
-- recent requirements
-- context scout patch intent
-- risk notes and previous failure summary
+- 最近需求
+- Context Scout 的 patch intent
+- 风险提示和历史失败摘要
 
-Output:
+输出：
 
 ```json
 {
@@ -159,19 +159,19 @@ Output:
 }
 ```
 
-This reuses the existing `TaskOperations` contract. The coder must prefer one or two focused writes and must not recreate the project unless the task explicitly requires project skeleton creation.
+这里复用现有 `TaskOperations` 协议。Coder 应优先返回一到两个聚焦写入操作；除非任务明确要求创建工程骨架，否则不得重新创建整个项目。
 
 ### HermesReviewer
 
-Input:
+输入：
 
-- task
+- 当前任务
 - focused source snapshot
 - generated operations
 - risk notes
 - dependency mode
 
-Output:
+输出：
 
 ```json
 {
@@ -181,24 +181,24 @@ Output:
 }
 ```
 
-Allowed `decision` values:
+允许的 `decision` 值：
 
-- `ok`: proceed to local apply/validation.
-- `rewrite`: do not apply; retry HermesCoder with `rewriteInstruction`.
-- `fallback`: reviewer unavailable; proceed to existing local guards.
+- `ok`：继续进入本地 apply/validation。
+- `rewrite`：不要 apply；携带 `rewriteInstruction` 重试 HermesCoder。
+- `fallback`：Reviewer 不可用；继续走现有本地 guard。
 
-HermesReviewer complements `LocalGuardHeuristics`, local llama review, and deterministic guards. It never replaces final validation.
+HermesReviewer 补充 `LocalGuardHeuristics`、本地 llama review 和确定性 guard，但不替代最终校验。
 
 ### HermesBuildTriage
 
-Input:
+输入：
 
 - build phase
 - build log excerpt
 - focused source snapshot
 - dependency mode
 
-Output:
+输出：
 
 ```json
 {
@@ -212,7 +212,7 @@ Output:
 }
 ```
 
-Categories:
+分类值：
 
 - `source`
 - `resource`
@@ -220,11 +220,11 @@ Categories:
 - `environment`
 - `unknown`
 
-When `repairableByModel=false`, Hermes must not generate source repair operations. The UI should keep the existing non-repairable behavior.
+当 `repairableByModel=false` 时，Hermes 不得生成源码修复 operations。UI 应继续保持现有不可修复行为。
 
-## Orchestrator State Machine
+## Orchestrator 状态机
 
-First-version state machine:
+第一版状态机：
 
 ```text
 idle
@@ -244,15 +244,15 @@ idle
   -> generated
 ```
 
-The existing project-plan and task statuses can remain the durable storage source initially. Hermes-specific role activity can be logged through `ai_conversations` and build logs rather than requiring new tables in the first version.
+初期仍以现有 project plan 和 project task 状态作为持久化来源。Hermes 角色活动先通过 `ai_conversations` 和 build log 记录，不在第一版强制新增数据库表。
 
-If role-level resumability becomes necessary, add a later migration for `hermes_runs` and `hermes_steps`.
+如果后续需要角色级恢复和调试，再新增 `hermes_runs` 和 `hermes_steps` 迁移。
 
-## Logging And Observability
+## 日志与可观测性
 
-Every role call must write an AI conversation log entry.
+每个角色调用都必须写入 AI conversation log。
 
-Suggested titles:
+建议标题：
 
 - `Hermes · Planner`
 - `Hermes · Context Scout #1`
@@ -263,33 +263,33 @@ Suggested titles:
 - `Hermes · Repair Coder #1`
 - `Hermes · Repair Reviewer #1`
 
-Each log should include:
+每条日志应包含：
 
 - role name
 - model/provider/endpoint metadata
-- linked build job when available
-- truncated request context
-- raw structured response or parse failure
-- status such as `success`, `rewrite`, `fallback`, or `failed`
+- linked build job，若存在
+- 截断后的请求上下文
+- 原始结构化响应或解析失败信息
+- 状态，例如 `success`、`rewrite`、`fallback`、`failed`
 
-Logs are diagnostic and must never block code generation or repair.
+日志仅用于诊断，不得阻塞代码生成或修复。
 
-## Safety Limits
+## 安全限制
 
-- Context Scout: maximum 2 calls per task or repair attempt.
-- Coder: maximum 2 cloud generations per role cycle before falling back to existing policy retry behavior.
-- Reviewer: maximum 1 cloud review per generated operation set. Local deterministic guards still run.
-- Build Triage: maximum 1 cloud triage per user-triggered repair.
-- Orchestrator must avoid infinite loops by carrying attempt counters in memory and relying on existing task failure statuses for durable retry.
-- If any Hermes role fails to parse, times out, or returns unsafe paths, the flow falls back to existing behavior and records the failure in logs.
+- Context Scout：每个任务或修复尝试最多 2 次调用。
+- Coder：每个角色周期最多 2 次云端生成，然后回退到现有 policy retry 行为。
+- Reviewer：每组 generated operations 最多 1 次云端 review。本地确定性 guard 仍然运行。
+- Build Triage：每次用户触发 Repair 最多 1 次云端 triage。
+- Orchestrator 必须通过内存 attempt counter 和现有 task failure status 避免无限循环。
+- 任一 Hermes 角色解析失败、超时或返回 unsafe path 时，流程 fallback 到现有行为，并记录日志。
 
-## Integration Points
+## 集成点
 
 ### AgentService
 
-`AgentService` remains the first integration point. It should delegate role work to smaller classes instead of growing into a larger monolith.
+`AgentService` 仍是第一集成点。它应把角色工作委托给更小的类，避免继续膨胀成更大的单体。
 
-Suggested first-version classes:
+第一版建议类：
 
 - `HermesOrchestrator`
 - `HermesContextScout`
@@ -298,99 +298,99 @@ Suggested first-version classes:
 - `HermesPrompts`
 - `HermesJsonParsers`
 
-`AgentService` should keep UI-facing async methods:
+`AgentService` 保持 UI 面向的异步方法：
 
 - `planAsync`
 - `executePlanAsync`
 - `repairBuildAsync`
 
-Internally, execution and repair can call Hermes when enabled.
+内部执行和修复流程在启用时调用 Hermes。
 
 ### OpenAiClient
 
-`OpenAiClient` should expose role-specific methods:
+`OpenAiClient` 暴露角色方法：
 
 - `createHermesContextScout(...)`
-- `createHermesTaskOperations(...)` or reuse `createTaskOperations(...)` with role context
+- `createHermesTaskOperations(...)`，或复用带 role context 的 `createTaskOperations(...)`
 - `createHermesReview(...)`
 - `createHermesBuildTriage(...)`
 
-Prompt builders should have package-private `ForTest` helpers, matching existing test style.
+Prompt builder 应提供 package-private 的 `ForTest` helper，保持现有测试风格。
 
 ### Local Guard
 
-HermesReviewer should run before final apply, but deterministic validation remains authoritative:
+HermesReviewer 在最终 apply 前运行，但确定性校验仍是权威：
 
 1. HermesReviewer cloud/local review
 2. `LocalGuardHeuristics`
-3. local llama guard when enabled
+3. 启用时的本地 llama guard
 4. `DependencyGuard`
 5. `DatabaseContractNormalizer`
 6. `AndroidSourceGuard`
-7. required project file validation
+7. 必需工程文件校验
 
 ### Build Failure Classifier
 
-Existing `BuildFailureClassifier` should remain the UI gate for whether Repair is available. HermesBuildTriage can produce more focused repair instructions after the user chooses Repair.
+现有 `BuildFailureClassifier` 继续作为 UI 是否展示 Repair 的入口判断。用户选择 Repair 后，HermesBuildTriage 可以进一步生成聚焦修复指令。
 
-## Rollout Plan
+## 分阶段落地
 
 ### Phase 1: Context Scout
 
-Implement the background context negotiation design and use Hermes-compatible names or adapters. This phase improves retry context without changing task storage or build backends.
+实现后台上下文协商设计，并使用 Hermes-compatible 命名或适配器。该阶段提升 retry context，不改变任务存储或构建后端。
 
 ### Phase 2: Reviewer
 
-Add HermesReviewer before applying operations. It should catch broad rewrites and cross-file API mismatches before temporary source application.
+在 apply operations 前增加 HermesReviewer。它应在临时源码应用前捕获过宽重写和跨文件 API 不一致。
 
 ### Phase 3: Build Triage
 
-Add HermesBuildTriage to repair flow so build logs become focused repair tasks instead of large raw prompt sections.
+在 repair flow 中加入 HermesBuildTriage，让构建日志变成聚焦修复任务，而不是大段原始 prompt。
 
 ### Phase 4: Planner Task Metadata
 
-Extend implementation tasks with optional `expectedFiles`, `acceptanceChecks`, and `riskNotes`. Keep backward compatibility with existing task JSON.
+为实现任务增加可选 `expectedFiles`、`acceptanceChecks` 和 `riskNotes`。保持与现有 task JSON 的向后兼容。
 
 ### Phase 5: Durable Hermes Runs
 
-Add `hermes_runs` and `hermes_steps` tables only if role-level resume/debugging needs exceed what `ai_conversations`, `project_tasks`, and `build_jobs` already provide.
+只有当 `ai_conversations`、`project_tasks` 和 `build_jobs` 不能满足角色级恢复/调试需求时，才新增 `hermes_runs` 和 `hermes_steps` 表。
 
-## Testing Strategy
+## 测试策略
 
-Unit tests:
+单元测试：
 
-- Parse each role JSON contract.
-- Reject unsafe paths and invalid decisions.
-- Ensure Context Scout output becomes focused source context.
-- Ensure Reviewer `rewrite` prevents apply and feeds a rewrite instruction to coder.
-- Ensure Build Triage `environment` category does not trigger model source repair.
-- Verify role call limits.
-- Verify fallback when a role returns invalid JSON.
+- 解析每个角色 JSON 协议。
+- 拒绝 unsafe path 和非法 decision。
+- 确认 Context Scout 输出会变成 focused source context。
+- 确认 Reviewer 的 `rewrite` 会阻止 apply，并把 rewrite instruction 传给 Coder。
+- 确认 Build Triage 的 `environment` 分类不会触发模型源码修复。
+- 验证角色调用上限。
+- 验证角色返回 invalid JSON 时会 fallback。
 
-Integration-style tests:
+集成风格测试：
 
-- Simulate a failed task retry and assert final coder prompt includes previous failure summary and no-recreate instruction.
-- Simulate broad rewrite operations and assert HermesReviewer asks for rewrite before apply.
-- Simulate a javac build log and assert Build Triage creates a focused repair instruction.
+- 模拟 failed task retry，断言最终 Coder prompt 包含历史失败摘要和 no-recreate 指令。
+- 模拟过宽 rewrite operations，断言 HermesReviewer 会在 apply 前要求 rewrite。
+- 模拟 javac build log，断言 Build Triage 会生成聚焦修复指令。
 
-Manual verification:
+手动验证：
 
-- Run `./gradlew testDebugUnitTest`.
-- Run `./gradlew assembleDebug --stacktrace`.
-- Exercise one project creation, one planned task execution, and one manual repair on device or emulator.
+- 运行 `./gradlew testDebugUnitTest`。
+- 运行 `./gradlew assembleDebug --stacktrace`。
+- 在真机或模拟器上执行一次项目创建、一次计划任务执行和一次手动 Repair。
 
-## First-Version Decisions
+## 第一版决策
 
-- Hermes should be enabled for retry and repair paths first. Normal first-pass planned task execution may opt in after Phase 1 and Phase 2 are stable.
-- Role logs should use the existing AI conversation log storage first. A dedicated UI filter is useful but not required for the first implementation.
-- Planner metadata should remain backward-compatible and optional. Store it inside existing task JSON/instruction parsing first; defer database migrations until durable Hermes runs are needed.
+- Hermes 先在 retry 和 repair 路径启用。普通首次 planned task execution 可在 Phase 1 和 Phase 2 稳定后再接入。
+- 角色日志先使用现有 AI conversation log 存储。专用 UI filter 有价值，但不是第一版必需项。
+- Planner metadata 保持向后兼容且可选。第一版先存放在现有 task JSON / instruction 解析中；durable Hermes runs 需要时再做数据库迁移。
 
-## First Implementation Recommendation
+## 第一版实现建议
 
-Start with Phase 1 and Phase 2 together:
+从 Phase 1 和 Phase 2 一起开始：
 
-1. Implement Hermes-compatible Context Scout using the already approved background context negotiation plan.
-2. Add a minimal HermesReviewer with `ok/rewrite/fallback`.
-3. Keep Build Triage and Planner metadata for follow-up phases.
+1. 基于已经确认的后台上下文协商计划，实现 Hermes-compatible Context Scout。
+2. 添加最小 HermesReviewer，支持 `ok/rewrite/fallback`。
+3. Build Triage 和 Planner metadata 放到后续阶段。
 
-This gives the biggest build-success improvement with limited risk: better context before coding and an extra rewrite gate before applying generated operations.
+这样能用较低风险换来最高的构建成功率收益：编码前上下文更准，应用 generated operations 前多一道 rewrite gate。
