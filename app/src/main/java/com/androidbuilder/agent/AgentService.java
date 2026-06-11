@@ -1403,6 +1403,7 @@ public class AgentService {
     }
 
     private String recordCloudAiCall(long projectId, Long linkedBuildJobId, String title, String requestText, AiTextCall call) throws Exception {
+        long startedAt = System.currentTimeMillis();
         try {
             String response = call.run();
             recordAiConversationSafely(
@@ -1412,7 +1413,7 @@ public class AgentService {
                     requestText,
                     response,
                     "success",
-                    cloudAiMetadata(),
+                    cloudAiMetadata(elapsedMs(startedAt)),
                     linkedBuildJobId);
             return response;
         } catch (Exception error) {
@@ -1424,7 +1425,7 @@ public class AgentService {
                     requestText,
                     message,
                     "failed",
-                    cloudAiMetadata(),
+                    cloudAiMetadata(elapsedMs(startedAt)),
                     linkedBuildJobId);
             throw error;
         }
@@ -1525,9 +1526,30 @@ public class AgentService {
     }
 
     private String cloudAiMetadata() {
-        return "provider=" + openAiClient.currentProvider()
-                + "\nmodel=" + openAiClient.currentModel()
-                + "\nendpoint=" + openAiClient.currentEndpoint();
+        return cloudAiMetadata(-1);
+    }
+
+    private String cloudAiMetadata(long durationMs) {
+        return cloudAiMetadata(openAiClient.currentProvider(), openAiClient.currentModel(), openAiClient.currentEndpoint(), durationMs);
+    }
+
+    static String cloudAiMetadataForTest(String provider, String model, String endpoint, long durationMs) {
+        return cloudAiMetadata(provider, model, endpoint, durationMs);
+    }
+
+    private static String cloudAiMetadata(String provider, String model, String endpoint, long durationMs) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("provider=").append(provider == null ? "" : provider)
+                .append("\nmodel=").append(model == null ? "" : model)
+                .append("\nendpoint=").append(endpoint == null ? "" : endpoint);
+        if (durationMs >= 0) {
+            builder.append("\ndurationMs=").append(durationMs);
+        }
+        return builder.toString();
+    }
+
+    private static long elapsedMs(long startedAt) {
+        return Math.max(0, System.currentTimeMillis() - startedAt);
     }
 
     private String deterministicPreflightMetadata() {

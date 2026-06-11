@@ -42,6 +42,15 @@ public class AgentServiceRetryPolicyTest {
     }
 
     @Test
+    public void cloudAiMetadataIncludesCallDuration() {
+        String metadata = AgentService.cloudAiMetadataForTest("deepseek", "deepseek-v4-pro", "https://api.deepseek.com", 1234);
+
+        assertTrue(metadata.contains("provider=deepseek"));
+        assertTrue(metadata.contains("model=deepseek-v4-pro"));
+        assertTrue(metadata.contains("durationMs=1234"));
+    }
+
+    @Test
     public void taskOperationsLogIncludesRetryContextWhenPresent() {
         String request = AgentService.taskOperationsRequestForAiLogForTest(
                 "# Plan",
