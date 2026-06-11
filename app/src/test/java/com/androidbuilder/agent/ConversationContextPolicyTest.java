@@ -20,6 +20,8 @@ public class ConversationContextPolicyTest {
     @Test
     public void isStatusChatterMatchesTimelinePolicyRules() {
         assertTrue(ConversationContextPolicy.isStatusChatter("assistant", "Executing next step: build login"));
+        assertTrue(ConversationContextPolicy.isStatusChatter("assistant", "Executing next parallel batch: A, B"));
+        assertTrue(ConversationContextPolicy.isStatusChatter("assistant", "并行执行下一批：A、B"));
         assertTrue(ConversationContextPolicy.isStatusChatter("assistant", "构建完成：成功，APK 已生成。"));
         assertFalse(ConversationContextPolicy.isStatusChatter("assistant", "Build complete: failed. javac error"));
         assertFalse(ConversationContextPolicy.isStatusChatter("user", "Executing next step: anything I typed"));

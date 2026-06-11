@@ -43,6 +43,7 @@ public final class ConversationContextPolicy {
         }
         // Per-task execute chatter.
         return text.contains("Executing next step:") || text.contains("执行下一步：") ||
+                text.contains("Executing next parallel batch:") || text.contains("并行执行下一批：") ||
                 text.contains("Done: ") || text.contains("已完成：") ||
                 text.contains("All plan tasks are done") || text.contains("所有计划任务已完成") ||
                 text.contains("Split into implementation tasks") || text.contains("已拆分为执行任务");

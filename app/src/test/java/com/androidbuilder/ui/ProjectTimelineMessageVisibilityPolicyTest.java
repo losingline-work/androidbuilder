@@ -23,7 +23,9 @@ public class ProjectTimelineMessageVisibilityPolicyTest {
     @Test
     public void hidesExecuteAndDoneAndSplitChatter() {
         assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Executing next step: Build login screen"));
+        assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Executing next parallel batch: Build login screen, Wire settings"));
         assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "执行下一步：搭建登录页"));
+        assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "并行执行下一批：搭建登录页、接入设置页"));
         assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "Done: Build login screen. Continue with the next step."));
         assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "已完成：搭建登录页。可以继续执行下一步。"));
         assertTrue(ProjectTimelineMessageVisibilityPolicy.isChatter("assistant", "All plan tasks are done. Next, build the project."));
