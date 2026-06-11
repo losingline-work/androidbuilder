@@ -13,7 +13,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 public final class HermesMergeCoordinator {
     private HermesMergeCoordinator() {
@@ -43,7 +42,7 @@ public final class HermesMergeCoordinator {
 
     public static MergeResult merge(File canonicalSource, List<HermesAgentResult> results) throws Exception {
         MergePlan plan = plan(results);
-        String snapshot = sourceSnapshot(canonicalSource);
+        String snapshot = readNamespaceSource(canonicalSource);
         FileOperationsWriter writer = new FileOperationsWriter();
         List<HermesAgentResult> merged = new ArrayList<>();
         List<FailedResult> failed = new ArrayList<>(plan.failedResults);
@@ -155,71 +154,22 @@ public final class HermesMergeCoordinator {
         });
     }
 
-    private static String sourceSnapshot(File sourceDir) throws IOException {
+    private static String readNamespaceSource(File sourceDir) throws IOException {
         if (sourceDir == null || !sourceDir.exists()) {
             return "";
         }
-        File root = sourceDir.getCanonicalFile();
-        Map<String, File> files = new TreeMap<>();
-        collectSnapshotFiles(root, root, files);
-        StringBuilder snapshot = new StringBuilder();
-        for (Map.Entry<String, File> entry : files.entrySet()) {
-            snapshot.append("\n// ").append(entry.getKey()).append("\n");
-            snapshot.append(FileUtils.readText(entry.getValue())).append('\n');
+        String groovy = readTextIfFile(new File(sourceDir, "app/build.gradle"));
+        if (!groovy.isEmpty()) {
+            return groovy;
         }
-        return snapshot.toString();
+        return readTextIfFile(new File(sourceDir, "app/build.gradle.kts"));
     }
 
-    private static void collectSnapshotFiles(File root, File file, Map<String, File> files) throws IOException {
-        if (file == null || !file.exists() || !isWithinRoot(root, file)) {
-            return;
-        }
-        String relative = relativePath(root, file);
-        if (isExcluded(relative)) {
-            return;
-        }
-        if (file.isFile()) {
-            files.put(relative, file.getCanonicalFile());
-            return;
-        }
-        if (!file.isDirectory()) {
-            return;
-        }
-        File[] children = file.listFiles();
-        if (children == null) {
-            return;
-        }
-        for (File child : children) {
-            collectSnapshotFiles(root, child.getCanonicalFile(), files);
-        }
-    }
-
-    private static boolean isExcluded(String relativePath) {
-        if (relativePath == null || relativePath.isEmpty()) {
-            return false;
-        }
-        String[] segments = relativePath.split("/");
-        for (String segment : segments) {
-            if (".gradle".equals(segment) || "build".equals(segment) || ".DS_Store".equals(segment)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static String relativePath(File root, File file) throws IOException {
-        String rootPath = root.getCanonicalPath();
-        String filePath = file.getCanonicalPath();
-        if (filePath.equals(rootPath)) {
+    private static String readTextIfFile(File file) throws IOException {
+        if (file == null || !file.isFile()) {
             return "";
         }
-        return filePath.substring(rootPath.length() + 1).replace(File.separatorChar, '/');
-    }
-
-    private static boolean isWithinRoot(File root, File file) throws IOException {
-        String rootPath = root.getCanonicalPath();
-        String filePath = file.getCanonicalPath();
-        return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
+        return FileUtils.readText(file);
     }
 
     private static String taskLabel(HermesAgentResult result) {

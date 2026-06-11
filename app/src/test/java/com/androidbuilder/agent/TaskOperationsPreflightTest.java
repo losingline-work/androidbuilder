@@ -108,6 +108,21 @@ public class TaskOperationsPreflightTest {
     }
 
     @Test
+    public void rewritesSubpackageJavaWhenKtsNamespaceUsesEquals() {
+        String snapshot = "--- app/build.gradle.kts ---\nandroid { namespace = \"com.generated.app\" }\n";
+        TaskOperations operations = ops(new FileOperation("write", "app/src/main/java/com/generated/app/ui/MainActivity.java",
+                "package com.generated.app.ui;\n"
+                        + "public class MainActivity {\n"
+                        + "  Class<?> rClass() { return R.class; }\n"
+                        + "}\n"));
+
+        HermesReview review = TaskOperationsPreflight.review(operations, snapshot);
+
+        assertEquals(HermesReview.Decision.REWRITE, review.decision);
+        assertTrue(review.summary.contains("missing R import"));
+    }
+
+    @Test
     public void okWhenXmlJavaAndResourcesAreConsistent() {
         TaskOperations operations = new TaskOperations("focused", java.util.Arrays.asList(
                 new FileOperation("write", "app/src/main/res/values/strings.xml",

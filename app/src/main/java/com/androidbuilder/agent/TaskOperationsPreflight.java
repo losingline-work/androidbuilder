@@ -22,7 +22,7 @@ import javax.xml.parsers.ParserConfigurationException;
 final class TaskOperationsPreflight {
     // Only flags an absurd batch; foundational tasks legitimately touch many files.
     private static final int MAX_OPERATIONS_PER_TASK = 30;
-    private static final Pattern NAMESPACE_PATTERN = Pattern.compile("namespace\\s+[\"']([^\"']+)[\"']");
+    private static final Pattern NAMESPACE_PATTERN = Pattern.compile("namespace\\s*(?:=\\s*)?[\"']([^\"']+)[\"']");
     private static final Pattern PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([a-zA-Z_][\\w]*(?:\\.[a-zA-Z_][\\w]*)*)\\s*;");
     private static final Pattern DOCTYPE_PATTERN = Pattern.compile("<!DOCTYPE\\b", Pattern.CASE_INSENSITIVE);
     // Bare project R reference: an "R." not preceded by an identifier char or dot, so android.R.* and

@@ -72,6 +72,27 @@ public class HermesMergeCoordinatorTest {
     }
 
     @Test
+    public void mergePreflightIgnoresNamespaceMentionOutsideGradleFiles() throws Exception {
+        File source = temporaryFolder.newFolder("source");
+        FileUtils.writeText(new File(source, "docs/notes.txt"), "namespace \"com.generated.app\"\n");
+        HermesAgentResult result = resultWithOperation(
+                1,
+                "app/src/main/java/com/generated/app/ui/MainActivity.java",
+                new FileOperation("write", "app/src/main/java/com/generated/app/ui/MainActivity.java",
+                        "package com.generated.app.ui;\n"
+                                + "public class MainActivity {\n"
+                                + "  Class<?> rClass() { return R.class; }\n"
+                                + "}\n"));
+
+        HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(source, Collections.singletonList(result));
+
+        assertTrue(merge.success);
+        assertEquals(1, merge.mergedResults.size());
+        assertEquals(0, merge.failedResults.size());
+        assertTrue(new File(source, "app/src/main/java/com/generated/app/ui/MainActivity.java").isFile());
+    }
+
+    @Test
     public void contractRejectionOnlyFailsOffendingResult() throws Exception {
         File source = temporaryFolder.newFolder("source");
         HermesAgentResult rejected = resultWithContract(
