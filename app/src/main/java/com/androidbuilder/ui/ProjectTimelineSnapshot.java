@@ -43,15 +43,18 @@ final class ProjectTimelineSnapshot {
         Map<Long, BuildJobRecord> buildJobsById = resolveLinkedBuildJobs(safeMessages, resolver);
         List<Long> linkedBuildJobIds = new ArrayList<>();
         List<Boolean> visible = new ArrayList<>();
+        List<Boolean> planCards = new ArrayList<>();
         for (ChatMessage message : safeMessages) {
             BuildJobRecord job = message.linkedBuildJobId == null ? null : buildJobsById.get(message.linkedBuildJobId);
             linkedBuildJobIds.add(ProjectBuildLogVisibilityPolicy.shouldShow(job, message.content) ? message.linkedBuildJobId : null);
             visible.add(!ProjectTimelineMessageVisibilityPolicy.isChatter(message.role, message.content));
+            planCards.add(PlanCardSummaryPolicy.isPlanMessage(message.content));
         }
         List<ProjectTimelinePolicy.Entry> entries = ProjectTimelinePolicy.entries(
                 safeMessages.size(),
                 linkedBuildJobIds,
                 visible,
+                planCards,
                 taskAnchorIndex(safeMessages, tasks),
                 showOperationStatus,
                 plan,

@@ -152,6 +152,10 @@
     <string name="generate">生成计划</string>
     <string name="execute_plan">执行计划</string>
     <string name="plan_tasks">计划任务</string>
+    <string name="engineering_plan">工程计划</string>
+    <string name="plan_card_icon">计</string>
+    <string name="expand_plan">展开计划</string>
+    <string name="collapse_plan">收起计划</string>
     <string name="task_card_title">计划任务</string>
     <string name="task_card_summary">共 %1$d 项 · 已完成 %2$d · 失败 %3$d</string>
     <string name="task_card_summary_running">共 %1$d 项 · 已完成 %2$d · 失败 %3$d · 正在执行第 %4$d 项</string>

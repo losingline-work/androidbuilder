@@ -78,6 +78,7 @@ public class ProjectActivity extends BaseActivity {
     private final List<AiConversationRecord> aiLogRecords = new ArrayList<>();
     private final List<ProjectLogEntry> logEntries = new ArrayList<>();
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
+    private final Set<Long> expandedPlanMessageIds = new HashSet<>();
     private final Set<Long> expandedBuildLogJobIds = new HashSet<>();
     private boolean tasksCollapsed = ProjectTaskListDisplayPolicy.defaultCollapsed();
     private TimelineAdapter adapter;
@@ -514,7 +515,9 @@ public class ProjectActivity extends BaseActivity {
                     .show();
             return;
         }
-        int messageIndex = entry.kind == ProjectTimelinePolicy.Kind.MESSAGE ? entry.sourceIndex : -1;
+        int messageIndex = entry.kind == ProjectTimelinePolicy.Kind.MESSAGE || entry.kind == ProjectTimelinePolicy.Kind.PLAN_CARD
+                ? entry.sourceIndex
+                : -1;
         if (messageIndex >= 0 && messageIndex < messages.size()) {
             ChatMessage message = messages.get(messageIndex);
             new MaterialAlertDialogBuilder(this)
@@ -1415,6 +1418,7 @@ public class ProjectActivity extends BaseActivity {
         private static final int TYPE_STATUS = 1;
         private static final int TYPE_TASK = 2;
         private static final int TYPE_BUILD_LOG = 3;
+        private static final int TYPE_PLAN_CARD = 4;
         private ProjectTimelineSnapshot snapshot = ProjectTimelineSnapshot.empty();
 
         TimelineAdapter() {
@@ -1448,7 +1452,8 @@ public class ProjectActivity extends BaseActivity {
             if (entry == null) {
                 return null;
             }
-            if (entry.kind == ProjectTimelinePolicy.Kind.MESSAGE && entry.sourceIndex >= 0 && entry.sourceIndex < messages.size()) {
+            if ((entry.kind == ProjectTimelinePolicy.Kind.MESSAGE || entry.kind == ProjectTimelinePolicy.Kind.PLAN_CARD)
+                    && entry.sourceIndex >= 0 && entry.sourceIndex < messages.size()) {
                 return messages.get(entry.sourceIndex);
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.TASK_GROUP) {
@@ -1469,6 +1474,9 @@ public class ProjectActivity extends BaseActivity {
             if (entry.kind == ProjectTimelinePolicy.Kind.MESSAGE && entry.sourceIndex >= 0 && entry.sourceIndex < messages.size()) {
                 return messages.get(entry.sourceIndex).id;
             }
+            if (entry.kind == ProjectTimelinePolicy.Kind.PLAN_CARD) {
+                return -2000 - entry.sourceIndex;
+            }
             if (entry.kind == ProjectTimelinePolicy.Kind.TASK_GROUP) {
                 return -2;
             }
@@ -1483,7 +1491,7 @@ public class ProjectActivity extends BaseActivity {
 
         @Override
         public int getViewTypeCount() {
-            return 4;
+            return 5;
         }
 
         @Override
@@ -1500,6 +1508,9 @@ public class ProjectActivity extends BaseActivity {
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
                 return TYPE_BUILD_LOG;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.PLAN_CARD) {
+                return TYPE_PLAN_CARD;
             }
             return TYPE_MESSAGE;
         }
@@ -1518,6 +1529,9 @@ public class ProjectActivity extends BaseActivity {
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
                 return bindBuildLog(entry, convertView, parent);
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.PLAN_CARD) {
+                return bindPlanCard(entry, convertView, parent);
             }
             return bindMessage(entry, convertView, parent);
         }
@@ -1550,6 +1564,36 @@ public class ProjectActivity extends BaseActivity {
             ((TextView) view.findViewById(R.id.messageRole)).setText(message.role.toUpperCase());
             ((TextView) view.findViewById(R.id.messageTime)).setText(messageTimeText(message));
             ((TextView) view.findViewById(R.id.messageContent)).setText(message.content);
+            return view;
+        }
+
+        private View bindPlanCard(ProjectTimelinePolicy.Entry entry, View convertView, ViewGroup parent) {
+            View view = convertView == null ? getLayoutInflater().inflate(R.layout.row_plan_card, parent, false) : convertView;
+            ChatMessage message = messages.get(entry.sourceIndex);
+            boolean expanded = expandedPlanMessageIds.contains(message.id);
+            ((TextView) view.findViewById(R.id.planTitle)).setText(R.string.engineering_plan);
+            ((TextView) view.findViewById(R.id.planTime)).setText(messageTimeText(message));
+            ((TextView) view.findViewById(R.id.planSummary)).setText(
+                    PlanCardSummaryPolicy.summary(message.content, AppSettings.isChinese(ProjectActivity.this)));
+            TextView content = view.findViewById(R.id.planContent);
+            content.setText(message.content);
+            content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            TextView toggle = view.findViewById(R.id.planToggleButton);
+            toggle.setText(expanded ? R.string.collapse_plan : R.string.expand_plan);
+            View copy = view.findViewById(R.id.planCopyButton);
+            copy.setOnClickListener(v -> copyText(getString(R.string.engineering_plan), message.content));
+            View.OnClickListener toggleListener = v -> {
+                if (expandedPlanMessageIds.contains(message.id)) {
+                    expandedPlanMessageIds.remove(message.id);
+                } else {
+                    expandedPlanMessageIds.add(message.id);
+                }
+                if (adapter != null) {
+                    adapter.notifyDataSetChanged();
+                }
+            };
+            toggle.setOnClickListener(toggleListener);
+            view.setOnClickListener(toggleListener);
             return view;
         }
 

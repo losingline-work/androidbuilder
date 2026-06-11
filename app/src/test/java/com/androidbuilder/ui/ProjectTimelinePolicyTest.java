@@ -135,6 +135,63 @@ public class ProjectTimelinePolicyTest {
     }
 
     @Test
+    public void planMessagesRenderAsPlanCards() {
+        List<ProjectTimelinePolicy.Entry> entries = ProjectTimelinePolicy.entries(
+                2,
+                Arrays.asList(null, null),
+                Arrays.asList(true, true),
+                Arrays.asList(false, true),
+                0,
+                false,
+                null,
+                Collections.emptyList(),
+                null,
+                false);
+
+        assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, entries.get(0).kind);
+        assertEquals(ProjectTimelinePolicy.Kind.PLAN_CARD, entries.get(1).kind);
+        assertEquals(1, entries.get(1).sourceIndex);
+    }
+
+    @Test
+    public void ordinaryMessagesRemainMessagesWhenPlanFlagsAreFalse() {
+        List<ProjectTimelinePolicy.Entry> entries = ProjectTimelinePolicy.entries(
+                1,
+                Collections.singletonList(null),
+                Collections.singletonList(true),
+                Collections.singletonList(false),
+                0,
+                false,
+                null,
+                Collections.emptyList(),
+                null,
+                false);
+
+        assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, entries.get(0).kind);
+    }
+
+    @Test
+    public void planCardDoesNotBreakBuildLogAnchoring() {
+        List<ProjectTimelinePolicy.Entry> entries = ProjectTimelinePolicy.entries(
+                3,
+                Arrays.asList(null, 7L, 7L),
+                Arrays.asList(true, true, false),
+                Arrays.asList(true, false, false),
+                0,
+                false,
+                null,
+                Collections.emptyList(),
+                null,
+                false);
+
+        assertEquals(ProjectTimelinePolicy.Kind.PLAN_CARD, entries.get(0).kind);
+        assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, entries.get(1).kind);
+        assertEquals(ProjectTimelinePolicy.Kind.BUILD_LOG, entries.get(2).kind);
+        assertEquals(2, entries.get(2).sourceIndex);
+        assertEquals(3, entries.size());
+    }
+
+    @Test
     public void nullVisibilityShowsEveryMessage() {
         List<ProjectTimelinePolicy.Entry> entries = ProjectTimelinePolicy.entries(
                 3,

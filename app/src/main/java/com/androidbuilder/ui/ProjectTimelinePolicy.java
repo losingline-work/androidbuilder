@@ -12,6 +12,7 @@ import java.util.Map;
 public final class ProjectTimelinePolicy {
     public enum Kind {
         MESSAGE,
+        PLAN_CARD,
         OPERATION_STATUS,
         TASK_GROUP,
         BUILD_LOG
@@ -34,6 +35,20 @@ public final class ProjectTimelinePolicy {
             int messageCount,
             List<Long> linkedBuildJobIds,
             List<Boolean> messageVisible,
+            int taskAnchorIndex,
+            boolean showOperationStatus,
+            ProjectPlanRecord plan,
+            List<ProjectTaskRecord> tasks,
+            BuildJobRecord latestJob,
+            boolean buildLogVisible) {
+        return entries(messageCount, linkedBuildJobIds, messageVisible, null, taskAnchorIndex, showOperationStatus, plan, tasks, latestJob, buildLogVisible);
+    }
+
+    public static List<Entry> entries(
+            int messageCount,
+            List<Long> linkedBuildJobIds,
+            List<Boolean> messageVisible,
+            List<Boolean> messagePlanCards,
             int taskAnchorIndex,
             boolean showOperationStatus,
             ProjectPlanRecord plan,
@@ -65,7 +80,10 @@ public final class ProjectTimelinePolicy {
             }
             boolean visible = messageVisible == null || i >= messageVisible.size() || messageVisible.get(i);
             if (visible) {
-                entries.add(new Entry(Kind.MESSAGE, i));
+                boolean planCard = messagePlanCards != null
+                        && i < messagePlanCards.size()
+                        && Boolean.TRUE.equals(messagePlanCards.get(i));
+                entries.add(new Entry(planCard ? Kind.PLAN_CARD : Kind.MESSAGE, i));
             }
             Long buildJobId = linkedBuildJobIds != null && i < linkedBuildJobIds.size() ? linkedBuildJobIds.get(i) : null;
             if (buildJobId != null && Integer.valueOf(i).equals(lastMessageIndexByJob.get(buildJobId))) {

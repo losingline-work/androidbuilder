@@ -152,6 +152,10 @@
     <string name="generate">Generate Plan</string>
     <string name="execute_plan">Execute Plan</string>
     <string name="plan_tasks">Plan Tasks</string>
+    <string name="engineering_plan">Engineering Plan</string>
+    <string name="plan_card_icon">P</string>
+    <string name="expand_plan">Expand Plan</string>
+    <string name="collapse_plan">Collapse Plan</string>
     <string name="task_card_title">Plan Tasks</string>
     <string name="task_card_summary">%1$d tasks · %2$d done · %3$d failed</string>
     <string name="task_card_summary_running">%1$d tasks · %2$d done · %3$d failed · running %4$d</string>

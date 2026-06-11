@@ -34,7 +34,7 @@ public class ProjectTimelineSnapshotTest {
 
         assertEquals(4, snapshot.size());
         assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, snapshot.entryAt(0).kind);
-        assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, snapshot.entryAt(1).kind);
+        assertEquals(ProjectTimelinePolicy.Kind.PLAN_CARD, snapshot.entryAt(1).kind);
         assertEquals(ProjectTimelinePolicy.Kind.TASK_GROUP, snapshot.entryAt(2).kind);
         assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, snapshot.entryAt(3).kind);
         assertEquals(2, snapshot.entryAt(3).sourceIndex);
