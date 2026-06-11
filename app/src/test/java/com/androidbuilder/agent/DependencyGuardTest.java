@@ -97,9 +97,28 @@ public class DependencyGuardTest {
         DependencyGuard guard = new DependencyGuard(BuildBackendSettings.DEPENDENCY_ONLINE, new File("missing"));
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
-                guard.validateContent("app/build.gradle", "dependencies { implementation \"com.squareup.retrofit2:retrofit:2.11.0\" }"));
+                guard.validateContent("app/build.gradle", "dependencies { implementation \"com.jakewharton.timber:timber:5.0.1\" }"));
 
-        assertTrue(error.getMessage().startsWith("Dependency policy blocked unapproved online Maven dependency: com.squareup.retrofit2:retrofit:2.11.0"));
+        assertTrue(error.getMessage().startsWith("Dependency policy blocked unapproved online Maven dependency: com.jakewharton.timber:timber:5.0.1"));
+    }
+
+    @Test
+    public void onlineAllowsCatalogedCapabilityLibrariesIncludingJitpack() {
+        DependencyGuard guard = new DependencyGuard(BuildBackendSettings.DEPENDENCY_ONLINE, new File("missing"));
+
+        guard.validateContent("app/build.gradle",
+                "dependencies { implementation \"com.github.PhilJay:MPAndroidChart:v3.1.0\"; "
+                        + "implementation \"com.squareup.retrofit2:retrofit:2.11.0\" }");
+    }
+
+    @Test
+    public void rejectionOfOffCatalogChartLibrarySuggestsCatalogSubstitute() {
+        DependencyGuard guard = new DependencyGuard(BuildBackendSettings.DEPENDENCY_ONLINE, new File("missing"));
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                guard.validateContent("app/build.gradle", "dependencies { implementation \"com.example.charts:fancychart:1.0.0\" }"));
+
+        assertTrue(error.getMessage().contains("MPAndroidChart"));
     }
 
     @Test

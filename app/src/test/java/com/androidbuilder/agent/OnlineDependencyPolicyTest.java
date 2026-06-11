@@ -31,9 +31,19 @@ public class OnlineDependencyPolicyTest {
 
     @Test
     public void untrustedGroupsRejected() {
-        assertFalse(OnlineDependencyPolicy.isApproved("com.squareup.retrofit2", "retrofit", "2.11.0"));
-        assertFalse(OnlineDependencyPolicy.isApproved("com.squareup.okhttp3", "okhttp", "4.12.0"));
-        assertFalse(OnlineDependencyPolicy.isApproved("io.reactivex.rxjava3", "rxjava", "3.1.9"));
+        // Untrusted group, not cataloged.
+        assertFalse(OnlineDependencyPolicy.isApproved("com.jakewharton.timber", "timber", "5.0.1"));
+        // Cataloged artifact but the wrong (non-verified) version is still rejected.
+        assertFalse(OnlineDependencyPolicy.isApproved("com.github.bumptech.glide", "glide", "4.15.0"));
+        // Different group from the cataloged rxjava3.
+        assertFalse(OnlineDependencyPolicy.isApproved("io.reactivex.rxjava2", "rxjava", "2.2.21"));
+    }
+
+    @Test
+    public void catalogedCapabilityLibrariesApproved() {
+        assertTrue(OnlineDependencyPolicy.isApproved("com.github.PhilJay", "MPAndroidChart", "v3.1.0"));
+        assertTrue(OnlineDependencyPolicy.isApproved("com.squareup.retrofit2", "retrofit", "2.11.0"));
+        assertTrue(OnlineDependencyPolicy.isApproved("io.reactivex.rxjava3", "rxjava", "3.1.9"));
     }
 
     @Test

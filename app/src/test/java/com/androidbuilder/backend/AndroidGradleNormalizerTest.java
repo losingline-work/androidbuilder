@@ -137,4 +137,32 @@ public class AndroidGradleNormalizerTest {
         assertTrue(normalized.contains("gradlePluginPortal()"));
         assertTrue(normalized.contains("include ':app'"));
     }
+
+    @Test
+    public void settingsRepositoriesGetJitpackAppendedLast() {
+        String normalized = AndroidGradleNormalizer.ensureSettingsPluginManagement(
+                "pluginManagement { repositories { google(); mavenCentral() } }\n" +
+                        "dependencyResolutionManagement { repositories { google(); mavenCentral() } }\n" +
+                        "include ':app'\n");
+
+        assertTrue(normalized.contains("https://jitpack.io"));
+        // JitPack must come AFTER the declared official repos so it is only consulted on misses.
+        int dependencyBlock = normalized.indexOf("dependencyResolutionManagement");
+        int mavenCentralInDeps = normalized.indexOf("mavenCentral()", dependencyBlock);
+        int jitpackInDeps = normalized.indexOf("https://jitpack.io", dependencyBlock);
+        assertTrue(jitpackInDeps > mavenCentralInDeps);
+    }
+
+    @Test
+    public void jitpackIsNotDuplicatedWhenAlreadyDeclared() {
+        String normalized = AndroidGradleNormalizer.ensureSettingsPluginManagement(
+                "pluginManagement { repositories { google() } }\n" +
+                        "dependencyResolutionManagement { repositories { google(); maven { url 'https://jitpack.io' } } }\n" +
+                        "include ':app'\n");
+
+        int first = normalized.indexOf("dependencyResolutionManagement");
+        String depsBlock = normalized.substring(first);
+        int occurrences = depsBlock.split("jitpack\\.io", -1).length - 1;
+        assertTrue(occurrences == 1);
+    }
 }

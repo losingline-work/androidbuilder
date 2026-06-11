@@ -112,6 +112,31 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 return;
             }
 
+            // Online mode: resolve third-party dependencies first, so a bad coordinate fails in
+            // seconds with a clean, classifiable error instead of burning a full build.
+            if (BuildBackendSettings.DEPENDENCY_ONLINE.equals(BuildBackendSettings.dependencyMode(context))
+                    && projectUsesExternalDependencies(sourceWorkDir)) {
+                File resolveScript = dependencyResolutionPreflightScript(sourceWorkDir);
+                FileUtils.appendText(log, "Resolving third-party dependencies before the full build...\n");
+                ProcessResult resolve = runCommand(sourceWorkDir, log, listener, job,
+                        gradle.getAbsolutePath(),
+                        "--init-script", resolveScript.getAbsolutePath(),
+                        "--no-daemon", "--console=plain",
+                        "abResolveDebugDeps");
+                if (resolve.exitCode != 0) {
+                    boolean timeout = resolve.exitCode == 124;
+                    String error = summarizeFailure(timeout
+                            ? "dependency resolution timed out"
+                            : "dependency_resolution_failed: a declared dependency could not be resolved from the configured repositories", resolve);
+                    FileUtils.appendText(log, error + "\n");
+                    repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "dependency_resolution_failed", log.getAbsolutePath(), null, error, job.retryCount);
+                    repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                    listener.onJobChanged(job.projectId, job.id);
+                    return;
+                }
+                FileUtils.appendText(log, "Dependency resolution OK.\n");
+            }
+
             List<String> buildArgs = new ArrayList<>();
             buildArgs.add(gradle.getAbsolutePath());
             if (initScript != null) {
@@ -220,6 +245,27 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         File rootBuild = new File(sourceWorkDir, "build.gradle");
         String existing = rootBuild.exists() ? FileUtils.readText(rootBuild) : "";
         FileUtils.writeText(rootBuild, AndroidGradleNormalizer.ensureRootAndroidApplicationPlugin(existing));
+    }
+
+    /**
+     * Registers a cheap task that resolves the app's debug runtime classpath. Running it before
+     * assembleDebug surfaces "Could not find group:artifact:version" within seconds, which the
+     * failure classifier maps to a model-repairable dependency substitution.
+     */
+    private File dependencyResolutionPreflightScript(File sourceWorkDir) throws Exception {
+        File init = new File(sourceWorkDir, "androidbuilder-resolve-deps.gradle");
+        FileUtils.writeText(init,
+                "allprojects { project ->\n" +
+                        "    project.tasks.register('abResolveDebugDeps') {\n" +
+                        "        doLast {\n" +
+                        "            def configuration = project.configurations.findByName('debugRuntimeClasspath')\n" +
+                        "            if (configuration != null) {\n" +
+                        "                configuration.resolvedConfiguration.rethrowFailure()\n" +
+                        "            }\n" +
+                        "        }\n" +
+                        "    }\n" +
+                        "}\n");
+        return init;
     }
 
     private File dependencyInitScript(File sourceWorkDir) throws Exception {

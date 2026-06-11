@@ -65,12 +65,49 @@ public final class CapabilityAnalyzer {
     }
 
     private static boolean addRiskIfPresent(String value, List<String> risks, String keyword, String risk) {
-        if (!value.contains(keyword)) {
+        if (!hasActionableMention(value, keyword)) {
             return false;
         }
         if (!risks.contains(risk)) {
             risks.add(risk);
         }
         return true;
+    }
+
+    private static boolean hasActionableMention(String value, String keyword) {
+        String[] sections = value.split("[\\n\\.。;；]");
+        for (String section : sections) {
+            if (section.contains(keyword) && !isRejectionOrFallback(section)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isRejectionOrFallback(String section) {
+        String text = section == null ? "" : section.toLowerCase(Locale.ROOT);
+        return text.contains("do not")
+                || text.contains("don't")
+                || text.contains("dont")
+                || text.contains("not use")
+                || text.contains("never use")
+                || text.contains("without")
+                || text.contains("avoid")
+                || text.contains("forbid")
+                || text.contains("prohibit")
+                || text.contains("instead")
+                || text.contains("fallback")
+                || text.contains("fall back")
+                || text.contains("禁止")
+                || text.contains("不要")
+                || text.contains("不使用")
+                || text.contains("不用")
+                || text.contains("避免")
+                || text.contains("禁用")
+                || text.contains("不得")
+                || text.contains("不能使用")
+                || text.contains("改用")
+                || text.contains("替代")
+                || text.contains("降级为");
     }
 }

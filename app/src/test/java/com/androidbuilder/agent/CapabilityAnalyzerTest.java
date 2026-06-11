@@ -32,6 +32,17 @@ public class CapabilityAnalyzerTest {
     }
 
     @Test
+    public void offlineSafeAllowsPlansThatRejectExternalLibraries() {
+        CapabilityAssessment assessment = CapabilityAnalyzer.assess(
+                "Use Android SDK Java XML and SQLiteOpenHelper. Do not use Room, Compose, Material, Retrofit, OkHttp, Glide, ViewBinding, or DataBinding.",
+                BuildBackendSettings.DEPENDENCY_OFFLINE_SAFE,
+                false);
+
+        assertFalse(assessment.blocksExecution());
+        assertTrue(assessment.message(false).contains("Low risk"));
+    }
+
+    @Test
     public void localCacheWarnsWhenCacheIsMissing() {
         CapabilityAssessment assessment = CapabilityAnalyzer.assess(
                 "Use Material components for polished settings screens.",

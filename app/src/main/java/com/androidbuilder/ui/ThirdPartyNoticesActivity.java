@@ -11,7 +11,6 @@ public class ThirdPartyNoticesActivity extends BaseActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_third_party_notices);
-        applySystemBarPadding();
         MaterialToolbar toolbar = findViewById(R.id.noticesToolbar);
         toolbar.setNavigationOnClickListener(v -> finish());
         ((TextView) findViewById(R.id.noticesText)).setText(R.string.third_party_notices_body);

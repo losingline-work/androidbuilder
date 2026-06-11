@@ -4,7 +4,6 @@
     <string name="app_tagline">Ship small Android apps from a local workspace</string>
     <string name="project_workspace">Project Workspace</string>
     <string name="model_configuration">Model Configuration</string>
-    <string name="local_guard_assistant">Local AI Assistant</string>
     <string name="runtime_configuration">Runtime Configuration</string>
     <string name="compatibility_mode">Compatibility Mode</string>
     <string name="build_log">Build Log</string>
@@ -15,6 +14,10 @@
     <string name="build_waiting">Preparing build...</string>
     <string name="conversation">Conversation</string>
     <string name="copy_log">Copy Log</string>
+    <string name="export_log">Export Log</string>
+    <string name="export_log_saved">Log saved.</string>
+    <string name="export_log_unavailable">Log file is not available.</string>
+    <string name="export_log_failed">Export failed: %1$s</string>
     <string name="expand_log">Expand Log</string>
     <string name="collapse_log">Collapse Log</string>
     <string name="copy_message">Copy</string>
@@ -25,7 +28,7 @@
     <string name="status">Status</string>
     <string name="source_files">Source Files</string>
     <string name="log_query">AI Conversation Logs</string>
-    <string name="search_logs">Search user, cloud model, and local model conversations</string>
+    <string name="search_logs">Search user, cloud model, and diagnostic logs</string>
     <string name="log_query_count">%1$d of %2$d records</string>
     <string name="log_query_empty">No logs matched.</string>
     <string name="log_type_ai">AI conversation</string>
@@ -38,6 +41,7 @@
     <string name="empty_directory">This directory is empty.</string>
     <string name="no_build_log">No build log yet.</string>
     <string name="no_source_files">Generate source first.</string>
+    <string name="build_missing_required_file">Project is incomplete — missing %1$s. Finish generating the project before building.</string>
     <string name="file_too_large">File is too large to preview.</string>
     <string name="binary_file">This file is not a text file.</string>
     <string name="file_items">%1$d items</string>
@@ -67,22 +71,6 @@
     <string name="offline_maven_ready">%1$d local Maven artifacts ready at %2$s</string>
     <string name="offline_maven_imported">Offline Maven cache imported.</string>
     <string name="offline_maven_import_failed">Offline Maven import failed: %1$s</string>
-    <string name="local_guard_enabled">Enable local AI assistant</string>
-    <string name="local_guard_hint">Runs a user-imported GGUF model on-device. Its main job is build-log triage: turning a failed build log into a focused repair instruction for the cloud model. Higher modes also add advisory review hints. The deterministic source guard still makes the final decision.</string>
-    <string name="local_guard_mode">Local AI assistance</string>
-    <string name="local_guard_mode_off">Off</string>
-    <string name="local_guard_mode_policy_error_only">Build triage + policy-error hints</string>
-    <string name="local_guard_mode_preflight_and_policy_error">Build triage + preflight + policy-error hints</string>
-    <string name="import_local_guard_model">Import GGUF model</string>
-    <string name="remove_local_guard_model">Remove local model</string>
-    <string name="local_guard_no_model">No GGUF model imported. Builds still repair using the deterministic instructions, just without local triage.</string>
-    <string name="local_guard_native_unavailable">Local Guard unavailable on this build/device. v1 requires the packaged arm64 llama.cpp runtime.</string>
-    <string name="local_guard_ready">%1$s (%2$s) · %3$s</string>
-    <string name="local_guard_enabled_status">enabled</string>
-    <string name="local_guard_disabled_status">disabled</string>
-    <string name="local_guard_model_imported">Local guard model imported.</string>
-    <string name="local_guard_model_import_failed">Local guard model import failed: %1$s</string>
-    <string name="local_guard_model_removed">Local guard model removed.</string>
     <string name="api_key_hint">API key</string>
     <string name="endpoint_preset">Endpoint Region</string>
     <string name="endpoint_preset_custom">Custom endpoint</string>
@@ -134,9 +122,16 @@
     <string name="foreground_work_building">Building the APK...</string>
     <string name="search_projects">Search projects</string>
     <string name="new_project">New Project</string>
+    <string name="new_project_dialog_subtitle">Start with a clear requirement. Android Builder will create the plan and source workspace.</string>
     <string name="project_name">Project name</string>
+    <string name="project_name_helper">Optional. Leave blank to generate a name from the requirement.</string>
     <string name="package_name_optional">Package name (optional)</string>
+    <string name="package_name_helper">Optional. Use a value like com.example.app, or let the app generate one.</string>
     <string name="initial_requirement">Initial requirement</string>
+    <string name="initial_requirement_helper">Describe the app, main screens, data, and any must-have behavior.</string>
+    <string name="plan_preferences">Plan Preferences</string>
+    <string name="confirm_risky_plan_choices">Ask before risky or dependency-sensitive choices</string>
+    <string name="confirm_risky_plan_choices_helper">When a feature needs external services, permissions, hardware, or dependencies outside the current mode, the plan will list a Pending User Choices section instead of silently choosing a blocked route.</string>
     <string name="create">Create</string>
     <string name="cancel">Cancel</string>
     <string name="save">Save</string>
@@ -158,6 +153,8 @@
     <string name="expand_tasks">Expand</string>
     <string name="interrupted_work_error">The app was closed before this work finished. Retry from this step.</string>
     <string name="interrupted_work_recovered">Recovered an interrupted task from the last session. It has been marked retryable.</string>
+    <string name="interrupted_work_rebuild_prompt">A build was interrupted. Build again when ready; no background work was resumed automatically.</string>
+    <string name="interrupted_work_repair_prompt">A repair or code-generation run was interrupted. Review the last task, then continue or repair again.</string>
     <string name="show_source_files">Show Source Files</string>
     <string name="hide_source_files">Hide Source Files</string>
     <string name="no_plan_tasks">No plan tasks yet. Execute next step to split the plan.</string>
@@ -181,6 +178,8 @@
     <string name="repair_build_failed">Repair failed: %1$s</string>
     <string name="repair_build_not_model_repairable">This failure needs environment, dependency, or build backend changes before source repair.</string>
     <string name="install">Install</string>
+    <string name="hermes_decisions">Hermes</string>
+    <string name="hermes_decisions_empty">No Hermes decisions yet.</string>
     <string name="install_success">APK installed.</string>
     <string name="install_failed">Install failed: %1$s</string>
     <string name="install_permission_required">Allow installs, then tap Install again.</string>
@@ -218,5 +217,5 @@
     <string name="termux_permission_denied">Permission denied. Open this app permissions and enable “Run commands in Termux environment”.</string>
     <string name="termux_overlay_required">Enable “Display over other apps” for Termux, then return and tap setup again.</string>
     <string name="termux_help">Termux setup:\n\nThere are two different permissions:\n\n1. Android Builder needs “Run commands in Termux environment”. This belongs to Android Builder, not Termux. Tap “Request Termux command permission” if you cannot find it in system settings. On some OPPO/ColorOS devices this custom permission is hidden; use the ADB permission command fallback.\n\n2. Termux needs “Display over other apps” so it can start terminal sessions from the background.\n\nTermux itself cannot be silently installed on normal Android. First install Termux, open it once, then enable external commands:\n   mkdir -p ~/.termux\n   echo allow-external-apps=true >> ~/.termux/termux.properties\nRestart Termux.\n\nAfter that, tap Run Termux Setup. The Copy buttons are fallback options.</string>
-    <string name="third_party_notices_body">Android Builder includes an embedded runtime integration point designed for GPLv3-compatible Termux components.\n\nTermux app: GPLv3-only. Source: https://github.com/termux/termux-app\nTermux packages: https://github.com/termux/termux-packages\nterminal-emulator and terminal-view notices must be preserved if their code is bundled.\n\nIf this APK is distributed with Termux GPLv3 code or binaries, distribute the corresponding source code, license text, copyright notices, and any local modifications under GPLv3 terms.\n\nThe embedded backend creates a private runtime layout under files/runtime. Bootstrap zip layout may contain usr/bin, usr/android-sdk, home, or direct bin/android-sdk entries; they are installed into the private runtime.\n\nLocal Guard Assistant uses llama.cpp / ggml native runtime integration. llama.cpp and ggml are MIT licensed. Source: https://github.com/ggml-org/llama.cpp. Android Builder does not distribute model weights; users import their own GGUF model files and are responsible for model licenses.</string>
+    <string name="third_party_notices_body">Android Builder includes an embedded runtime integration point designed for GPLv3-compatible Termux components.\n\nTermux app: GPLv3-only. Source: https://github.com/termux/termux-app\nTermux packages: https://github.com/termux/termux-packages\nterminal-emulator and terminal-view notices must be preserved if their code is bundled.\n\nIf this APK is distributed with Termux GPLv3 code or binaries, distribute the corresponding source code, license text, copyright notices, and any local modifications under GPLv3 terms.\n\nThe embedded backend creates a private runtime layout under files/runtime. Bootstrap zip layout may contain usr/bin, usr/android-sdk, home, or direct bin/android-sdk entries; they are installed into the private runtime.</string>
 </resources>

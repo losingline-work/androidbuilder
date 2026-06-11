@@ -5,6 +5,7 @@ import com.androidbuilder.model.TaskOperations;
 
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
@@ -44,6 +45,47 @@ public class LocalGuardHeuristicsTest {
         assertEquals(LocalGuardResult.Decision.REWRITE, result.decision);
         assertTrue(result.additionalInstruction.contains("R.drawable.ic_food"));
         assertTrue(result.additionalInstruction.contains("app/src/main/res/drawable/ic_food.xml"));
+    }
+
+    @Test
+    public void preflightCatchesMissingXmlValueResourceBeforeWrite() {
+        TaskOperations operations = new TaskOperations(
+                "Add tab indicator",
+                Collections.singletonList(new FileOperation(
+                        "write",
+                        "app/src/main/res/drawable/tab_indicator.xml",
+                        "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\">"
+                                + "<solid android:color=\"@color/tab_selected\"/>"
+                                + "</shape>")));
+
+        LocalGuardResult result = LocalGuardHeuristics.reviewOperations("", operations);
+
+        assertTrue(result.usable);
+        assertEquals(LocalGuardResult.Decision.REWRITE, result.decision);
+        assertTrue(result.additionalInstruction.contains("@color/tab_selected"));
+        assertTrue(result.additionalInstruction.contains("tab_indicator.xml"));
+        assertTrue(result.additionalInstruction.contains("app/src/main/res/values/colors.xml"));
+    }
+
+    @Test
+    public void preflightAcceptsXmlValueResourceAddedInSameOperations() {
+        TaskOperations operations = new TaskOperations(
+                "Add tab indicator",
+                Arrays.asList(
+                        new FileOperation(
+                                "write",
+                                "app/src/main/res/drawable/tab_indicator.xml",
+                                "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\">"
+                                        + "<solid android:color=\"@color/tab_selected\"/>"
+                                        + "</shape>"),
+                        new FileOperation(
+                                "write",
+                                "app/src/main/res/values/colors.xml",
+                                "<resources><color name=\"tab_selected\">#2196F3</color></resources>")));
+
+        LocalGuardResult result = LocalGuardHeuristics.reviewOperations("", operations);
+
+        assertTrue(result.summary, !result.usable);
     }
 
     @Test
@@ -93,6 +135,18 @@ public class LocalGuardHeuristicsTest {
         assertTrue(result.additionalInstruction.contains("R.drawable.ic_food"));
         assertTrue(result.additionalInstruction.contains("IconRes.java"));
         assertTrue(result.additionalInstruction.contains("app/src/main/res/drawable/ic_food.xml"));
+    }
+
+    @Test
+    public void policyFailureFastHintForMissingXmlColorKeepsExactResource() {
+        LocalGuardResult result = LocalGuardHeuristics.rewritePolicyFailure(
+                "Generated source policy blocked missing XML resource reference: @color/primary in styles.xml.");
+
+        assertTrue(result.usable);
+        assertEquals(LocalGuardResult.Decision.REWRITE, result.decision);
+        assertTrue(result.additionalInstruction.contains("@color/primary"));
+        assertTrue(result.additionalInstruction.contains("styles.xml"));
+        assertTrue(result.additionalInstruction.contains("app/src/main/res/values/colors.xml"));
     }
 
     private static int count(String text, String pattern) {

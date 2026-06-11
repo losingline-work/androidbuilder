@@ -20,6 +20,14 @@ public class TaskOperationsPromptPolicyTest {
     }
 
     @Test
+    public void taskOperationsPromptAllowsSmallBatchesForCoarseResourcePhases() {
+        String prompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(prompt.contains("Simple tasks should still prefer one or two file operations"));
+        assertTrue(prompt.contains("resource or layout phase may return a small cohesive batch"));
+    }
+
+    @Test
     public void promptsCallOutCommonGeneratedJavaApiMismatches() {
         String projectPrompt = OpenAiClient.projectFilesSystemPromptForTest(false);
         String taskPrompt = OpenAiClient.taskOperationsSystemPromptForTest(false);

@@ -37,7 +37,6 @@ public class SourceFilesActivity extends BaseActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_source_files);
-        applySystemBarPadding();
         MaterialToolbar toolbar = findViewById(R.id.sourceToolbar);
         toolbar.setNavigationOnClickListener(v -> finish());
         repository = ((AndroidBuilderApp) getApplication()).repository();

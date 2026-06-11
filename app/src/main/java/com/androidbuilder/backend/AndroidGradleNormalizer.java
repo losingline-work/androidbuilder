@@ -96,7 +96,7 @@ final class AndroidGradleNormalizer {
         } else {
             normalized = ensureBlockHasRepositories(normalized, "pluginManagement", PLUGIN_REPOSITORIES);
         }
-        return ensureMirrorRepositories(normalized);
+        return ensureJitpackRepository(ensureMirrorRepositories(normalized));
     }
 
     static String normalizeJvmTargets(String build, boolean kotlinDsl) {
@@ -179,6 +179,41 @@ final class AndroidGradleNormalizer {
             if (!block.contains("maven.aliyun.com")) {
                 String insertion = " " + MIRROR_REPOSITORIES + " ";
                 output.insert(braceIndex + 1, insertion);
+                endIndex += insertion.length();
+            }
+            searchFrom = endIndex + 1;
+        }
+        return output.toString();
+    }
+
+    /**
+     * Appends JitPack as the LAST repository in every repositories block that lacks it, so it is
+     * only consulted for artifacts the mirrors and official repos cannot serve (e.g. catalog
+     * entries under com.github.* such as MPAndroidChart). Last position keeps the common
+     * androidx/material resolution path free of extra JitPack round-trips.
+     */
+    private static String ensureJitpackRepository(String text) {
+        StringBuilder output = new StringBuilder(text);
+        int searchFrom = 0;
+        while (searchFrom < output.length()) {
+            int repositoriesIndex = indexOfBlockName(output, "repositories", searchFrom);
+            if (repositoriesIndex < 0) {
+                break;
+            }
+            int braceIndex = nextNonWhitespace(output, repositoriesIndex + "repositories".length());
+            if (braceIndex < 0 || output.charAt(braceIndex) != '{') {
+                searchFrom = repositoriesIndex + "repositories".length();
+                continue;
+            }
+            int endIndex = matchingBrace(output, braceIndex);
+            if (endIndex < 0) {
+                searchFrom = repositoriesIndex + "repositories".length();
+                continue;
+            }
+            String block = output.substring(braceIndex + 1, endIndex);
+            if (!block.contains("jitpack.io")) {
+                String insertion = " maven { url 'https://jitpack.io' }; ";
+                output.insert(endIndex, insertion);
                 endIndex += insertion.length();
             }
             searchFrom = endIndex + 1;

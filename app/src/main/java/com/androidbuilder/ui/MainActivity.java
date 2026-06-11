@@ -10,12 +10,16 @@ import android.widget.*;
 import androidx.appcompat.app.AlertDialog;
 import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
+import com.androidbuilder.agent.PlanConstraintComposer;
 import com.androidbuilder.agent.OpenAiClient;
+import com.androidbuilder.backend.BuildBackendSettings;
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.model.ProjectRecord;
+import com.androidbuilder.util.AppSettings;
 import com.androidbuilder.util.NameUtils;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.textfield.TextInputLayout;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,7 +37,6 @@ public class MainActivity extends BaseActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        applySystemBarPadding();
         repository = ((AndroidBuilderApp) getApplication()).repository();
         adapter = new ProjectAdapter();
         ListView list = findViewById(R.id.projectList);
@@ -86,31 +89,46 @@ public class MainActivity extends BaseActivity {
                     .show();
             return;
         }
-        LinearInputs inputs = new LinearInputs(this, getString(R.string.project_name), getString(R.string.package_name_optional),
-                getString(R.string.initial_requirement));
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_new_project, null, false);
+        EditText projectNameInput = dialogView.findViewById(R.id.projectNameInput);
+        EditText packageNameInput = dialogView.findViewById(R.id.packageNameInput);
+        EditText initialRequirementInput = dialogView.findViewById(R.id.initialRequirementInput);
+        TextView planDependencyModeSummaryText = dialogView.findViewById(R.id.planDependencyModeSummaryText);
+        CheckBox confirmRiskyPlanChoicesInput = dialogView.findViewById(R.id.confirmRiskyPlanChoicesInput);
+        TextInputLayout packageNameLayout = dialogView.findViewById(R.id.packageNameLayout);
+        TextInputLayout initialRequirementLayout = dialogView.findViewById(R.id.initialRequirementLayout);
+        String dependencyMode = BuildBackendSettings.dependencyMode(this);
+        boolean offlineCacheAvailable = PlanConstraintComposer.offlineCacheAvailable(BuildBackendSettings.offlineMavenDir(this));
+        planDependencyModeSummaryText.setText(PlanConstraintComposer.dependencyModeSummary(
+                dependencyMode,
+                offlineCacheAvailable,
+                AppSettings.isChinese(this)));
+        confirmRiskyPlanChoicesInput.setChecked(BuildBackendSettings.confirmRiskyPlanChoices(this));
         AlertDialog dialog = new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.new_project)
-                .setView(inputs.view)
+                .setView(dialogView)
                 .setPositiveButton(R.string.create, null)
                 .setNegativeButton(R.string.cancel, null)
                 .create();
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String prompt = inputs.third.getText().toString().trim();
+            packageNameLayout.setError(null);
+            initialRequirementLayout.setError(null);
+            String prompt = initialRequirementInput.getText().toString().trim();
             if (prompt.isEmpty()) {
-                Toast.makeText(this, R.string.requirement_required, Toast.LENGTH_SHORT).show();
+                initialRequirementLayout.setError(getString(R.string.requirement_required));
                 return;
             }
-            String name = inputs.first.getText().toString().trim();
+            String name = projectNameInput.getText().toString().trim();
             if (name.isEmpty()) {
                 name = NameUtils.projectNameFromPrompt(prompt);
             }
-            String packageName = inputs.second.getText().toString().trim();
+            String packageName = packageNameInput.getText().toString().trim();
             if (packageName.isEmpty()) {
                 packageName = NameUtils.packageNameFromProject(name);
             } else if (!NameUtils.isPackageName(packageName)) {
-                inputs.second.setError(getString(R.string.invalid_package_name));
+                packageNameLayout.setError(getString(R.string.invalid_package_name));
                 return;
             }
+            BuildBackendSettings.setConfirmRiskyPlanChoices(this, confirmRiskyPlanChoicesInput.isChecked());
             ProjectRecord project = repository.createProject(name, packageName, prompt);
             dialog.dismiss();
             openProject(project, prompt);

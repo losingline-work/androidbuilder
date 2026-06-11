@@ -5,6 +5,7 @@ import java.util.regex.Pattern;
 
 final class PolicyRewriteInstruction {
     private static final Pattern MISSING_DRAWABLE = Pattern.compile("missing drawable resource:\\s*R\\.drawable\\.([A-Za-z_][A-Za-z0-9_]*)\\s+in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MISSING_XML_RESOURCE = Pattern.compile("missing XML resource reference:\\s*@([a-z]+)/([A-Za-z_][A-Za-z0-9_.]*)\\s+in\\s+([A-Za-z0-9_.$-]+\\.xml)", Pattern.CASE_INSENSITIVE);
 
     private PolicyRewriteInstruction() {
     }
@@ -68,7 +69,8 @@ final class PolicyRewriteInstruction {
             instruction.append("\nDo not use -> anywhere in the returned file contents.");
         }
         if (message.contains("online Maven dependency") || message.contains("dynamic Maven version")) {
-            instruction.append("\nFor online dependency mode, only add Maven coordinates from trusted groups (" + OnlineDependencyPolicy.trustedGroupsSummary() + ") with an exact pinned version such as 1.2.3.");
+            instruction.append("\nFor online dependency mode, use the verified catalog coordinates when the feature needs a library: " + DependencyCatalog.coordinatesSummary() + ".");
+            instruction.append("\nOther coordinates are only allowed from trusted groups (" + OnlineDependencyPolicy.trustedGroupsSummary() + ") with an exact pinned version such as 1.2.3.");
             instruction.append("\nRemove version ranges and + wildcards, and remove Compose, Room, Hilt, Dagger, any *-compiler annotation processor, and any Gradle plugin other than com.android.application. Prefer the Android SDK and plain Java/XML when a dependency is not essential.");
         }
         if (message.contains("missing XML resource reference")) {
@@ -82,8 +84,27 @@ final class PolicyRewriteInstruction {
         if (message.contains("missing ") && message.contains("resource")) {
             instruction.append("\nFor every R.* or XML resource reference, make sure the referenced resource exists after your operations are applied.");
         }
+        appendMissingXmlResourceHint(instruction, message);
         appendMissingDrawableHint(instruction, message);
         return instruction.toString();
+    }
+
+    private static void appendMissingXmlResourceHint(StringBuilder instruction, String message) {
+        Matcher matcher = MISSING_XML_RESOURCE.matcher(message == null ? "" : message);
+        if (!matcher.find()) {
+            return;
+        }
+        String type = matcher.group(1);
+        String name = matcher.group(2);
+        String file = matcher.group(3);
+        instruction.append("\n")
+                .append(file)
+                .append(" references @")
+                .append(type)
+                .append("/")
+                .append(name)
+                .append(", but that resource does not exist. ")
+                .append(xmlResourceFixInstruction(type, name, file));
     }
 
     private static void appendMissingDrawableHint(StringBuilder instruction, String message) {
@@ -102,5 +123,38 @@ final class PolicyRewriteInstruction {
                 .append(".xml as a valid vector/shape drawable resource, or change ")
                 .append(file)
                 .append(" to reference an existing drawable. If IconRes.java maps multiple built-in icon names, add every mapped drawable resource in the same response.");
+    }
+
+    private static String xmlResourceFixInstruction(String type, String name, String file) {
+        if ("color".equals(type)) {
+            return "In the next operations, either add app/src/main/res/values/colors.xml with <color name=\"" + name
+                    + "\">...</color> (or add that entry to the existing colors.xml), or change " + file
+                    + " to reference an existing @color resource.";
+        }
+        if ("string".equals(type)) {
+            return "In the next operations, either add app/src/main/res/values/strings.xml with <string name=\"" + name
+                    + "\">...</string> (or add that entry to the existing strings.xml), or change " + file
+                    + " to reference an existing @string resource.";
+        }
+        if ("style".equals(type)) {
+            return "In the next operations, either add app/src/main/res/values/styles.xml with <style name=\"" + name
+                    + "\">...</style> (or add that entry to the existing styles.xml), or change " + file
+                    + " to reference an existing @style resource.";
+        }
+        if ("layout".equals(type)) {
+            return "In the next operations, either add app/src/main/res/layout/" + name + ".xml, or change "
+                    + file + " to reference an existing @layout resource.";
+        }
+        if ("drawable".equals(type)) {
+            return "In the next operations, either add app/src/main/res/drawable/" + name
+                    + ".xml as a valid vector/shape drawable, or change " + file
+                    + " to reference an existing @drawable resource.";
+        }
+        if ("mipmap".equals(type)) {
+            return "In the next operations, either add app/src/main/res/mipmap/" + name + ".xml, or change "
+                    + file + " to reference an existing @mipmap resource.";
+        }
+        return "In the next operations, add the missing @" + type + "/" + name + " resource, or change "
+                + file + " to reference an existing resource.";
     }
 }

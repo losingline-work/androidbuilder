@@ -103,6 +103,19 @@ public class PolicyRewriteInstructionTest {
     }
 
     @Test
+    public void missingXmlColorPolicyErrorProducesExactValuesHint() {
+        String instruction = PolicyRewriteInstruction.create(
+                "Add add screen",
+                "Generated source policy blocked missing XML resource reference: @color/primary in styles.xml.",
+                3);
+
+        assertTrue(instruction.contains("@color/primary"));
+        assertTrue(instruction.contains("styles.xml"));
+        assertTrue(instruction.contains("app/src/main/res/values/colors.xml"));
+        assertTrue(instruction.contains("<color name=\"primary\">"));
+    }
+
+    @Test
     public void missingDrawablePolicyErrorProducesExactDrawableHint() {
         String instruction = PolicyRewriteInstruction.create(
                 "Add icon resolver",

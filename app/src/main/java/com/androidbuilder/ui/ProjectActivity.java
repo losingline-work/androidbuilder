@@ -3,6 +3,8 @@ package com.androidbuilder.ui;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -26,6 +28,7 @@ import com.androidbuilder.R;
 import com.androidbuilder.agent.AgentService;
 import com.androidbuilder.agent.BuildFailureClassifier;
 import com.androidbuilder.agent.BuildLogContextExtractor;
+import com.androidbuilder.agent.HermesRecoveryPolicy;
 import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.backend.BuildBackend;
 import com.androidbuilder.backend.BuildBackendFactory;
@@ -47,6 +50,8 @@ import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -62,6 +67,7 @@ public class ProjectActivity extends BaseActivity {
     private static final int BUILD_LOG_INLINE_LIMIT = 9000;
     private static final int BUILD_LOG_CONTEXT_RADIUS = 2500;
     private static final int LOG_RESULT_PREVIEW_LIMIT = 420;
+    private static final int REQUEST_SAVE_LOG_FILE = 7101;
 
     private AppRepository repository;
     private AgentService agentService;
@@ -73,7 +79,7 @@ public class ProjectActivity extends BaseActivity {
     private final List<ProjectLogEntry> logEntries = new ArrayList<>();
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedBuildLogJobIds = new HashSet<>();
-    private boolean tasksCollapsed;
+    private boolean tasksCollapsed = ProjectTaskListDisplayPolicy.defaultCollapsed();
     private TimelineAdapter adapter;
     private FileAdapter fileAdapter;
     private LogQueryAdapter logQueryAdapter;
@@ -84,6 +90,7 @@ public class ProjectActivity extends BaseActivity {
     private TextView status;
     private TextView currentPathText;
     private TextView logResultCount;
+    private View exportLogsButton;
     private EditText promptInput;
     private EditText logSearchInput;
     private View projectContent;
@@ -103,6 +110,7 @@ public class ProjectActivity extends BaseActivity {
     private ProjectPlanRecord latestPlan;
     private File sourceRoot;
     private File currentSourceDir;
+    private File pendingSaveLogFile;
     private final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.getDefault());
     private final SimpleDateFormat fileTimeFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault());
     private final Handler elapsedHandler = new Handler(Looper.getMainLooper());
@@ -121,7 +129,6 @@ public class ProjectActivity extends BaseActivity {
         super.onCreate(savedInstanceState);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);
         setContentView(R.layout.activity_project);
-        applySystemBarPadding();
         projectToolbar = findViewById(R.id.projectToolbar);
         projectToolbar.setNavigationOnClickListener(v -> finish());
         projectToolbar.inflateMenu(R.menu.menu_project);
@@ -151,6 +158,7 @@ public class ProjectActivity extends BaseActivity {
         currentPathText = findViewById(R.id.currentPathText);
         logSearchInput = findViewById(R.id.logSearchInput);
         logResultCount = findViewById(R.id.logResultCount);
+        exportLogsButton = findViewById(R.id.exportLogsButton);
         adapter = new TimelineAdapter();
         messageList = findViewById(R.id.messageList);
         messageList.setAdapter(adapter);
@@ -185,10 +193,12 @@ public class ProjectActivity extends BaseActivity {
         fileDrawerScrim.setOnClickListener(v -> closeDrawers());
         findViewById(R.id.closeFilesButton).setOnClickListener(v -> closeFileBrowser());
         findViewById(R.id.closeLogsButton).setOnClickListener(v -> closeLogQuery());
+        exportLogsButton.setOnClickListener(v -> exportProjectLogs());
         findViewById(R.id.executePlanButton).setOnClickListener(v -> executePlan());
         findViewById(R.id.buildButton).setOnClickListener(v -> buildLatest());
         findViewById(R.id.repairButton).setOnClickListener(v -> repairLatest());
         findViewById(R.id.installButton).setOnClickListener(v -> installLatest());
+        findViewById(R.id.hermesDecisionsButton).setOnClickListener(v -> showHermesDecisions());
         buildServer = new LocalBuildServer(repository, (p, j) -> runOnUiThread(() -> {
             refresh();
         }));
@@ -210,9 +220,34 @@ public class ProjectActivity extends BaseActivity {
         if (ActiveWorkRegistry.isActive(projectId)) {
             return;
         }
+        ProjectPlanRecord plan = repository.latestProjectPlan(projectId);
+        BuildJobRecord job = repository.latestBuildJob(projectId);
+        HermesRecoveryPolicy.Decision decision = HermesRecoveryPolicy.decide(
+                plan == null ? "" : plan.status,
+                job == null ? "" : job.status,
+                hasRunningTask());
         if (repository.recoverInterruptedWork(projectId, getString(R.string.interrupted_work_error))) {
-            repository.addMessage(projectId, "assistant", getString(R.string.interrupted_work_recovered), null);
+            repository.addMessage(projectId, "assistant", recoveryMessage(decision), null);
         }
+    }
+
+    private boolean hasRunningTask() {
+        for (ProjectTaskRecord task : repository.listProjectTasks(projectId)) {
+            if ("running".equals(task.status)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String recoveryMessage(HermesRecoveryPolicy.Decision decision) {
+        if (decision != null && decision.action == HermesRecoveryPolicy.Action.SHOW_REBUILD_PROMPT) {
+            return getString(R.string.interrupted_work_rebuild_prompt);
+        }
+        if (decision != null && decision.action == HermesRecoveryPolicy.Action.SHOW_REPAIR_PROMPT) {
+            return getString(R.string.interrupted_work_repair_prompt);
+        }
+        return getString(R.string.interrupted_work_recovered);
     }
 
     @Override
@@ -221,11 +256,28 @@ public class ProjectActivity extends BaseActivity {
         if (buildServer != null) {
             buildServer.stop();
         }
-        if (agentService != null) {
-            agentService.release();
-        }
         clearKeepScreenOn();
         elapsedHandler.removeCallbacks(elapsedTicker);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_SAVE_LOG_FILE) {
+            return;
+        }
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            clearPendingSaveLog();
+            return;
+        }
+        try {
+            writePendingLogTo(data.getData());
+            Toast.makeText(this, R.string.export_log_saved, Toast.LENGTH_SHORT).show();
+        } catch (Exception error) {
+            Toast.makeText(this, getString(R.string.export_log_failed, error.getMessage()), Toast.LENGTH_LONG).show();
+        } finally {
+            clearPendingSaveLog();
+        }
     }
 
     @Override
@@ -441,7 +493,19 @@ public class ProjectActivity extends BaseActivity {
         }
         if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
             BuildJobRecord job = buildLogJob(entry);
-            copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job));
+            if (!ProjectLogExportPolicy.canExportBuildLog(job)) {
+                copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job));
+                return;
+            }
+            new MaterialAlertDialogBuilder(this)
+                    .setItems(new CharSequence[]{getString(R.string.copy_log), getString(R.string.export_log)}, (dialog, which) -> {
+                        if (which == 0) {
+                            copyText(getString(R.string.build_log), readBuildLogPreview(job));
+                        } else {
+                            exportBuildLog(job);
+                        }
+                    })
+                    .show();
             return;
         }
         int messageIndex = entry.kind == ProjectTimelinePolicy.Kind.MESSAGE ? entry.sourceIndex : -1;
@@ -481,6 +545,76 @@ public class ProjectActivity extends BaseActivity {
         Toast.makeText(this, getString(R.string.copied, label), Toast.LENGTH_SHORT).show();
     }
 
+    private void exportBuildLog(BuildJobRecord job) {
+        if (!ProjectLogExportPolicy.canExportBuildLog(job)) {
+            Toast.makeText(this, R.string.export_log_unavailable, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            File exportFile = prepareBuildLogExportFile(job);
+            requestSaveLogFile(exportFile, ProjectLogExportPolicy.buildLogExportName(job));
+        } catch (Exception error) {
+            Toast.makeText(this, getString(R.string.export_log_failed, error.getMessage()), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void exportProjectLogs() {
+        if (logResults.isEmpty()) {
+            Toast.makeText(this, R.string.log_query_empty, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            File exportFile = prepareProjectLogsExportFile();
+            requestSaveLogFile(exportFile, ProjectLogExportPolicy.projectLogExportName(projectId));
+        } catch (Exception error) {
+            Toast.makeText(this, getString(R.string.export_log_failed, error.getMessage()), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void requestSaveLogFile(File exportFile, String name) {
+        pendingSaveLogFile = exportFile;
+        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType(ProjectLogExportPolicy.exportMimeType(name))
+                .putExtra(Intent.EXTRA_TITLE, name);
+        startActivityForResult(save, REQUEST_SAVE_LOG_FILE);
+    }
+
+    private void writePendingLogTo(Uri target) throws Exception {
+        if (pendingSaveLogFile == null || !pendingSaveLogFile.isFile()) {
+            throw new IllegalStateException(getString(R.string.export_log_unavailable));
+        }
+        try (FileInputStream in = new FileInputStream(pendingSaveLogFile);
+             OutputStream out = getContentResolver().openOutputStream(target)) {
+            if (out == null) {
+                throw new IllegalStateException("Cannot open destination");
+            }
+            FileUtils.copy(in, out);
+        }
+    }
+
+    private void clearPendingSaveLog() {
+        pendingSaveLogFile = null;
+    }
+
+    private File prepareBuildLogExportFile(BuildJobRecord job) throws Exception {
+        File exportDir = exportLogCacheDir();
+        File exportFile = new File(exportDir, ProjectLogExportPolicy.buildLogExportName(job));
+        FileUtils.copyRecursively(new File(job.logsPath), exportFile);
+        return exportFile;
+    }
+
+    private File prepareProjectLogsExportFile() throws Exception {
+        File exportDir = exportLogCacheDir();
+        File exportFile = new File(exportDir, ProjectLogExportPolicy.projectLogExportName(projectId));
+        FileUtils.writeText(exportFile, ProjectLogExportPolicy.projectLogsExportText(logResults));
+        return exportFile;
+    }
+
+    private File exportLogCacheDir() {
+        return new File(getCacheDir(), "log-exports");
+    }
+
     private void rebuildLogEntries() {
         logEntries.clear();
         for (AiConversationRecord record : repository.listAiConversations(projectId)) {
@@ -504,6 +638,43 @@ public class ProjectActivity extends BaseActivity {
                     ? getString(R.string.log_query_empty)
                     : getString(R.string.log_query_count, logResults.size(), logEntries.size()));
         }
+        if (exportLogsButton != null) {
+            exportLogsButton.setEnabled(!logResults.isEmpty());
+        }
+    }
+
+    private void showHermesDecisions() {
+        List<HermesDecisionTimelineItem> items = HermesDecisionTimelinePolicy.fromRecords(repository.listAiConversations(projectId));
+        if (items.isEmpty()) {
+            Toast.makeText(this, R.string.hermes_decisions_empty, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        StringBuilder text = new StringBuilder();
+        for (HermesDecisionTimelineItem item : items) {
+            if (text.length() > 0) {
+                text.append("\n\n");
+            }
+            text.append(timeFormat.format(new Date(item.createdAt)))
+                    .append(" · ")
+                    .append(item.role.isEmpty() ? "hermes" : item.role)
+                    .append(" · ")
+                    .append(item.phase.isEmpty() ? "event" : item.phase)
+                    .append("\n")
+                    .append(item.decision.isEmpty() ? "event" : item.decision);
+            if (!item.summary.isEmpty()) {
+                text.append("\n").append(item.summary);
+            }
+        }
+        TextView content = new TextView(this);
+        content.setText(text.toString());
+        content.setTextIsSelectable(true);
+        content.setPadding(dp(20), dp(8), dp(20), dp(8));
+        content.setMovementMethod(new ScrollingMovementMethod());
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.hermes_decisions)
+                .setView(content)
+                .setPositiveButton(R.string.close, null)
+                .show();
     }
 
     private ProjectLogEntry messageLogEntry(ChatMessage message) {
@@ -750,6 +921,11 @@ public class ProjectActivity extends BaseActivity {
     private void buildLatest() {
         if (!hasSourceFiles()) {
             Toast.makeText(this, R.string.generate_source_first, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String missingRequired = com.androidbuilder.agent.FileOperationsWriter.firstMissingRequiredProjectFile(sourceRoot);
+        if (missingRequired != null) {
+            Toast.makeText(this, getString(R.string.build_missing_required_file, missingRequired), Toast.LENGTH_LONG).show();
             return;
         }
         if (buildServer == null) {
@@ -1375,13 +1551,34 @@ public class ProjectActivity extends BaseActivity {
             view.setOnClickListener(toggleListener);
 
             container.removeAllViews();
-            container.setVisibility(tasksCollapsed ? View.GONE : View.VISIBLE);
-            if (!tasksCollapsed) {
-                for (int i = 0; i < taskItems.size(); i++) {
-                    container.addView(taskRowView(taskItems.get(i), i));
+            if (tasksCollapsed) {
+                List<ProjectTaskRecord> visibleTasks = ProjectTaskListDisplayPolicy.visibleTasks(taskItems, true);
+                container.setVisibility(visibleTasks.isEmpty() ? View.GONE : View.VISIBLE);
+                for (ProjectTaskRecord task : visibleTasks) {
+                    container.addView(taskRowView(task, taskItems.indexOf(task)));
+                }
+            } else {
+                container.setVisibility(View.VISIBLE);
+                for (ProjectTaskListDisplayPolicy.Group group : ProjectTaskListDisplayPolicy.groups(taskItems, false)) {
+                    container.addView(taskPhaseHeaderView(group));
+                    for (ProjectTaskRecord task : group.tasks) {
+                        container.addView(taskRowView(task, taskItems.indexOf(task)));
+                    }
                 }
             }
             return view;
+        }
+
+        private View taskPhaseHeaderView(ProjectTaskListDisplayPolicy.Group group) {
+            TextView header = new TextView(ProjectActivity.this);
+            header.setText(group.label + " · " + group.tasks.size());
+            header.setTextSize(12);
+            header.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            header.setTextColor(getResources().getColor(R.color.colorPrimary));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.setMargins(0, dp(12), 0, dp(2));
+            header.setLayoutParams(params);
+            return header;
         }
 
         private View taskRowView(ProjectTaskRecord task, int index) {
@@ -1564,16 +1761,20 @@ public class ProjectActivity extends BaseActivity {
             TextView title = view.findViewById(R.id.buildLogTitle);
             TextView content = view.findViewById(R.id.buildLogContent);
             View copyButton = view.findViewById(R.id.buildLogCopyButton);
+            View exportButton = view.findViewById(R.id.buildLogExportButton);
             TextView toggleButton = view.findViewById(R.id.buildLogToggleButton);
+            boolean canExport = ProjectLogExportPolicy.canExportBuildLog(job);
             boolean expanded = job != null && expandedBuildLogJobIds.contains(job.id);
             boolean showContent = ProjectBuildLogExpansionPolicy.shouldShowContent(job, expanded);
             boolean showToggle = ProjectBuildLogExpansionPolicy.shouldShowToggle(job);
             title.setText(buildLogTitleText(job));
             progress.setVisibility(running ? View.VISIBLE : View.GONE);
-            content.setText(showContent ? (job == null || job.logsPath == null ? getString(R.string.no_build_log) : readBuildLogPreview(job)) : "");
+            content.setText(showContent ? (canExport ? readBuildLogPreview(job) : getString(R.string.no_build_log)) : "");
             content.setVisibility(showContent ? View.VISIBLE : View.GONE);
-            copyButton.setEnabled(job != null && job.logsPath != null);
+            copyButton.setEnabled(canExport);
             copyButton.setOnClickListener(v -> copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job)));
+            exportButton.setEnabled(canExport);
+            exportButton.setOnClickListener(v -> exportBuildLog(job));
             toggleButton.setVisibility(showToggle ? View.VISIBLE : View.GONE);
             toggleButton.setText(expanded ? R.string.collapse_log : R.string.expand_log);
             toggleButton.setOnClickListener(v -> {

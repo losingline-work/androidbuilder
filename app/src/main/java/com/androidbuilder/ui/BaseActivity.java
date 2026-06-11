@@ -2,7 +2,6 @@ package com.androidbuilder.ui;
 
 import android.content.Context;
 import android.os.Bundle;
-import android.view.View;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -33,21 +32,4 @@ public abstract class BaseActivity extends AppCompatActivity {
         }
     }
 
-    protected void applySystemBarPadding() {
-        View content = findViewById(android.R.id.content);
-        if (content == null) {
-            return;
-        }
-        View root = content.getRootView();
-        root.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(
-                    insets.getSystemWindowInsetLeft(),
-                    0,
-                    insets.getSystemWindowInsetRight(),
-                    insets.getSystemWindowInsetBottom()
-            );
-            return insets;
-        });
-        root.requestApplyInsets();
-    }
 }

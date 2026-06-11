@@ -9,6 +9,7 @@ public final class BuildFailureClassifier {
         RESOURCE_LINKING,
         DEPENDENCY_POLICY,
         DEPENDENCY_NETWORK,
+        DEPENDENCY_UNRESOLVABLE,
         DEPENDENCY_CONFLICT,
         BUILD_TIMEOUT,
         RUNTIME_ENVIRONMENT,
@@ -49,6 +50,11 @@ public final class BuildFailureClassifier {
         }
         if (containsAny(text, "checkdebugduplicateclasses", "duplicate class kotlin.", "kotlin-stdlib-jdk8")) {
             return new Result(Kind.DEPENDENCY_CONFLICT, false);
+        }
+        // Network causes are excluded above, so a remaining "could not find" means the coordinate
+        // does not exist in the configured repositories: the model can remove or substitute it.
+        if (containsAny(text, "dependency_resolution_failed", "could not find ")) {
+            return new Result(Kind.DEPENDENCY_UNRESOLVABLE, true);
         }
         if (containsAny(text, "dependency policy blocked", "could not resolve all files", "failed to transform", "could not download")) {
             return new Result(Kind.DEPENDENCY_POLICY, true);

@@ -78,6 +78,27 @@ public class BuildFailureClassifierTest {
     }
 
     @Test
+    public void unresolvableCoordinatesAreModelRepairable() {
+        BuildFailureClassifier.Result result = BuildFailureClassifier.classify(
+                "dependency_resolution_failed",
+                "Could not find com.github.PhilJay:MPAndroidChart:v3.0.0.\nSearched in the following locations: ...");
+
+        assertEquals(BuildFailureClassifier.Kind.DEPENDENCY_UNRESOLVABLE, result.kind);
+        assertTrue(result.repairableByModel);
+    }
+
+    @Test
+    public void networkOutweighsUnresolvableWhenBothPresent() {
+        // A connection timeout is a network problem, not a "wrong coordinate" problem.
+        BuildFailureClassifier.Result result = BuildFailureClassifier.classify(
+                "embedded_runtime_finished",
+                "Could not find com.squareup.okhttp3:okhttp:3.12.13. Connect timed out");
+
+        assertEquals(BuildFailureClassifier.Kind.DEPENDENCY_NETWORK, result.kind);
+        assertFalse(result.repairableByModel);
+    }
+
+    @Test
     public void javacSymbolErrorsAreModelRepairable() {
         BuildFailureClassifier.Result result = BuildFailureClassifier.classify(
                 "embedded_runtime_finished",

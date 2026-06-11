@@ -76,13 +76,15 @@ public class DependencyGuard {
             }
             if (BuildBackendSettings.DEPENDENCY_ONLINE.equals(mode) && !OnlineDependencyPolicy.isApproved(group, name, version)) {
                 String coordinate = group + ":" + name + ":" + version;
+                String advice = DependencyCatalog.substituteAdvice(group, name);
+                String adviceSuffix = advice.isEmpty() ? "" : " " + advice;
                 if (!OnlineDependencyPolicy.isPinnedVersion(version)) {
-                    throw new IllegalArgumentException("Dependency policy blocked dynamic Maven version: " + coordinate + ". Use an exact pinned version such as 1.2.3, not + or a version range.");
+                    throw new IllegalArgumentException("Dependency policy blocked dynamic Maven version: " + coordinate + ". Use an exact pinned version such as 1.2.3, not + or a version range." + adviceSuffix);
                 }
                 if (OnlineDependencyPolicy.isBlockedCoordinate(group, name)) {
-                    throw new IllegalArgumentException("Dependency policy blocked online Maven dependency requiring Kotlin/Compose/annotation processing: " + coordinate + ". Use Java-only libraries without Compose, Room, Hilt, Dagger, or annotation processors.");
+                    throw new IllegalArgumentException("Dependency policy blocked online Maven dependency requiring Kotlin/Compose/annotation processing: " + coordinate + ". Use Java-only libraries without Compose, Room, Hilt, Dagger, or annotation processors." + adviceSuffix);
                 }
-                throw new IllegalArgumentException("Dependency policy blocked unapproved online Maven dependency: " + coordinate + ". Allowed groups: " + OnlineDependencyPolicy.trustedGroupsSummary() + " with exact versions.");
+                throw new IllegalArgumentException("Dependency policy blocked unapproved online Maven dependency: " + coordinate + ". Allowed groups: " + OnlineDependencyPolicy.trustedGroupsSummary() + " with exact versions." + adviceSuffix);
             }
             if (BuildBackendSettings.DEPENDENCY_OFFLINE_SAFE.equals(mode)) {
                 throw new IllegalArgumentException("Dependency policy blocked Maven dependency: " + group + ":" + name + ":" + version);

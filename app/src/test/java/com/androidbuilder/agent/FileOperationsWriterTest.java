@@ -94,8 +94,31 @@ public class FileOperationsWriterTest {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
                 new FileOperationsWriter().apply(root, operations));
 
-        assertEquals("Generated source policy blocked missing required project file: app/src/main/AndroidManifest.xml.", error.getMessage());
+        assertEquals("Generated source policy blocked deletion of required project file: app/src/main/AndroidManifest.xml. Keep it in the project.", error.getMessage());
         assertTrue(new File(root, "app/src/main/AndroidManifest.xml").exists());
+    }
+
+    @Test
+    public void scaffoldTaskMayWriteGradleOnlyBeforeManifestExists() throws Exception {
+        // A fresh project starts empty; the first task writes only the Gradle skeleton. The Manifest
+        // arrives in a later task, so this must NOT fail on a missing required file.
+        File root = temporaryFolder.newFolder("source");
+
+        TaskOperations gradleOnly = new TaskOperations("gradle skeleton", Arrays.asList(
+                new FileOperation("write", "settings.gradle", "rootProject.name = 'App'\ninclude ':app'\n"),
+                new FileOperation("write", "build.gradle", "plugins { id 'com.android.application' version '8.7.3' apply false }\n"),
+                new FileOperation("write", "app/build.gradle",
+                        "plugins { id 'com.android.application' }\n" +
+                                "android { namespace 'com.example'; compileSdk 34\n" +
+                                "    defaultConfig { applicationId 'com.example'; minSdk 31; targetSdk 34; versionCode 1; versionName '1.0' }\n" +
+                                "}\n")));
+
+        new FileOperationsWriter().apply(root, gradleOnly);
+
+        assertTrue(new File(root, "settings.gradle").exists());
+        assertFalse(new File(root, "app/src/main/AndroidManifest.xml").exists());
+        // Completeness is reported at build time, not per task.
+        assertEquals("app/src/main/AndroidManifest.xml", FileOperationsWriter.firstMissingRequiredProjectFile(root));
     }
 
     private void write(File root, String path, String content) throws Exception {

@@ -18,6 +18,9 @@ final class LocalGuardHeuristics {
     private static final Pattern DAO_DECLARATION = Pattern.compile("\\b([A-Z][A-Za-z0-9_]*Dao)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b");
     private static final Pattern METHOD_CALL = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
     private static final Pattern MISSING_DRAWABLE = Pattern.compile("missing drawable resource:\\s*R\\.drawable\\.([A-Za-z_][A-Za-z0-9_]*)\\s+in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MISSING_XML_RESOURCE = Pattern.compile("missing XML resource reference:\\s*@([a-z]+)/([A-Za-z_][A-Za-z0-9_.]*)\\s+in\\s+([A-Za-z0-9_.$-]+\\.xml)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern XML_RESOURCE_REFERENCE = Pattern.compile("@(layout|string|color|drawable|mipmap|style)/([A-Za-z_][A-Za-z0-9_.]*)");
+    private static final Pattern NAMED_VALUE_RESOURCE = Pattern.compile("<\\s*(string|color|style)\\b[^>]*\\bname\\s*=\\s*[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
     private static final Pattern LAMBDA_FILE = Pattern.compile("Java lambda syntax in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
     private static final Pattern MISSING_METHOD = Pattern.compile("missing method:\\s*([A-Z][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(([^)]*)\\)\\s+in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
     private static final Pattern MISSING_CLASS_FIELD = Pattern.compile("missing class field:\\s*([A-Z][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\s+in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
@@ -40,6 +43,9 @@ final class LocalGuardHeuristics {
                 appendHint(hints, "Remove every -> token from " + simpleName(path)
                         + ", including comments, Javadocs, string examples, listeners, and callbacks. Use anonymous inner classes or plain text without arrow examples.");
             }
+            if (path.endsWith(".xml")) {
+                appendMissingXmlResourceHints(hints, sourceSnapshot, operations, path, content);
+            }
             appendMissingDrawableHints(hints, sourceSnapshot, operations, path, content);
             appendMissingDbHelperFieldHints(hints, sourceSnapshot, operations, path, content);
             appendMissingDaoMethodHints(hints, sourceSnapshot, operations, path, content);
@@ -47,7 +53,7 @@ final class LocalGuardHeuristics {
         if (hints.length() == 0) {
             return LocalGuardResult.unusable("");
         }
-        return LocalGuardResult.rewrite("Local fast guard found high-confidence source/API mismatches.", hints.toString());
+        return LocalGuardResult.rewrite("Deterministic rules found high-confidence source/API mismatches.", hints.toString());
     }
 
     static LocalGuardResult rewritePolicyFailure(String policyError) {
@@ -67,6 +73,12 @@ final class LocalGuardHeuristics {
                     + ".xml as a valid vector/shape drawable in the same response, or change " + file
                     + " to use an existing drawable resource.");
         }
+        Matcher xmlResource = MISSING_XML_RESOURCE.matcher(message);
+        if (xmlResource.find()) {
+            appendHint(hints, xmlResource.group(3) + " references @" + xmlResource.group(1)
+                    + "/" + xmlResource.group(2) + " but that resource is missing. "
+                    + xmlResourceFixInstruction(xmlResource.group(1), xmlResource.group(2), xmlResource.group(3)));
+        }
         Matcher method = MISSING_METHOD.matcher(message);
         if (method.find()) {
             appendHint(hints, "The caller " + method.group(4) + " uses "
@@ -84,7 +96,22 @@ final class LocalGuardHeuristics {
         if (hints.length() == 0) {
             return LocalGuardResult.unusable("");
         }
-        return LocalGuardResult.rewrite("Local fast guard converted the policy error into a precise retry hint.", hints.toString());
+        return LocalGuardResult.rewrite("Deterministic rules converted the policy error into a precise retry hint.", hints.toString());
+    }
+
+    private static void appendMissingXmlResourceHints(StringBuilder hints, String sourceSnapshot, TaskOperations operations, String path, String content) {
+        Matcher matcher = XML_RESOURCE_REFERENCE.matcher(content);
+        Set<String> seen = new HashSet<>();
+        while (matcher.find()) {
+            String type = matcher.group(1);
+            String name = matcher.group(2);
+            String key = type + "/" + name;
+            if (!seen.add(key) || hasXmlResource(sourceSnapshot, operations, type, name)) {
+                continue;
+            }
+            appendHint(hints, simpleName(path) + " references @" + type + "/" + name
+                    + " but that resource is missing. " + xmlResourceFixInstruction(type, name, simpleName(path)));
+        }
     }
 
     private static void appendMissingDrawableHints(StringBuilder hints, String sourceSnapshot, TaskOperations operations, String path, String content) {
@@ -182,6 +209,85 @@ final class LocalGuardHeuristics {
             }
         }
         return false;
+    }
+
+    private static boolean hasXmlResource(String sourceSnapshot, TaskOperations operations, String type, String name) {
+        if (hasXmlResourceInText(sourceSnapshot, type, name)) {
+            return true;
+        }
+        if (operations != null) {
+            for (FileOperation operation : operations.operations) {
+                if (operation == null) {
+                    continue;
+                }
+                if (hasXmlResourceInPath(operation.path, type, name)
+                        || hasValueResourceInContent(operation.content, type, name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasXmlResourceInText(String text, String type, String name) {
+        String value = text == null ? "" : text;
+        return hasXmlResourceInPath(value, type, name) || hasValueResourceInContent(value, type, name);
+    }
+
+    private static boolean hasXmlResourceInPath(String path, String type, String name) {
+        String value = path == null ? "" : path;
+        if ("layout".equals(type)) {
+            return value.contains("/res/layout/") && value.contains("/" + name + ".xml");
+        }
+        if ("drawable".equals(type)) {
+            return value.contains("/res/drawable") && value.contains("/" + name + ".xml");
+        }
+        if ("mipmap".equals(type)) {
+            return value.contains("/res/mipmap") && value.contains("/" + name + ".xml");
+        }
+        return false;
+    }
+
+    private static boolean hasValueResourceInContent(String content, String type, String name) {
+        if (!"string".equals(type) && !"color".equals(type) && !"style".equals(type)) {
+            return false;
+        }
+        Matcher matcher = NAMED_VALUE_RESOURCE.matcher(content == null ? "" : content);
+        while (matcher.find()) {
+            if (type.equals(matcher.group(1)) && name.equals(matcher.group(2))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String xmlResourceFixInstruction(String type, String name, String callerFile) {
+        if ("color".equals(type)) {
+            return "Add <color name=\"" + name + "\">...</color> to app/src/main/res/values/colors.xml in the same response, or change "
+                    + callerFile + " to use an existing @color resource.";
+        }
+        if ("string".equals(type)) {
+            return "Add <string name=\"" + name + "\">...</string> to app/src/main/res/values/strings.xml in the same response, or change "
+                    + callerFile + " to use an existing @string resource.";
+        }
+        if ("style".equals(type)) {
+            return "Add <style name=\"" + name + "\">...</style> to app/src/main/res/values/styles.xml in the same response, or change "
+                    + callerFile + " to use an existing @style resource.";
+        }
+        if ("layout".equals(type)) {
+            return "Add app/src/main/res/layout/" + name + ".xml in the same response, or change "
+                    + callerFile + " to use an existing @layout resource.";
+        }
+        if ("drawable".equals(type)) {
+            return "Add app/src/main/res/drawable/" + name + ".xml as a valid vector/shape drawable in the same response, or change "
+                    + callerFile + " to use an existing @drawable resource.";
+        }
+        if ("mipmap".equals(type)) {
+            return "Add app/src/main/res/mipmap/" + name + ".xml in the same response, or change "
+                    + callerFile + " to use an existing @mipmap resource.";
+        }
+        return "Add the missing @" + type + "/" + name + " resource in the same response, or change "
+                + callerFile + " to use an existing resource.";
     }
 
     private static boolean hasClassField(String sourceSnapshot, TaskOperations operations, String className, String field) {

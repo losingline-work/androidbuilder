@@ -48,6 +48,11 @@ public final class OnlineDependencyPolicy {
         if (APPROVED_EXACT.contains(group + ":" + name + ":" + version)) {
             return true;
         }
+        // Tier 1: curated capability catalog (exact verified coordinates, may live on JitPack).
+        if (DependencyCatalog.isCataloged(group, name, version)) {
+            return true;
+        }
+        // Tier 2: trusted groups with any pinned version.
         return isPinnedVersion(version) && !isBlockedCoordinate(group, name) && isTrustedGroup(group);
     }
 
@@ -106,7 +111,8 @@ public final class OnlineDependencyPolicy {
 
     public static String prompt() {
         return "Dependency mode is online enhanced. Prefer Android SDK/Java/XML/SQLiteOpenHelper and add Maven dependencies only when necessary. " +
-                "You may use dependencies from these trusted groups, but only with an exact pinned version: " +
+                DependencyCatalog.promptSummary() + " " +
+                "You may also use dependencies from these trusted groups, but only with an exact pinned version: " +
                 trustedGroupsSummary() + ". " +
                 "Always pin a concrete version such as 1.2.3; never use +, a version range, latest.release, or a SNAPSHOT. " +
                 "Do not add Kotlin, kotlinOptions, Compose (androidx.compose.*), Room (androidx.room.*), Hilt/Dagger, any *-compiler annotation processor, KSP, KAPT, DataBinding, ViewBinding, or any Gradle plugin beyond com.android.application. " +

@@ -7,6 +7,10 @@ import com.androidbuilder.backend.BuildBackendSettings;
 import com.androidbuilder.model.AppSpec;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
+import com.androidbuilder.model.ContextNegotiation;
+import com.androidbuilder.model.HermesRunEvent;
+import com.androidbuilder.model.HermesReview;
+import com.androidbuilder.model.HermesTaskContract;
 import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
@@ -17,6 +21,7 @@ import com.androidbuilder.util.ActiveWorkRegistry;
 import com.androidbuilder.util.NameUtils;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -29,6 +34,10 @@ public class AgentService {
     private static final int SOURCE_FOCUS_FILE_LIMIT = 12000;
     private static final int BUILD_LOG_PREVIEW_LIMIT = 7000;
     private static final int POLICY_REWRITE_ATTEMPTS = 5;
+    // Pre-apply structural rewrites are capped separately so
+    // they cannot starve the policy-error retry budget; after this many they yield to the real guard.
+    private static final int PREFLIGHT_REWRITE_BUDGET = 2;
+    private static final int CONTEXT_NEGOTIATION_ROUNDS = ContextNegotiationPolicy.MAX_NEGOTIATION_ROUNDS;
     private static final int AI_LOG_TEXT_LIMIT = 80000;
     // Conversation context sent to the cloud: drop status chatter, keep a recent window.
     private static final int PLANNING_HISTORY_WINDOW = 16;
@@ -54,27 +63,14 @@ public class AgentService {
     private final OpenAiClient openAiClient;
     private final GeneratedProjectWriter writer = new GeneratedProjectWriter();
     private final FileOperationsWriter operationsWriter;
-    private final LocalGuardAssistant localGuardAssistant;
 
     public AgentService(Context context, AppRepository repository) {
-        this(context, repository, null);
-    }
-
-    AgentService(Context context, AppRepository repository, LocalGuardAssistant localGuardAssistant) {
         this.context = context.getApplicationContext();
         this.repository = repository;
         this.openAiClient = new OpenAiClient(context);
         this.operationsWriter = new FileOperationsWriter(new DependencyGuard(
                 BuildBackendSettings.dependencyMode(this.context),
                 BuildBackendSettings.offlineMavenDir(this.context)));
-        this.localGuardAssistant = localGuardAssistant == null
-                ? new LlamaLocalGuardAssistant(this.context)
-                : localGuardAssistant;
-    }
-
-    /** Releases the cached local-guard model/engine. Call when the owning screen is destroyed. */
-    public void release() {
-        localGuardAssistant.close();
     }
 
     public void setProgressListener(OpenAiClient.ProgressListener listener) {
@@ -208,7 +204,13 @@ public class AgentService {
         repository.saveProjectPlan(projectId, "", "planning", null);
         List<ChatMessage> history = ConversationContextPolicy.planningHistory(repository.listMessages(projectId), PLANNING_HISTORY_WINDOW);
         boolean chinese = AppSettings.isChinese(context);
-        String planPrompt = prompt + "\n\nProject package/applicationId: " + project.packageName + "\nUse this package and namespace consistently.";
+        String basePlanPrompt = prompt + "\n\nProject package/applicationId: " + project.packageName + "\nUse this package and namespace consistently.";
+        String planPrompt = PlanConstraintComposer.withPlanningConstraints(
+                basePlanPrompt,
+                BuildBackendSettings.dependencyMode(context),
+                PlanConstraintComposer.offlineCacheAvailable(BuildBackendSettings.offlineMavenDir(context)),
+                BuildBackendSettings.confirmRiskyPlanChoices(context),
+                chinese);
         String plan = recordCloudAiCall(
                 projectId,
                 null,
@@ -259,6 +261,23 @@ public class AgentService {
             }
             repository.updateProjectTask(runningTask.id, "running", "");
             repository.addMessage(projectId, "assistant", (chinese ? "执行下一步：" : "Executing next step: ") + runningTask.title, job.id);
+            String previousTaskFailure = "failed".equals(runningTask.status) ? runningTask.resultSummary : "";
+            HermesTaskDecision taskDecision = HermesTaskScheduler.decide(
+                    HermesTaskContractCodec.extractFromInstruction(runningTask.instruction),
+                    previousTaskFailure,
+                    previousTaskFailure.trim().isEmpty() ? 0 : 1,
+                    false);
+            recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
+                    job.id + ":" + runningTask.id,
+                    "task_execution",
+                    "orchestrator",
+                    "code",
+                    taskDecision.reason,
+                    "Task title: " + runningTask.title + "\nInstruction: " + HermesTaskContractCodec.stripFromInstruction(runningTask.instruction),
+                    "requiresContextScout=" + taskDecision.requiresContextScout
+                            + "\nrequiresBuildAfter=" + taskDecision.requiresBuildAfter
+                            + "\nretryMode=" + taskDecision.retryMode,
+                    1));
 
             File jobDir = repository.jobDir(projectId, job.id);
             File logs = new File(jobDir, "build.log");
@@ -267,7 +286,7 @@ public class AgentService {
 
             File sourceDir = repository.sourceDir(projectId);
             String snapshot = sourceSnapshot(sourceDir);
-            TaskOperations operations = createAndApplyTaskOperations(projectId, job.id, sourceDir, plan.content, runningTask.title, runningTask.instruction, snapshot, logs, chinese);
+            TaskOperations operations = createAndApplyTaskOperations(projectId, job.id, sourceDir, plan.content, runningTask.title, runningTask.instruction, snapshot, logs, chinese, previousTaskFailure, false);
             repository.updateProjectTask(runningTask.id, "done", operations.summary);
             ProjectTaskRecord next = repository.nextPendingProjectTask(projectId);
             repository.updateProjectPlanStatus(projectId, next == null ? "generated" : "planned", job.id);
@@ -276,7 +295,12 @@ public class AgentService {
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
             FileUtils.appendText(logs, (chinese ? "计划任务完成：" : "Executed plan task: ") + runningTask.title + "\n" + operations.summary + "\n");
 
-            String message = (chinese ? "已完成：" : "Done: ") + runningTask.title + (next == null ? (chinese ? "。所有任务已完成，可以构建。" : ". All tasks are complete; ready to build.") : (chinese ? "。可以继续执行下一步。" : ". Continue with the next step."));
+            boolean buildRequiredAfter = HermesTaskScheduler.decide(
+                    HermesTaskContractCodec.extractFromInstruction(runningTask.instruction),
+                    "",
+                    0,
+                    false).requiresBuildAfter;
+            String message = taskCompletionMessage(runningTask.title, next != null, buildRequiredAfter, chinese);
             repository.addMessage(projectId, "assistant", message, job.id);
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
@@ -307,15 +331,21 @@ public class AgentService {
             FileUtils.writeText(logs, chinese ? "开始根据构建日志修复当前源码。\n" : "Repairing current source from build log.\n");
             repository.updateBuildJob(job.id, "generating", "repairing_build_failure", logs.getAbsolutePath(), null, null, 0);
             repository.addMessage(projectId, "assistant", chinese ? "正在根据构建日志修复当前源码。" : "Repairing the current source from the build log.", job.id);
+            recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
+                    job.id + ":repair",
+                    "repair",
+                    "orchestrator",
+                    "repair",
+                    "Build repair requested from a failed Gradle/AAPT/javac log.",
+                    "Build log:\n" + truncateForInlineLog(buildLog, 4000),
+                    "Triage the build log, focus the source snapshot, generate repair operations, and guard before applying.",
+                    1));
 
             File sourceDir = repository.sourceDir(projectId);
             String snapshot = sourceSnapshot(sourceDir, buildLog);
-            // Local build-log triage: let the on-device model turn the raw log into a focused fix
-            // instruction for the cloud model. Falls back to the deterministic instruction if the
-            // local model is off, unavailable, times out, or finds no actionable source cause.
             String baseInstruction = repairInstruction(buildLog, chinese);
-            LocalGuardResult triage = triageBuildFailureWithLocalGuard(projectId, job.id, buildLog, snapshot, chinese);
-            appendLocalGuardLog(logs, chinese ? "本地守卫构建日志分诊" : "Local guard build triage", triage);
+            LocalGuardResult triage = triageBuildFailureWithCloudGuard(projectId, job.id, buildLog, snapshot, chinese);
+            appendLocalGuardLog(logs, chinese ? "云端守卫构建日志分诊" : "Cloud guard build triage", triage);
             String instruction = triage.usable && triage.decision == LocalGuardResult.Decision.REWRITE
                     && triage.additionalInstruction != null && !triage.additionalInstruction.trim().isEmpty()
                     ? LocalGuardInstructionComposer.forBuildTriage(baseInstruction, triage.additionalInstruction)
@@ -329,7 +359,9 @@ public class AgentService {
                     instruction,
                     snapshot,
                     logs,
-                    chinese);
+                    chinese,
+                    buildLog,
+                    true);
 
             File projectZip = new File(jobDir, "project.zip");
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
@@ -351,29 +383,149 @@ public class AgentService {
         }
     }
 
-    private TaskOperations createAndApplyTaskOperations(long projectId, Long linkedBuildJobId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese) throws Exception {
+    private TaskOperations createAndApplyTaskOperations(long projectId, Long linkedBuildJobId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese, String initialFailureContext, boolean repairFlow) throws Exception {
         String instruction = taskInstruction;
         // Recent user requirements live in chat but may never have reached the plan text; feed them
         // to the coding/repair model so it honors intent the plan dropped.
         String recentRequirements = ConversationContextPolicy.recentUserRequirements(
                 repository.listMessages(projectId), CODING_USER_REQUIREMENTS_WINDOW, CODING_USER_REQUIREMENTS_CHARS);
         IllegalArgumentException lastPolicyError = null;
+        String previousFailure = initialFailureContext == null ? "" : initialFailureContext.trim();
+        HermesTaskDecision taskDecision = HermesTaskScheduler.decide(
+                HermesTaskContractCodec.extractFromInstruction(taskInstruction),
+                previousFailure,
+                previousFailure.isEmpty() ? 0 : 1,
+                repairFlow);
+        ContextNegotiation negotiation = null;
+        String retryContext = "";
+        int negotiationRounds = 0;
+        int preflightRewrites = 0;
+        List<FailureFingerprint> failureFingerprints = new ArrayList<>();
         for (int attempt = 1; attempt <= POLICY_REWRITE_ATTEMPTS; attempt++) {
-            String requestLog = taskOperationsRequestForAiLog(planContent, taskTitle, instruction, snapshot, attempt);
+            if ((repairFlow || !previousFailure.isEmpty()) && retryContext.isEmpty()) {
+                retryContext = ContextNegotiationPolicy.retryContext(previousFailure, null);
+            }
+            boolean forceContextScout = taskDecision.requiresContextScout && attempt == 1;
+            if ((forceContextScout || ContextNegotiationPolicy.shouldNegotiate(repairFlow || !previousFailure.isEmpty(), attempt, previousFailure, ""))
+                    && negotiationRounds < CONTEXT_NEGOTIATION_ROUNDS) {
+                do {
+                    negotiationRounds++;
+                    negotiation = negotiateTaskContextWithFallback(
+                            projectId,
+                            linkedBuildJobId,
+                            planContent,
+                            taskTitle,
+                            instruction,
+                            snapshot,
+                            recentRequirements,
+                            previousFailure,
+                            repairFlow,
+                            negotiationRounds,
+                            chinese);
+                    if (negotiation != null) {
+                        retryContext = ContextNegotiationPolicy.retryContext(previousFailure, negotiation);
+                        String focusText = ContextNegotiationPolicy.focusText(negotiation, previousFailure);
+                        if (!focusText.isEmpty()) {
+                            snapshot = sourceSnapshot(sourceDir, focusText);
+                        }
+                    }
+                } while (ContextNegotiationPolicy.shouldContinueNegotiation(negotiation, negotiationRounds));
+            }
+            String requestLog = taskOperationsRequestForAiLog(planContent, taskTitle, instruction, snapshot, retryContext, attempt);
             final String attemptInstruction = instruction;
             final String attemptSnapshot = snapshot;
+            final String attemptRetryContext = retryContext;
             String operationsJson = recordCloudAiCall(
                     projectId,
                     linkedBuildJobId,
                     (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
                     requestLog,
-                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, chinese));
+                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, chinese));
             try {
                 TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
-                LocalGuardResult preflight = reviewOperationsWithLocalGuard(projectId, linkedBuildJobId, planContent, taskTitle, instruction, snapshot, operations, chinese);
-                appendLocalGuardLog(logs, chinese ? "本地守卫预审" : "Local guard preflight", preflight);
-                if (shouldRetryFromLocalGuard(preflight, attempt)) {
+                HermesTaskContract taskContract = HermesTaskContractCodec.extractFromInstruction(instruction);
+                HermesReview contractReview = HermesTaskContractGuard.review(taskContract, operations);
+                String contractTitle = (chinese ? "Hermes · 任务契约预检" : "Hermes · task contract preflight") + " #" + attempt;
+                if (taskContract.hasSignals()) {
+                    appendHermesReviewLog(logs, contractTitle, contractReview);
+                    recordHermesReviewAi(projectId, linkedBuildJobId, contractTitle,
+                            deterministicPreflightRequest(taskTitle, instruction, operationsJson), contractReview);
+                }
+                if (contractReview.decision == HermesReview.Decision.REWRITE
+                        && contractReview.rewriteInstruction != null
+                        && !contractReview.rewriteInstruction.trim().isEmpty()
+                        && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
+                    preflightRewrites++;
+                    previousFailure = mergeRetryContext(
+                            HermesReviewerPolicy.rewriteContext(contractReview),
+                            GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview("hermes-contract-guard", contractReview)));
+                    previousFailure = mergeRetryContext(previousFailure,
+                            rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromHermesReview("hermes-contract-guard", contractReview)));
+                    retryContext = mergeRetryContext(retryContext, previousFailure);
+                    instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, previousFailure);
+                    snapshot = sourceSnapshot(sourceDir);
+                    continue;
+                }
+                HermesReview deterministicReview = TaskOperationsPreflight.review(operations, snapshot);
+                String deterministicTitle = (chinese ? "确定性预检" : "Deterministic preflight") + " #" + attempt;
+                appendHermesReviewLog(logs, deterministicTitle, deterministicReview);
+                recordHermesReviewAi(projectId, linkedBuildJobId, deterministicTitle,
+                        deterministicPreflightRequest(taskTitle, instruction, operationsJson), deterministicReview);
+                // Pre-apply structural rewrites are capped and never throw: they must not starve the
+                // policy-error retry budget, and AndroidSourceGuard + the real build are the final authority.
+                if (deterministicReview.decision == HermesReview.Decision.REWRITE
+                        && deterministicReview.rewriteInstruction != null
+                        && !deterministicReview.rewriteInstruction.trim().isEmpty()
+                        && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
+                    preflightRewrites++;
+                    previousFailure = mergeRetryContext(
+                            HermesReviewerPolicy.rewriteContext(deterministicReview),
+                            GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview(deterministicTitle, deterministicReview)));
+                    previousFailure = mergeRetryContext(previousFailure,
+                            rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromHermesReview(deterministicTitle, deterministicReview)));
+                    retryContext = mergeRetryContext(retryContext, previousFailure);
+                    instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, previousFailure);
+                    snapshot = sourceSnapshot(sourceDir);
+                    continue;
+                }
+                LocalGuardResult preflight = reviewOperationsWithLocalRules(projectId, linkedBuildJobId, snapshot, operations, chinese);
+                appendLocalGuardLog(logs, chinese ? "确定性规则预审" : "Deterministic rule preflight", preflight);
+                if (shouldRetryFromLocalGuard(preflight) && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
+                    preflightRewrites++;
+                    previousFailure = GuardFindingPolicy.retryContext(GuardFindingPolicy.fromLocalGuardResult("local-guard-preflight", preflight));
+                    if (previousFailure.isEmpty()) {
+                        previousFailure = preflight.additionalInstruction;
+                    }
+                    previousFailure = mergeRetryContext(previousFailure,
+                            rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromLocalGuardResult("local-guard-preflight", preflight)));
+                    retryContext = mergeRetryContext(retryContext, previousFailure);
                     instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, preflight.additionalInstruction);
+                    snapshot = sourceSnapshot(sourceDir);
+                    continue;
+                }
+                HermesReview hermesReview = reviewOperationsWithHermes(
+                        projectId,
+                        linkedBuildJobId,
+                        taskTitle,
+                        instruction,
+                        snapshot,
+                        operationsJson,
+                        operations,
+                        negotiation,
+                        repairFlow || !previousFailure.isEmpty(),
+                        attempt,
+                        logs,
+                        chinese);
+                if (HermesReviewerPolicy.shouldRetry(hermesReview, attempt, POLICY_REWRITE_ATTEMPTS)
+                        && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
+                    preflightRewrites++;
+                    previousFailure = mergeRetryContext(
+                            HermesReviewerPolicy.rewriteContext(hermesReview),
+                            GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview("hermes-review", hermesReview)));
+                    previousFailure = mergeRetryContext(previousFailure,
+                            rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromHermesReview("hermes-review", hermesReview)));
+                    retryContext = mergeRetryContext(retryContext, previousFailure);
+                    instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, previousFailure);
                     snapshot = sourceSnapshot(sourceDir);
                     continue;
                 }
@@ -387,63 +539,201 @@ public class AgentService {
                 // Refocus the snapshot on the files/types named in the rejection so the next attempt
                 // sees the offending caller and the real class declarations in full (untruncated).
                 snapshot = sourceSnapshot(sourceDir, policyError.getMessage());
+                previousFailure = policyError.getMessage();
+                retryContext = mergeRetryContext(retryContext,
+                        rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromPolicyError(policyError.getMessage())));
                 String policyInstruction = PolicyRewriteInstruction.create(instruction, policyError.getMessage(), attempt + 1);
-                LocalGuardResult localRewrite = rewritePolicyFailureWithLocalGuard(projectId, linkedBuildJobId, instruction, policyError.getMessage(), snapshot, attempt + 1, chinese);
-                appendLocalGuardLog(logs, chinese ? "本地守卫策略错误提示" : "Local guard policy-error hint", localRewrite);
-                instruction = localRewrite.usable && localRewrite.decision == LocalGuardResult.Decision.REWRITE
-                        ? LocalGuardInstructionComposer.forPolicyRewrite(policyInstruction, localRewrite.additionalInstruction)
+                LocalGuardResult rewriteHint = rewritePolicyFailureWithLocalRules(projectId, linkedBuildJobId, policyError.getMessage(), chinese);
+                appendLocalGuardLog(logs, chinese ? "本地规则策略错误提示" : "Local rule policy-error hint", rewriteHint);
+                if (!rewriteHint.usable) {
+                    rewriteHint = rewritePolicyFailureWithCloudGuard(projectId, linkedBuildJobId, instruction, policyError.getMessage(), snapshot, attempt + 1, chinese);
+                    appendLocalGuardLog(logs, chinese ? "云端守卫策略错误提示" : "Cloud guard policy-error hint", rewriteHint);
+                }
+                instruction = rewriteHint.usable && rewriteHint.decision == LocalGuardResult.Decision.REWRITE
+                        ? LocalGuardInstructionComposer.forPolicyRewrite(policyInstruction, rewriteHint.additionalInstruction)
                         : policyInstruction;
+                if (rewriteHint.usable && rewriteHint.decision == LocalGuardResult.Decision.REWRITE) {
+                    String findingContext = GuardFindingPolicy.retryContext(GuardFindingPolicy.fromLocalGuardResult("policy-error-guard", rewriteHint));
+                    retryContext = mergeRetryContext(retryContext, findingContext.isEmpty() ? rewriteHint.additionalInstruction : findingContext);
+                }
             }
         }
         throw lastPolicyError == null ? new IllegalStateException("Task operation generation failed.") : lastPolicyError;
     }
 
-    private boolean shouldRetryFromLocalGuard(LocalGuardResult result, int attempt) {
+    private boolean shouldRetryFromLocalGuard(LocalGuardResult result) {
         return result != null
                 && result.usable
                 && result.decision == LocalGuardResult.Decision.REWRITE
                 && result.additionalInstruction != null
-                && !result.additionalInstruction.trim().isEmpty()
-                && attempt < POLICY_REWRITE_ATTEMPTS;
+                && !result.additionalInstruction.trim().isEmpty();
     }
 
-    private LocalGuardResult reviewOperationsWithLocalGuard(long projectId, Long linkedBuildJobId, String planContent, String taskTitle, String taskInstruction, String snapshot, TaskOperations operations, boolean chinese) {
-        String prompt = LocalGuardPromptBuilder.reviewOperationsPrompt(planContent, taskTitle, taskInstruction, snapshot, operations);
+    private ContextNegotiation negotiateTaskContextWithFallback(long projectId, Long linkedBuildJobId, String planContent, String taskTitle, String taskInstruction, String snapshot, String recentRequirements, String previousFailure, boolean repairFlow, int round, boolean chinese) {
+        String title = hermesContextTitle(repairFlow, round, chinese);
+        String request = "Round: " + round
+                + "\n\nTask title:\n" + taskTitle
+                + "\n\nTask instruction:\n" + truncateForInlineLog(taskInstruction, 12000)
+                + "\n\nPrevious failure summary:\n" + truncateForInlineLog(previousFailure, 12000)
+                + "\n\nRecent user requirements:\n" + truncateForInlineLog(recentRequirements, 4000)
+                + "\n\nCurrent source snapshot:\n" + truncateForInlineLog(snapshot, 24000);
         try {
-            LocalGuardResult result = localGuardAssistant.reviewOperations(planContent, taskTitle, taskInstruction, snapshot, operations);
-            recordLocalGuardAi(projectId, linkedBuildJobId, chinese ? "本地 AI · 源码写入前预审" : "Local AI · source guard preflight", prompt, result);
-            return result;
+            String response = recordCloudAiCall(
+                    projectId,
+                    linkedBuildJobId,
+                    title,
+                    request,
+                    () -> openAiClient.negotiateTaskContext(planContent, taskTitle, taskInstruction, snapshot, recentRequirements, previousFailure, chinese));
+            return ContextNegotiationParser.fromJson(response);
         } catch (Exception error) {
-            LocalGuardResult result = LocalGuardResult.unusable("Local guard preflight failed: " + localGuardErrorMessage(error));
-            recordLocalGuardAi(projectId, linkedBuildJobId, chinese ? "本地 AI · 源码写入前预审" : "Local AI · source guard preflight", prompt, result);
-            return result;
+            recordAiConversationSafely(
+                    projectId,
+                    "cloud",
+                    title,
+                    request,
+                    localGuardErrorMessage(error),
+                    "fallback",
+                    cloudAiMetadata(),
+                    linkedBuildJobId);
+            return null;
         }
     }
 
-    private LocalGuardResult rewritePolicyFailureWithLocalGuard(long projectId, Long linkedBuildJobId, String taskInstruction, String policyError, String focusedSnapshot, int attempt, boolean chinese) {
-        String prompt = LocalGuardPromptBuilder.policyFailurePrompt(taskInstruction, policyError, focusedSnapshot, attempt);
+    private String mergeRetryContext(String existing, String addition) {
+        return RetryContextPolicy.merge(existing, addition);
+    }
+
+    private String rememberFailure(List<FailureFingerprint> history, FailureFingerprint fingerprint) {
+        if (history == null || fingerprint == null) {
+            return "";
+        }
+        history.add(fingerprint);
+        return FailureFingerprintPolicy.repeatedRetryContext(history, fingerprint, 2);
+    }
+
+    private String hermesContextTitle(boolean repairFlow, int round, boolean chinese) {
+        if (repairFlow) {
+            return (chinese ? "Hermes · 修复上下文侦察" : "Hermes · Repair Context Scout") + " #" + round;
+        }
+        return (chinese ? "Hermes · 上下文侦察" : "Hermes · Context Scout") + " #" + round;
+    }
+
+    private HermesReview reviewOperationsWithHermes(long projectId, Long linkedBuildJobId, String taskTitle, String taskInstruction, String snapshot, String operationsJson, TaskOperations operations, ContextNegotiation negotiation, boolean retryOrRepairFlow, int attempt, File logs, boolean chinese) {
+        if (!HermesReviewerPolicy.shouldReviewOperations(retryOrRepairFlow, attempt, negotiation, operations)) {
+            return null;
+        }
+        String title = (chinese ? "Hermes · 文件操作审查" : "Hermes · file operation review") + " #" + attempt;
+        String contextScoutNotes = HermesReviewerPolicy.contextScoutNotes(negotiation);
+        String request = hermesReviewRequestForAiLog(taskTitle, taskInstruction, snapshot, operationsJson, contextScoutNotes);
         try {
-            LocalGuardResult result = localGuardAssistant.rewritePolicyFailure(taskInstruction, policyError, focusedSnapshot, attempt);
-            recordLocalGuardAi(projectId, linkedBuildJobId, (chinese ? "本地 AI · 策略错误提示优化" : "Local AI · policy-error hint") + " #" + attempt, prompt, result);
-            return result;
+            String response = recordCloudAiCall(
+                    projectId,
+                    linkedBuildJobId,
+                    title,
+                    request,
+                    () -> openAiClient.reviewTaskOperations(taskTitle, taskInstruction, snapshot, operationsJson, contextScoutNotes, chinese));
+            HermesReview review = HermesReviewParser.fromJson(response);
+            appendHermesReviewLog(logs, title, review);
+            return review;
         } catch (Exception error) {
-            LocalGuardResult result = LocalGuardResult.unusable("Local guard policy-error rewrite failed: " + localGuardErrorMessage(error));
-            recordLocalGuardAi(projectId, linkedBuildJobId, (chinese ? "本地 AI · 策略错误提示优化" : "Local AI · policy-error hint") + " #" + attempt, prompt, result);
-            return result;
+            HermesReview fallback = new HermesReview(
+                    HermesReview.Decision.FALLBACK,
+                    (chinese ? "Hermes 审查不可用：" : "Hermes review unavailable: ") + localGuardErrorMessage(error),
+                    "");
+            appendHermesReviewLog(logs, title, fallback);
+            return fallback;
         }
     }
 
-    private LocalGuardResult triageBuildFailureWithLocalGuard(long projectId, Long linkedBuildJobId, String buildLog, String focusedSnapshot, boolean chinese) {
-        String prompt = LocalGuardPromptBuilder.triageBuildFailurePrompt(buildLog, focusedSnapshot);
-        try {
-            LocalGuardResult result = localGuardAssistant.triageBuildFailure(buildLog, focusedSnapshot);
-            recordLocalGuardAi(projectId, linkedBuildJobId, chinese ? "本地 AI · 构建日志分诊" : "Local AI · build-log triage", prompt, result);
-            return result;
-        } catch (Exception error) {
-            LocalGuardResult result = LocalGuardResult.unusable("Local guard build triage failed: " + localGuardErrorMessage(error));
-            recordLocalGuardAi(projectId, linkedBuildJobId, chinese ? "本地 AI · 构建日志分诊" : "Local AI · build-log triage", prompt, result);
-            return result;
+    private LocalGuardResult reviewOperationsWithLocalRules(long projectId, Long linkedBuildJobId, String snapshot, TaskOperations operations, boolean chinese) {
+        LocalGuardResult result = LocalGuardHeuristics.reviewOperations(snapshot, operations);
+        if (result.usable) {
+            recordDeterministicGuard(projectId, linkedBuildJobId,
+                    chinese ? "确定性规则 · 源码写入前预审" : "Deterministic rules · source preflight",
+                    "Generated operations were checked against the current source snapshot.",
+                    result);
         }
+        return result;
+    }
+
+    private LocalGuardResult rewritePolicyFailureWithLocalRules(long projectId, Long linkedBuildJobId, String policyError, boolean chinese) {
+        LocalGuardResult playbook = playbookResult(FailureFingerprintPolicy.fromPolicyError(policyError));
+        if (playbook.usable) {
+            recordDeterministicGuard(projectId, linkedBuildJobId,
+                    chinese ? "Hermes 策略库 · 策略错误提示" : "Hermes playbook · policy-error hint",
+                    policyError,
+                    playbook);
+            return playbook;
+        }
+        LocalGuardResult result = LocalGuardHeuristics.rewritePolicyFailure(policyError);
+        if (result.usable) {
+            recordDeterministicGuard(projectId, linkedBuildJobId,
+                    chinese ? "确定性规则 · 策略错误提示" : "Deterministic rules · policy-error hint",
+                    policyError,
+                    result);
+        }
+        return result;
+    }
+
+    private LocalGuardResult rewritePolicyFailureWithCloudGuard(long projectId, Long linkedBuildJobId, String taskInstruction, String policyError, String focusedSnapshot, int attempt, boolean chinese) {
+        String request = "Retry attempt: " + attempt
+                + "\n\nTask instruction:\n" + truncateForInlineLog(taskInstruction, 12000)
+                + "\n\nPolicy error:\n" + policyError
+                + "\n\nFocused source snapshot:\n" + truncateForInlineLog(focusedSnapshot, 24000);
+        try {
+            String hint = recordCloudAiCall(
+                    projectId,
+                    linkedBuildJobId,
+                    (chinese ? "云端 AI · 策略错误提示优化" : "Cloud AI · policy-error hint") + " #" + attempt,
+                    request,
+                    () -> openAiClient.createPolicyRewriteHint(taskInstruction, policyError, focusedSnapshot, attempt, chinese));
+            return cloudHintResult(chinese ? "云端模型已生成策略错误重试提示。" : "Cloud model produced a policy retry hint.", hint);
+        } catch (Exception error) {
+            return LocalGuardResult.unusable((chinese ? "云端策略提示不可用：" : "Cloud policy hint unavailable: ") + localGuardErrorMessage(error));
+        }
+    }
+
+    private LocalGuardResult triageBuildFailureWithCloudGuard(long projectId, Long linkedBuildJobId, String buildLog, String focusedSnapshot, boolean chinese) {
+        LocalGuardResult playbook = playbookResult(FailureFingerprintPolicy.fromBuildLog(buildLog));
+        if (playbook.usable) {
+            recordDeterministicGuard(projectId, linkedBuildJobId,
+                    chinese ? "Hermes 策略库 · 构建日志分诊" : "Hermes playbook · build-log triage",
+                    buildLog,
+                    playbook);
+            return playbook;
+        }
+        String request = "Build log:\n" + truncateForInlineLog(buildLog, 24000)
+                + "\n\nFocused source snapshot:\n" + truncateForInlineLog(focusedSnapshot, 24000);
+        try {
+            String hint = recordCloudAiCall(
+                    projectId,
+                    linkedBuildJobId,
+                    chinese ? "云端 AI · 构建日志分诊" : "Cloud AI · build-log triage",
+                    request,
+                    () -> openAiClient.createBuildFailureTriageHint(buildLog, focusedSnapshot, chinese));
+            return cloudHintResult(chinese ? "云端模型已生成构建修复提示。" : "Cloud model produced a build repair hint.", hint);
+        } catch (Exception error) {
+            return LocalGuardResult.unusable((chinese ? "云端构建分诊不可用：" : "Cloud build triage unavailable: ") + localGuardErrorMessage(error));
+        }
+    }
+
+    private LocalGuardResult cloudHintResult(String summary, String hint) {
+        String text = hint == null ? "" : hint.trim();
+        if (text.isEmpty()) {
+            return LocalGuardResult.unusable("Cloud guard returned an empty hint.");
+        }
+        if (text.length() > 2000) {
+            text = text.substring(0, 2000) + "\n...[truncated]";
+        }
+        return LocalGuardResult.rewrite(summary, text);
+    }
+
+    private LocalGuardResult playbookResult(FailureFingerprint fingerprint) {
+        String hint = RepairPlaybookPolicy.retryHint(fingerprint);
+        if (hint.isEmpty()) {
+            return LocalGuardResult.unusable("");
+        }
+        return LocalGuardResult.rewrite("Hermes repair playbook produced a deterministic retry hint.", hint);
     }
 
     private String localGuardErrorMessage(Exception error) {
@@ -460,10 +750,27 @@ public class AgentService {
             if (result.usable && result.decision == LocalGuardResult.Decision.REWRITE
                     && result.additionalInstruction != null
                     && !result.additionalInstruction.trim().isEmpty()) {
-                FileUtils.appendText(logs, "Local guard instruction: " + result.additionalInstruction.trim() + "\n");
+                FileUtils.appendText(logs, "Guard instruction: " + result.additionalInstruction.trim() + "\n");
             }
         } catch (Exception ignored) {
-            // Local guard logs are diagnostic only and must never block code generation.
+            // Guard logs are diagnostic only and must never block code generation.
+        }
+    }
+
+    private void appendHermesReviewLog(File logs, String prefix, HermesReview review) {
+        if (logs == null || review == null || review.summary == null || review.summary.trim().isEmpty()) {
+            return;
+        }
+        try {
+            String status = review.decision.name().toLowerCase(java.util.Locale.ROOT);
+            FileUtils.appendText(logs, prefix + " [" + status + "]: " + review.summary.trim() + "\n");
+            if (review.decision == HermesReview.Decision.REWRITE
+                    && review.rewriteInstruction != null
+                    && !review.rewriteInstruction.trim().isEmpty()) {
+                FileUtils.appendText(logs, "Hermes reviewer instruction: " + review.rewriteInstruction.trim() + "\n");
+            }
+        } catch (Exception ignored) {
+            // Hermes logs are diagnostic only and must never block code generation.
         }
     }
 
@@ -495,7 +802,7 @@ public class AgentService {
         }
     }
 
-    private void recordLocalGuardAi(long projectId, Long linkedBuildJobId, String title, String requestText, LocalGuardResult result) {
+    private void recordDeterministicGuard(long projectId, Long linkedBuildJobId, String title, String requestText, LocalGuardResult result) {
         if (result == null || ((result.summary == null || result.summary.trim().isEmpty())
                 && (result.additionalInstruction == null || result.additionalInstruction.trim().isEmpty()))) {
             return;
@@ -506,13 +813,71 @@ public class AgentService {
                 + "\nadditionalInstruction: " + (result.additionalInstruction == null ? "" : result.additionalInstruction);
         recordAiConversationSafely(
                 projectId,
-                "local",
+                "deterministic",
                 title,
                 requestText,
                 response,
                 status,
-                localGuardMetadata(),
+                deterministicPreflightMetadata(),
                 linkedBuildJobId);
+    }
+
+    private void recordHermesRunEvent(long projectId, Long linkedBuildJobId, HermesRunEvent event) {
+        if (event == null) {
+            return;
+        }
+        String status = event.decision.isEmpty() ? "event" : event.decision;
+        recordAiConversationSafely(
+                projectId,
+                "hermes",
+                "Hermes · " + event.role + " · " + event.phase,
+                HermesRunEventFormatter.requestText(event),
+                HermesRunEventFormatter.responseText(event),
+                status,
+                HermesRunEventFormatter.metadata(event),
+                linkedBuildJobId);
+    }
+
+    private void recordHermesReviewAi(long projectId, Long linkedBuildJobId, String title, String requestText, HermesReview review) {
+        if (review == null || ((review.summary == null || review.summary.trim().isEmpty())
+                && (review.rewriteInstruction == null || review.rewriteInstruction.trim().isEmpty()))) {
+            return;
+        }
+        String status = review.decision.name().toLowerCase(java.util.Locale.ROOT);
+        recordAiConversationSafely(
+                projectId,
+                "deterministic",
+                title,
+                requestText,
+                hermesReviewResponseForAiLog(review),
+                status,
+                deterministicPreflightMetadata(),
+                linkedBuildJobId);
+    }
+
+    private String deterministicPreflightRequest(String taskTitle, String taskInstruction, String operationsJson) {
+        return "Task title:\n" + taskTitle
+                + "\n\nTask instruction:\n" + truncateForInlineLog(taskInstruction, 12000)
+                + "\n\nGenerated operations JSON:\n" + truncateForInlineLog(operationsJson, 24000);
+    }
+
+    private String hermesReviewRequestForAiLog(String taskTitle, String taskInstruction, String snapshot, String operationsJson, String contextScoutNotes) {
+        return "Task title:\n" + taskTitle
+                + "\n\nTask instruction:\n" + truncateForInlineLog(taskInstruction, 12000)
+                + "\n\nContext Scout notes:\n" + truncateForInlineLog(contextScoutNotes, 4000)
+                + "\n\nCurrent source snapshot:\n" + truncateForInlineLog(snapshot, 24000)
+                + "\n\nGenerated operations JSON:\n" + truncateForInlineLog(operationsJson, 24000);
+    }
+
+    static String hermesReviewResponseForAiLogForTest(HermesReview review) {
+        return hermesReviewResponseForAiLog(review);
+    }
+
+    private static String hermesReviewResponseForAiLog(HermesReview review) {
+        String status = review == null ? "fallback" : review.decision.name().toLowerCase(java.util.Locale.ROOT);
+        return "decision: " + status
+                + "\nsummary: " + (review == null || review.summary == null ? "" : review.summary)
+                + "\nrewriteInstruction: " + (review == null || review.rewriteInstruction == null ? "" : review.rewriteInstruction);
     }
 
     private void recordAiConversationSafely(long projectId, String source, String title, String requestText, String responseText, String status, String metadata, Long linkedBuildJobId) {
@@ -537,12 +902,10 @@ public class AgentService {
                 + "\nendpoint=" + openAiClient.currentEndpoint();
     }
 
-    private String localGuardMetadata() {
-        File model = LocalGuardSettings.modelFile(context);
-        return "provider=local-llama.cpp"
-                + "\nmodel=" + LocalGuardSettings.modelName(context)
-                + "\npath=" + model.getAbsolutePath()
-                + "\nmode=" + LocalGuardSettings.mode(context).name();
+    private String deterministicPreflightMetadata() {
+        return "provider=deterministic-preflight"
+                + "\nmodel=java-rules"
+                + "\nmode=before-hermes";
     }
 
     private String historyForAiLog(List<ChatMessage> history) {
@@ -564,12 +927,26 @@ public class AgentService {
         return text.toString().trim();
     }
 
-    private String taskOperationsRequestForAiLog(String planContent, String taskTitle, String instruction, String snapshot, int attempt) {
+    private String taskOperationsRequestForAiLog(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, int attempt) {
+        return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, attempt);
+    }
+
+    private static String taskOperationsRequestForAiLogText(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, int attempt) {
+        String retrySection = retryContext == null || retryContext.trim().isEmpty()
+                ? ""
+                : "\n\nAdditional retry/repair context:\n" + truncateForInlineLogText(retryContext, 12000);
+        String cleanInstruction = HermesTaskContractCodec.stripFromInstruction(instruction);
+        String contractContext = HermesTaskContractCodec.promptContextFromInstruction(instruction);
+        String contractSection = contractContext.isEmpty()
+                ? ""
+                : "\n\n" + contractContext;
         return "Attempt: " + attempt
-                + "\n\nApproved engineering plan:\n" + truncateForInlineLog(planContent, 12000)
+                + "\n\nApproved engineering plan:\n" + truncateForInlineLogText(planContent, 12000)
                 + "\n\nTask title:\n" + taskTitle
-                + "\n\nTask instruction:\n" + instruction
-                + "\n\nCurrent source tree:\n" + truncateForInlineLog(snapshot, 24000);
+                + "\n\nTask instruction:\n" + cleanInstruction
+                + contractSection
+                + retrySection
+                + "\n\nCurrent source tree:\n" + truncateForInlineLogText(snapshot, 24000);
     }
 
     private String truncateAiLog(String value) {
@@ -581,6 +958,10 @@ public class AgentService {
     }
 
     private String truncateForInlineLog(String value, int limit) {
+        return truncateForInlineLogText(value, limit);
+    }
+
+    private static String truncateForInlineLogText(String value, int limit) {
         String text = value == null ? "" : value;
         if (text.length() <= limit) {
             return text;
@@ -594,6 +975,32 @@ public class AgentService {
 
     static int policyRewriteAttemptsForTest() {
         return POLICY_REWRITE_ATTEMPTS;
+    }
+
+    static int contextNegotiationRoundsForTest() {
+        return CONTEXT_NEGOTIATION_ROUNDS;
+    }
+
+    static String taskOperationsRequestForAiLogForTest(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, int attempt) {
+        return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, attempt);
+    }
+
+    static String taskCompletionMessageForTest(String taskTitle, boolean hasNextTask, boolean buildRequiredAfter, boolean chinese) {
+        return taskCompletionMessage(taskTitle, hasNextTask, buildRequiredAfter, chinese);
+    }
+
+    private static String taskCompletionMessage(String taskTitle, boolean hasNextTask, boolean buildRequiredAfter, boolean chinese) {
+        String title = taskTitle == null ? "" : taskTitle;
+        String base = (chinese ? "已完成：" : "Done: ") + title;
+        if (buildRequiredAfter) {
+            return base + (chinese
+                    ? "。此任务要求构建验证，请现在构建确认。"
+                    : ". This task requires build verification; build now to confirm.");
+        }
+        if (hasNextTask) {
+            return base + (chinese ? "。可以继续执行下一步。" : ". Continue with the next step.");
+        }
+        return base + (chinese ? "。所有任务已完成，可以构建。" : ". All tasks are complete; ready to build.");
     }
 
     private CapabilityAssessment assessCapability(String text) {
@@ -635,6 +1042,7 @@ public class AgentService {
         if (chinese) {
             return "根据下面的构建失败日志修复当前源码。只做最小必要改动，不要重新生成整个项目，不要删除无关功能。"
                     + "如果错误来自依赖策略，请改用当前依赖模式允许的 Android SDK/Java/XML 实现。"
+                    + "如果日志包含 Could not find <group:artifact:version>，说明该依赖在配置仓库中不存在：删除它，或替换为已验证依赖（" + DependencyCatalog.coordinatesSummary() + "）。"
                     + "如果是 javac 编译错误，必须逐条处理所有 diagnostics，不要只修第一条；"
                     + "所有方法调用必须存在且参数个数/类型匹配；所有 DTO/model 字段访问必须真实存在且可见，例如 item.total 要求 CategorySum 声明 total 字段或提供对应 getter；private 字段要改用 getter/setter 或同步调整 DTO 字段可见性；"
                     + "统计/汇总 DTO 给 Adapter 展示时，不要访问未声明的 item.categoryName、item.percent 等字段；要么补齐 DTO 字段/getter，要么把 Adapter 改为真实存在的字段。DAO/helper 构造函数必须按声明传参，例如 CategoryDAO(Context) 不能传 DBHelper，必须改传 context 或同步修改构造函数与所有调用点。"
@@ -646,6 +1054,7 @@ public class AgentService {
                     + "所有 R.* 代码引用和 XML 中的 @mipmap/@style/@drawable/@string/@color/@layout 引用都必须有对应资源，缺失时补资源或改用已有资源。\n\n构建日志：\n" + log;
         }
         return "Repair the current source based on the build failure log below. Make the smallest necessary changes, do not regenerate the whole project, and do not remove unrelated features. "
+                + "If the log contains 'Could not find <group:artifact:version>', that dependency does not exist in the configured repositories: remove it or replace it with a verified catalog library (" + DependencyCatalog.coordinatesSummary() + "). "
                 + "If the error comes from dependency policy, rewrite the implementation using Android SDK/Java/XML APIs allowed by the active dependency mode. "
                 + "If these are javac diagnostics, fix every diagnostic, not just the first one. Every method call must have an existing declaration with matching argument count and types. Every direct DTO/model field access must actually exist and be visible; for example item.total requires CategorySum to declare total or expose a matching getter. Use getters/setters or adjust DTO field visibility consistently. When changing an Activity or Adapter, update the corresponding DAO, model, and helper APIs in the same repair. "
                 + "For aggregate/statistics DTOs used by adapters, do not access undeclared item.categoryName, item.percent, or similar fields; either add DTO fields/getters or update the adapter to real fields. DAO/helper constructor calls must pass the declared type, e.g. CategoryDAO(Context) cannot receive DBHelper; pass context or update the constructor and every caller consistently. "
@@ -664,7 +1073,14 @@ public class AgentService {
     }
 
     private void ensureImplementationTasks(long projectId, Long linkedBuildJobId, ProjectPlanRecord plan, boolean chinese) throws Exception {
-        if (!repository.listProjectTasks(projectId).isEmpty()) {
+        List<ProjectTaskRecord> existingTasks = repository.listProjectTasks(projectId);
+        if (!existingTasks.isEmpty()) {
+            List<ProjectTaskRecord> normalizedExisting = ImplementationTaskNormalizer.normalize(existingTasks);
+            if (ImplementationTaskNormalizer.canReplaceExistingTasks(existingTasks)
+                    && ImplementationTaskNormalizer.changed(existingTasks, normalizedExisting)) {
+                repository.replaceProjectTasks(projectId, normalizedExisting);
+                repository.addMessage(projectId, "assistant", taskListMessage(normalizedExisting, chinese), null);
+            }
             return;
         }
         String tasksJson = recordCloudAiCall(
@@ -673,7 +1089,7 @@ public class AgentService {
                 chinese ? "云端 AI · 执行任务拆分" : "Cloud AI · implementation task split",
                 "Approved engineering plan:\n\n" + plan.content,
                 () -> openAiClient.createImplementationTasks(plan.content, chinese));
-        List<ProjectTaskRecord> tasks = ImplementationTaskParser.fromJson(tasksJson);
+        List<ProjectTaskRecord> tasks = ImplementationTaskNormalizer.normalize(ImplementationTaskParser.fromJson(tasksJson));
         repository.replaceProjectTasks(projectId, tasks);
         repository.addMessage(projectId, "assistant", taskListMessage(tasks, chinese), null);
     }

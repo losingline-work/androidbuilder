@@ -127,6 +127,125 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void cloudPolicyRewritePromptPreservesExactPolicyError() {
+        String prompt = OpenAiClient.policyRewriteUserPromptForTest(
+                "Add add screen",
+                "Generated source policy blocked missing XML resource reference: @color/primary in styles.xml.",
+                "--- app/src/main/res/values/styles.xml ---\n<item name=\"colorPrimary\">@color/primary</item>",
+                3);
+
+        assertTrue(OpenAiClient.policyRewriteSystemPromptForTest(false).contains("concise retry hint"));
+        assertTrue(prompt.contains("@color/primary"));
+        assertTrue(prompt.contains("styles.xml"));
+        assertTrue(prompt.contains("attempt 3"));
+        assertTrue(prompt.contains("Do not bypass"));
+    }
+
+    @Test
+    public void cloudBuildTriagePromptAsksForFocusedRepairHint() {
+        String prompt = OpenAiClient.buildFailureTriageUserPromptForTest(
+                "AAPT: error: resource color/primary not found.",
+                "--- app/src/main/res/values/styles.xml ---\n<item name=\"colorPrimary\">@color/primary</item>");
+
+        assertTrue(OpenAiClient.buildFailureTriageSystemPromptForTest(false).contains("focused repair hint"));
+        assertTrue(prompt.contains("resource color/primary not found"));
+        assertTrue(prompt.contains("Source API/resource digest"));
+    }
+
+    @Test
+    public void contextNegotiationPromptRequestsStructuredJson() {
+        String system = OpenAiClient.contextNegotiationSystemPromptForTest(false);
+        String user = OpenAiClient.contextNegotiationUserPromptForTest(
+                "# Engineering Plan\nUpdate records",
+                "Fix DAO mismatch",
+                "Make RecordDao constructor match callers",
+                "--- app/src/main/java/com/example/RecordDao.java ---\nclass RecordDao {}",
+                "- Keep CSV export",
+                "Generated source policy blocked constructor argument mismatch.",
+                false);
+
+        assertTrue(system.contains("Return only compact JSON"));
+        assertTrue(system.contains("neededFiles"));
+        assertTrue(system.contains("patchIntent"));
+        assertTrue(user.contains("Previous failure summary"));
+        assertTrue(user.contains("Fix DAO mismatch"));
+        assertTrue(user.contains("Current source snapshot"));
+    }
+
+    @Test
+    public void taskOperationsUserPromptIncludesRetryContext() {
+        String prompt = OpenAiClient.taskOperationsUserPromptForTest(
+                "# Engineering Plan\nUpdate DAO",
+                "Fix DAO",
+                "Synchronize constructor",
+                "--- app/src/main/java/com/example/RecordDao.java ---\nclass RecordDao {}",
+                "- Keep export screen",
+                "This is a retry or repair of an existing source tree.\nDo not recreate the project.");
+
+        assertTrue(prompt.contains("Recent user requirements and clarifications"));
+        assertTrue(prompt.contains("Additional retry/repair context"));
+        assertTrue(prompt.contains("Do not recreate the project"));
+        assertTrue(prompt.contains("Execute exactly this task"));
+    }
+
+    @Test
+    public void taskOperationsUserPromptRendersHermesTaskContract() throws Exception {
+        String instruction = HermesTaskContractCodec.appendToInstruction(
+                "Create main layout.",
+                HermesTaskContractCodec.fromJson(new org.json.JSONObject("{"
+                        + "\"allowedPaths\":[\"app/src/main/res/layout/activity_main.xml\"],"
+                        + "\"expectedFiles\":[\"app/src/main/res/layout/activity_main.xml\"],"
+                        + "\"acceptanceChecks\":[\"No missing IDs\"]"
+                        + "}")));
+
+        String prompt = OpenAiClient.taskOperationsUserPromptForTest(
+                "# Engineering Plan\nCreate UI",
+                "Write layout",
+                instruction,
+                "(empty)",
+                "",
+                "");
+
+        assertTrue(prompt.contains("Instruction: Create main layout."));
+        assertTrue(prompt.contains("Hermes task contract"));
+        assertTrue(prompt.contains("allowedPaths: app/src/main/res/layout/activity_main.xml"));
+        assertTrue(prompt.contains("expectedFiles: app/src/main/res/layout/activity_main.xml"));
+        assertTrue(prompt.contains("acceptanceChecks: No missing IDs"));
+        assertFalse(prompt.contains(HermesTaskContractCodec.START));
+    }
+
+    @Test
+    public void implementationTaskPromptKeepsImplementationTaskListCompact() {
+        String prompt = OpenAiClient.tasksSystemPromptForTest(false);
+
+        assertTrue(prompt.contains("Use 3 to 6 tasks"));
+        assertTrue(prompt.contains("Group related values, themes, drawables, menu XML, and layout XML"));
+        assertTrue(prompt.contains("Do not split values, themes, drawables, menu, layout, and Java wiring into separate tasks unless"));
+        assertTrue(prompt.contains("Escape double quotes inside JSON string values"));
+        assertTrue(prompt.contains("allowedPaths"));
+        assertTrue(prompt.contains("expectedFiles"));
+        assertTrue(prompt.contains("acceptanceChecks"));
+        assertTrue(prompt.contains("buildRequiredAfter"));
+    }
+
+    @Test
+    public void hermesReviewPromptRequestsStructuredDecision() {
+        String system = OpenAiClient.hermesReviewSystemPromptForTest(false);
+        String user = OpenAiClient.hermesReviewUserPromptForTest(
+                "Fix DAO",
+                "Synchronize DAO and caller",
+                "--- app/src/main/java/com/example/RecordDao.java ---\nclass RecordDao {}",
+                "{\"summary\":\"Changed DAO\",\"operations\":[]}",
+                "Patch existing DAO only.");
+
+        assertTrue(system.contains("ok"));
+        assertTrue(system.contains("rewrite"));
+        assertTrue(system.contains("fallback"));
+        assertTrue(user.contains("Generated operations JSON"));
+        assertTrue(user.contains("Context Scout notes"));
+    }
+
+    @Test
     public void normalizesDeepSeekOfficialAndOpenAiCompatibleBaseUrls() {
         assertEquals("https://api.deepseek.com/chat/completions",
                 OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_DEEPSEEK, "https://api.deepseek.com"));

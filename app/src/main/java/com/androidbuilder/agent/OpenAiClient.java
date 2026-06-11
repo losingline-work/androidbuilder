@@ -120,15 +120,57 @@ public class OpenAiClient {
     }
 
     public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, boolean chinese) throws Exception {
-        String requirementsSection = recentRequirements == null || recentRequirements.trim().isEmpty()
-                ? ""
-                : "\n\nRecent user requirements and clarifications (honor these even if the plan omits them):\n" + recentRequirements.trim();
-        String prompt = "Approved engineering plan:\n\n" + plan +
-                requirementsSection +
-                "\n\nCurrent source tree:\n" + sourceSnapshot +
-                "\n\nExecute exactly this task:\nTitle: " + taskTitle +
-                "\nInstruction: " + taskInstruction;
-        return completeChat(taskOperationsSystemPrompt(chinese), java.util.Collections.emptyList(), prompt, 0.2, chinese, CODING_READ_TIMEOUT_MS);
+        return createTaskOperations(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, "", chinese);
+    }
+
+    public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, boolean chinese) throws Exception {
+        return completeChat(
+                taskOperationsSystemPrompt(chinese),
+                java.util.Collections.emptyList(),
+                taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext),
+                0.2,
+                chinese,
+                CODING_READ_TIMEOUT_MS);
+    }
+
+    public String negotiateTaskContext(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String previousFailure, boolean chinese) throws Exception {
+        return completeChat(
+                contextNegotiationSystemPrompt(chinese),
+                java.util.Collections.emptyList(),
+                contextNegotiationUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, previousFailure, chinese),
+                0.0,
+                chinese,
+                DEFAULT_READ_TIMEOUT_MS);
+    }
+
+    public String reviewTaskOperations(String taskTitle, String taskInstruction, String sourceSnapshot, String operationsJson, String contextScoutNotes, boolean chinese) throws Exception {
+        return completeChat(
+                hermesReviewSystemPrompt(chinese),
+                java.util.Collections.emptyList(),
+                hermesReviewUserPrompt(taskTitle, taskInstruction, sourceSnapshot, operationsJson, contextScoutNotes),
+                0.0,
+                chinese,
+                DEFAULT_READ_TIMEOUT_MS);
+    }
+
+    public String createPolicyRewriteHint(String taskInstruction, String policyError, String focusedSnapshot, int attempt, boolean chinese) throws Exception {
+        return completeChat(
+                policyRewriteSystemPrompt(chinese),
+                java.util.Collections.emptyList(),
+                policyRewriteUserPrompt(taskInstruction, policyError, focusedSnapshot, attempt),
+                0.0,
+                chinese,
+                DEFAULT_READ_TIMEOUT_MS).trim();
+    }
+
+    public String createBuildFailureTriageHint(String buildLog, String focusedSnapshot, boolean chinese) throws Exception {
+        return completeChat(
+                buildFailureTriageSystemPrompt(chinese),
+                java.util.Collections.emptyList(),
+                buildFailureTriageUserPrompt(buildLog, focusedSnapshot),
+                0.0,
+                chinese,
+                DEFAULT_READ_TIMEOUT_MS).trim();
     }
 
     private String completeChat(String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean chinese, int readTimeoutMs) throws Exception {
@@ -577,6 +619,22 @@ public class OpenAiClient {
         return value == '\'' || value == '"' || value == '`' || value == ';';
     }
 
+    private static String truncatePrompt(String value, int limit) {
+        String text = value == null ? "" : value;
+        if (text.length() <= limit) {
+            return text;
+        }
+        return text.substring(0, Math.max(0, limit - 15)) + "\n...[truncated]";
+    }
+
+    private static String tailPrompt(String value, int limit) {
+        String text = value == null ? "" : value;
+        if (text.length() <= limit) {
+            return text;
+        }
+        return "...[truncated]\n" + text.substring(text.length() - limit);
+    }
+
     private String specSystemPrompt(boolean chinese) {
         String language = chinese ? "Use Simplified Chinese for app names, field labels and user-facing text." : "Use English for app names, field labels and user-facing text.";
         return "You are executing an approved engineering plan for a small native Android app. " +
@@ -614,11 +672,23 @@ public class OpenAiClient {
     }
 
     private String tasksSystemPrompt(boolean chinese) {
+        return tasksSystemPromptText(chinese);
+    }
+
+    static String tasksSystemPromptForTest(boolean chinese) {
+        return tasksSystemPromptText(chinese);
+    }
+
+    private static String tasksSystemPromptText(boolean chinese) {
         String language = chinese ? "Use Simplified Chinese for task titles." : "Use English for task titles.";
         return "You split an approved Android engineering plan into a short sequential implementation task list. " +
-                "Return only compact JSON with a tasks array. Each task must have title and instruction. " +
-                "Use 5 to 12 tasks. Keep each task small enough to implement with one or two file writes. " +
+                "Return only compact JSON with a tasks array. Each task must have title and instruction. Escape double quotes inside JSON string values, for example use \\\"...\\\" for Gradle/XML snippets, or use single quotes in prose. " +
+                "Each task may also include Hermes task contract fields: allowedPaths, expectedFiles, forbiddenPaths, acceptanceChecks, riskNotes, dependsOn, produces, rollbackScope, riskLevel, and buildRequiredAfter. Use arrays for list fields and boolean for buildRequiredAfter. " +
+                "Use 3 to 6 tasks. Keep each task as a cohesive coarse phase rather than many tiny file-write tasks. " +
                 "The first task should create or update the Gradle project skeleton when needed, and later tasks should add data, screens, interactions, and polish. " +
+                "Keep Gradle/build configuration in its own task when it changes. Group related values, themes, drawables, menu XML, and layout XML when they support the same screen or navigation shell. " +
+                "Do not split values, themes, drawables, menu, layout, and Java wiring into separate tasks unless the plan is unusually large or a previous validation failure requires a narrower retry. " +
+                "Do not combine Gradle configuration with Java source wiring in the same task. " +
                 "If the approved plan requires a version upgrade, include an implementation task that updates app/build.gradle versionCode and versionName according to that plan. " +
                 "Do not include build or install tasks. " + language;
     }
@@ -631,11 +701,36 @@ public class OpenAiClient {
         return taskOperationsSystemPromptText(chinese, "Dependency mode is offline safe.");
     }
 
+    static String taskOperationsUserPromptForTest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext) {
+        return taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext);
+    }
+
+    private static String taskOperationsUserPrompt(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext) {
+        String requirementsSection = recentRequirements == null || recentRequirements.trim().isEmpty()
+                ? ""
+                : "\n\nRecent user requirements and clarifications (honor these even if the plan omits them):\n" + recentRequirements.trim();
+        String retrySection = retryContext == null || retryContext.trim().isEmpty()
+                ? ""
+                : "\n\nAdditional retry/repair context:\n" + retryContext.trim();
+        String cleanInstruction = HermesTaskContractCodec.stripFromInstruction(taskInstruction);
+        String contractContext = HermesTaskContractCodec.promptContextFromInstruction(taskInstruction);
+        String contractSection = contractContext.isEmpty()
+                ? ""
+                : "\n\n" + contractContext;
+        return "Approved engineering plan:\n\n" + plan
+                + requirementsSection
+                + retrySection
+                + "\n\nCurrent source tree:\n" + sourceSnapshot
+                + "\n\nExecute exactly this task:\nTitle: " + taskTitle
+                + "\nInstruction: " + cleanInstruction
+                + contractSection;
+    }
+
     private static String taskOperationsSystemPromptText(boolean chinese, String dependencyPolicyPrompt) {
         String language = chinese ? "Use Simplified Chinese for user-facing app text when appropriate." : "Use English for user-facing app text.";
         return "You execute one small Android coding task by returning file operations only. " +
                 "Return only compact JSON with summary and operations. operations is an array of objects with action, path, and content. " +
-                "Supported actions are write and delete. Use write for full-file replacement. Use relative POSIX paths only. Prefer one or two file operations. " +
+                "Supported actions are write and delete. Use write for full-file replacement. Use relative POSIX paths only. Simple tasks should still prefer one or two file operations; a resource or layout phase may return a small cohesive batch when those files must be written together. " +
                 "Keep each source file focused and small, ideally under about 250 lines; split large screens into separate Adapter, Helper, Dialog, or model classes instead of one giant file, so each write replaces a small file. " +
                 "Do not return an empty operations array; every task response must include at least one write or delete operation that advances the task. " +
                 "Do not return markdown, comments outside JSON, explanations, build logs, or base64. " +
@@ -649,6 +744,135 @@ public class OpenAiClient {
                 "For aggregate/statistics DTOs used by adapters, do not access item.categoryName, item.percent, or similar display fields unless that exact field exists in the DTO; otherwise add fields/getters or update adapter binding to existing fields. For DAO/helper wiring, pass the exact constructor type, e.g. do not call new CategoryDAO(dbHelper) when CategoryDAO(Context) is declared; use context or change the constructor and all callers consistently. " +
                 "Declare every view variable with findViewById from the Activity, inflated root view, or dialog view before using it; never use bare view ids such as fabAdd.setOnClickListener or textIncomeAmount.setText. " +
                 "Every R.id.* referenced by Java must exist as android:id=\"@+id/...\" in XML, every R.* resource used in code must exist, and every XML reference such as @mipmap/ic_launcher, @style/AppTheme, @drawable/name, @string/name, @color/name, or @layout/name must have a matching resource file or values entry. " + language;
+    }
+
+    private String contextNegotiationSystemPrompt(boolean chinese) {
+        return contextNegotiationSystemPromptText(chinese);
+    }
+
+    static String contextNegotiationSystemPromptForTest(boolean chinese) {
+        return contextNegotiationSystemPromptText(chinese);
+    }
+
+    private static String contextNegotiationSystemPromptText(boolean chinese) {
+        String language = chinese ? "Use Simplified Chinese for notes." : "Use English for notes.";
+        return "You are Hermes Context Scout, the context negotiation step before Android code generation. "
+                + "Do not write code and do not return file operations. "
+                + "Decide whether the supplied source snapshot is enough for the next small patch. "
+                + "Return only compact JSON with keys ready, neededFiles, focusTerms, riskNotes, and patchIntent. "
+                + "neededFiles must contain relative POSIX paths only. patchIntent must be concise and must tell the coding model to modify existing files, not recreate the project. "
+                + language;
+    }
+
+    static String contextNegotiationUserPromptForTest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String previousFailure, boolean chinese) {
+        return contextNegotiationUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, previousFailure, chinese);
+    }
+
+    private static String contextNegotiationUserPrompt(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String previousFailure, boolean chinese) {
+        String requirements = recentRequirements == null || recentRequirements.trim().isEmpty()
+                ? "(none)"
+                : recentRequirements.trim();
+        String failure = previousFailure == null || previousFailure.trim().isEmpty()
+                ? "(none)"
+                : truncatePrompt(previousFailure.trim(), 3000);
+        return "Approved engineering plan:\n" + plan
+                + "\n\nTask title:\n" + taskTitle
+                + "\n\nTask instruction:\n" + taskInstruction
+                + "\n\nRecent user requirements:\n" + requirements
+                + "\n\nPrevious failure summary:\n" + failure
+                + "\n\nCurrent source snapshot:\n" + truncatePrompt(sourceSnapshot, 12000)
+                + "\n\nReturn JSON only. If more context is needed, name the exact source files or symbols. The patchIntent must say how to patch the existing source without recreating the project.";
+    }
+
+    private String hermesReviewSystemPrompt(boolean chinese) {
+        return hermesReviewSystemPromptText(chinese);
+    }
+
+    static String hermesReviewSystemPromptForTest(boolean chinese) {
+        return hermesReviewSystemPromptText(chinese);
+    }
+
+    private static String hermesReviewSystemPromptText(boolean chinese) {
+        String language = chinese ? "Use Simplified Chinese for summary and rewriteInstruction." : "Use English for summary and rewriteInstruction.";
+        return "You are HermesReviewer, a pre-apply reviewer for Android file operations. "
+                + "Review the generated operations against the task, source snapshot, and Context Scout notes. "
+                + "Return only compact JSON with keys decision, summary, and rewriteInstruction. "
+                + "decision must be one of ok, rewrite, or fallback. "
+                + "Use ok when the patch is focused and cross-file APIs look consistent. "
+                + "Use rewrite when the patch is too broad, recreates the project, omits a needed paired file, or creates obvious API/resource mismatches. "
+                + "Use fallback only if the input is insufficient to review. Do not return markdown. " + language;
+    }
+
+    static String hermesReviewUserPromptForTest(String taskTitle, String taskInstruction, String sourceSnapshot, String operationsJson, String contextScoutNotes) {
+        return hermesReviewUserPrompt(taskTitle, taskInstruction, sourceSnapshot, operationsJson, contextScoutNotes);
+    }
+
+    private static String hermesReviewUserPrompt(String taskTitle, String taskInstruction, String sourceSnapshot, String operationsJson, String contextScoutNotes) {
+        String notes = contextScoutNotes == null || contextScoutNotes.trim().isEmpty()
+                ? "(none)"
+                : contextScoutNotes.trim();
+        return "Task title:\n" + taskTitle
+                + "\n\nTask instruction:\n" + taskInstruction
+                + "\n\nContext Scout notes:\n" + truncatePrompt(notes, 3000)
+                + "\n\nCurrent source snapshot:\n" + truncatePrompt(sourceSnapshot, 12000)
+                + "\n\nGenerated operations JSON:\n" + truncatePrompt(operationsJson, 12000)
+                + "\n\nReturn JSON only. If decision is rewrite, rewriteInstruction must be concrete and scoped to one retry.";
+    }
+
+    private String policyRewriteSystemPrompt(boolean chinese) {
+        return policyRewriteSystemPromptText(chinese);
+    }
+
+    static String policyRewriteSystemPromptForTest(boolean chinese) {
+        return policyRewriteSystemPromptText(chinese);
+    }
+
+    private static String policyRewriteSystemPromptText(boolean chinese) {
+        String language = chinese ? "Use Simplified Chinese." : "Use English.";
+        return "You are a cloud Android source guard reviewer. Produce one concise retry hint for the next coding attempt. "
+                + "Focus only on the deterministic policy error and the source digest. Preserve the exact blocked file and symbol. "
+                + "For missing XML resources, say which values or resource XML file to add, or which caller to change to an existing resource. "
+                + "For missing methods/fields, say which API to add or which caller to update. For Java lambdas, require anonymous inner classes and no arrow tokens. "
+                + "Do not bypass AndroidSourceGuard, do not suggest weakening validation, and do not return markdown. "
+                + "Return plain text only, one or two short sentences. " + language;
+    }
+
+    static String policyRewriteUserPromptForTest(String taskInstruction, String policyError, String focusedSnapshot, int attempt) {
+        return policyRewriteUserPrompt(taskInstruction, policyError, focusedSnapshot, attempt);
+    }
+
+    private static String policyRewriteUserPrompt(String taskInstruction, String policyError, String focusedSnapshot, int attempt) {
+        return "Retry attempt " + attempt
+                + "\n\nOriginal task instruction:\n" + truncatePrompt(taskInstruction, 1800)
+                + "\n\nDeterministic policy error:\n" + truncatePrompt(policyError, 1200)
+                + "\n\nSource API/resource digest:\n" + truncatePrompt(focusedSnapshot, 4000)
+                + "\n\nReturn the smallest useful retry hint. Do not bypass validation.";
+    }
+
+    private String buildFailureTriageSystemPrompt(boolean chinese) {
+        return buildFailureTriageSystemPromptText(chinese);
+    }
+
+    static String buildFailureTriageSystemPromptForTest(boolean chinese) {
+        return buildFailureTriageSystemPromptText(chinese);
+    }
+
+    private static String buildFailureTriageSystemPromptText(boolean chinese) {
+        String language = chinese ? "Use Simplified Chinese." : "Use English.";
+        return "You are a cloud Android build-log triage reviewer. Produce one focused repair hint for the coding model. "
+                + "Identify the root source error from the Gradle/AAPT/javac log, ignore noisy stack frames, and name the exact file/resource/symbol to add or change. "
+                + "Prefer Java + XML + Android SDK fixes. Do not suggest Kotlin, Compose, DataBinding, ViewBinding, new dependencies, or validation bypasses. "
+                + "Return plain text only, one or two short sentences. " + language;
+    }
+
+    static String buildFailureTriageUserPromptForTest(String buildLog, String focusedSnapshot) {
+        return buildFailureTriageUserPrompt(buildLog, focusedSnapshot);
+    }
+
+    private static String buildFailureTriageUserPrompt(String buildLog, String focusedSnapshot) {
+        return "Build log tail:\n" + tailPrompt(buildLog, 5000)
+                + "\n\nSource API/resource digest:\n" + truncatePrompt(focusedSnapshot, 4000)
+                + "\n\nReturn the smallest focused repair hint.";
     }
 
     private static String dependencyProvidedResourcePolicyPrompt() {
@@ -671,7 +895,19 @@ public class OpenAiClient {
     }
 
     private String planSystemPrompt(boolean chinese) {
-        return planSystemPromptText(chinese);
+        // The planner must know the real dependency capability, otherwise plans bake in libraries
+        // the guard will reject and every task fights the policy (e.g. MPAndroidChart loops).
+        return planSystemPromptText(chinese) + " " + planDependencyCapabilityPrompt();
+    }
+
+    private String planDependencyCapabilityPrompt() {
+        String mode = BuildBackendSettings.dependencyMode(context);
+        if (BuildBackendSettings.DEPENDENCY_ONLINE.equals(mode)) {
+            return "Dependency capability for this plan (supersedes the generic no-third-party rule): " +
+                    DependencyCatalog.promptSummary() +
+                    " Plan features only around these libraries, the trusted androidx/material groups, or the Android SDK.";
+        }
+        return "Dependency capability for this plan: builds run offline, so plan only Android SDK/Java/XML/SQLite features. Do not promise third-party chart, image, animation, or network libraries.";
     }
 
     static String planSystemPromptForTest(boolean chinese) {

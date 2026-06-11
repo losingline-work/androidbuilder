@@ -13,7 +13,7 @@ public class LocalGuardInstructionComposerTest {
                 "Update DBHelper and CategoryDao together.");
 
         assertTrue(instruction.startsWith("Create category DAO."));
-        assertTrue(instruction.contains("Local guard preflight"));
+        assertTrue(instruction.contains("Deterministic preflight"));
         assertTrue(instruction.contains("Update DBHelper and CategoryDao together."));
     }
 
@@ -36,7 +36,7 @@ public class LocalGuardInstructionComposerTest {
         String instruction = LocalGuardInstructionComposer.forPolicyRewrite(base, "Use SQLiteOpenHelper-compatible DBHelper API.");
 
         assertTrue(instruction.startsWith(base));
-        assertTrue(instruction.contains("Local guard policy-error hint"));
+        assertTrue(instruction.contains("Deterministic policy-error hint"));
         assertTrue(instruction.contains("Use SQLiteOpenHelper-compatible DBHelper API."));
     }
 

@@ -44,7 +44,7 @@ public class FileOperationsWriter {
         try {
             applyToDirectory(tempDir, taskOperations);
             DatabaseContractNormalizer.normalize(tempDir);
-            validateRequiredProjectFiles(tempDir);
+            validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {
                 sourceGuard.validate(tempDir);
             } catch (Exception error) {
@@ -75,12 +75,30 @@ public class FileOperationsWriter {
         }
     }
 
-    private void validateRequiredProjectFiles(File sourceDir) {
+    /**
+     * The project is built up incrementally across tasks (the first task scaffolds Gradle, a later
+     * task adds the Manifest, etc.), so we do NOT require all four files to exist after every task.
+     * We only forbid a task from deleting a required file that already existed — completeness is
+     * checked once at build time via {@link #firstMissingRequiredProjectFile(File)}.
+     */
+    private void validateNoRequiredFileRemoved(File originalDir, File appliedDir) {
         for (String path : REQUIRED_PROJECT_FILES) {
-            if (!new File(sourceDir, path).isFile()) {
-                throw new IllegalArgumentException("Generated source policy blocked missing required project file: " + path + ".");
+            boolean existedBefore = new File(originalDir, path).isFile();
+            boolean existsAfter = new File(appliedDir, path).isFile();
+            if (existedBefore && !existsAfter) {
+                throw new IllegalArgumentException("Generated source policy blocked deletion of required project file: " + path + ". Keep it in the project.");
             }
         }
+    }
+
+    /** Returns the first required project file missing from {@code sourceDir}, or null if complete. */
+    public static String firstMissingRequiredProjectFile(File sourceDir) {
+        for (String path : REQUIRED_PROJECT_FILES) {
+            if (sourceDir == null || !new File(sourceDir, path).isFile()) {
+                return path;
+            }
+        }
+        return null;
     }
 
     private void replaceSourceDirectory(File sourceDir, File tempDir) throws IOException {
