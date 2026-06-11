@@ -7,7 +7,7 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId "com.androidbuilder"
-        minSdk 28
+        minSdk 24
         // Embedded Termux-like runtimes execute binaries from the app private
         // directory. Android blocks that for apps targeting API 29+.
         targetSdk 28

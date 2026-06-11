@@ -7,7 +7,7 @@ import java.util.Locale;
 
 /**
  * Curated capability libraries verified for this pipeline: consumable from plain Java (no Kotlin
- * plugin, no annotation processor), compatible with AGP 8.7.3 / compileSdk 34 / minSdk 28+, and
+ * plugin, no annotation processor), compatible with AGP 8.7.3 / compileSdk 34 / minSdk 24+, and
  * resolvable from the injected repositories (Aliyun mirrors + Google/Maven Central + JitPack).
  *
  * <p>This is the Tier-1 layer of the dependency policy: entries here are always approved in online

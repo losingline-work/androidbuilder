@@ -69,7 +69,7 @@ public class GeneratedProjectWriter {
                 "    id 'com.android.application'\n" +
                 "}\n\n" +
                 "android { namespace '" + spec.packageName + "'; compileSdk 34\n" +
-                "    defaultConfig { applicationId '" + spec.packageName + "'; minSdk 31; targetSdk 34; versionCode 1; versionName '1.0' }\n" +
+                "    defaultConfig { applicationId '" + spec.packageName + "'; minSdk 24; targetSdk 34; versionCode 1; versionName '1.0' }\n" +
                 "    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }\n" +
                 "}\n";
     }

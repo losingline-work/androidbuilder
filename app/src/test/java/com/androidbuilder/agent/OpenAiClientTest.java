@@ -229,6 +229,21 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void generatedProjectPromptsUseApi24Minimum() {
+        String projectPrompt = OpenAiClient.projectFilesSystemPromptForTest(false);
+        String taskPrompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(projectPrompt.contains("minSdk 24"));
+        assertTrue(taskPrompt.contains("minSdk 24"));
+        assertTrue(projectPrompt.contains("Android 7.0+ compatible"));
+        assertTrue(OpenAiClient.planSystemPromptForTest(false).contains("Android 7.0+ compatible"));
+        assertFalse(projectPrompt.contains("minSdk 31"));
+        assertFalse(taskPrompt.contains("minSdk 31"));
+        assertFalse(projectPrompt.contains("Android 12+"));
+        assertFalse(OpenAiClient.planSystemPromptForTest(false).contains("Android 12+"));
+    }
+
+    @Test
     public void hermesReviewPromptRequestsStructuredDecision() {
         String system = OpenAiClient.hermesReviewSystemPromptForTest(false);
         String user = OpenAiClient.hermesReviewUserPromptForTest(

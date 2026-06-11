@@ -110,7 +110,7 @@ public class FileOperationsWriterTest {
                 new FileOperation("write", "app/build.gradle",
                         "plugins { id 'com.android.application' }\n" +
                                 "android { namespace 'com.example'; compileSdk 34\n" +
-                                "    defaultConfig { applicationId 'com.example'; minSdk 31; targetSdk 34; versionCode 1; versionName '1.0' }\n" +
+                                "    defaultConfig { applicationId 'com.example'; minSdk 24; targetSdk 34; versionCode 1; versionName '1.0' }\n" +
                                 "}\n")));
 
         new FileOperationsWriter().apply(root, gradleOnly);
@@ -131,7 +131,7 @@ public class FileOperationsWriterTest {
         write(root, "app/build.gradle",
                 "plugins { id 'com.android.application' }\n" +
                         "android { namespace 'com.example'; compileSdk 34\n" +
-                        "    defaultConfig { applicationId 'com.example'; minSdk 31; targetSdk 34; versionCode 1; versionName '1.0' }\n" +
+                        "    defaultConfig { applicationId 'com.example'; minSdk 24; targetSdk 34; versionCode 1; versionName '1.0' }\n" +
                         "}\n");
         write(root, "app/src/main/AndroidManifest.xml", "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" />\n");
     }

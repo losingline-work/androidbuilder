@@ -39,6 +39,7 @@ public class GeneratedProjectWriterTest {
         assertTrue(rootBuild.contains("details.useVersion '1.8.22'"));
         assertTrue(appBuild.contains("sourceCompatibility JavaVersion.VERSION_1_8"));
         assertTrue(appBuild.contains("targetCompatibility JavaVersion.VERSION_1_8"));
+        assertTrue(appBuild.contains("minSdk 24"));
         assertFalse(appBuild.contains("VERSION_17"));
         assertTrue(settings.contains("https://maven.aliyun.com/repository/google"));
         assertTrue(settings.contains("https://maven.aliyun.com/repository/public"));

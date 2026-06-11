@@ -638,7 +638,7 @@ public class OpenAiClient {
     private String specSystemPrompt(boolean chinese) {
         String language = chinese ? "Use Simplified Chinese for app names, field labels and user-facing text." : "Use English for app names, field labels and user-facing text.";
         return "You are executing an approved engineering plan for a small native Android app. " +
-                "Respect the latest approved plan and project history. The target app must be Android 12+, Java + XML, SQLite, local-first. " +
+                "Respect the latest approved plan and project history. The target app must be Android 7.0+ compatible, Java + XML, SQLite, local-first. " +
                 "Do not introduce Compose or complex third-party dependencies. Keep source isolated and buildable. " +
                 VersionUpgradePolicy.prompt() + " " +
                 "Return only compact JSON with keys appName, packageName, description, entityName, primaryField, secondaryField. Use ASCII package names. " + language;
@@ -655,12 +655,12 @@ public class OpenAiClient {
     private static String projectFilesSystemPromptText(boolean chinese, String dependencyPolicyPrompt) {
         String language = chinese ? "Use Simplified Chinese for app names, labels, and user-facing text." : "Use English for app names, labels, and user-facing text.";
         return "You are the coding phase for an Android engineering agent. Implement the approved engineering plan by returning a complete buildable Android project source tree. " +
-                "Target Android 12+, Java + XML, SQLite/local-first when storage is needed. Do not use Kotlin, Compose, DataBinding, or ViewBinding. Avoid complex third-party dependencies. " +
+                "Target Android 7.0+ compatible apps, Java + XML, SQLite/local-first when storage is needed. Do not use Kotlin, Compose, DataBinding, or ViewBinding. Avoid complex third-party dependencies. " +
                 "Return only compact JSON and no markdown. The JSON object must contain appName, packageName, description, and files. " +
                 "files must be an array of objects with path and content. Paths must be relative POSIX paths. " +
                 "The file list must include settings.gradle, build.gradle, app/build.gradle, app/src/main/AndroidManifest.xml, all Java source files, XML layouts, and resources needed to compile. " +
                 "Keep each source file focused and small, ideally under about 250 lines; split large screens into separate Adapter, Helper, Dialog, or model classes instead of one giant file. " +
-                "Use Gradle plugin com.android.application 8.7.3, compileSdk 34, minSdk 31, targetSdk 34, and Java 8-compatible source/target. Do not use Java records, switch expressions, var, lambda arrow syntax, streams-heavy code, org.jetbrains.kotlin.android, kotlinOptions, Kotlin Gradle DSL, or any .kt file. Use anonymous listener classes instead of lambdas, and avoid arrow-style examples in comments/Javadocs/strings. " +
+                "Use Gradle plugin com.android.application 8.7.3, compileSdk 34, minSdk 24, targetSdk 34, and Java 8-compatible source/target. Do not use Java records, switch expressions, var, lambda arrow syntax, streams-heavy code, org.jetbrains.kotlin.android, kotlinOptions, Kotlin Gradle DSL, or any .kt file. Use anonymous listener classes instead of lambdas, and avoid arrow-style examples in comments/Javadocs/strings. " +
                 "Set android.namespace in app/build.gradle and do not set package=\"...\" in AndroidManifest.xml. " +
                 VersionUpgradePolicy.prompt() + " " +
                 dependencyProvidedResourcePolicyPrompt() + " " +
@@ -734,7 +734,7 @@ public class OpenAiClient {
                 "Keep each source file focused and small, ideally under about 250 lines; split large screens into separate Adapter, Helper, Dialog, or model classes instead of one giant file, so each write replaces a small file. " +
                 "Do not return an empty operations array; every task response must include at least one write or delete operation that advances the task. " +
                 "Do not return markdown, comments outside JSON, explanations, build logs, or base64. " +
-                "Keep the generated source buildable with Android Gradle Plugin 8.7.3, compileSdk 34, minSdk 31, targetSdk 34, and Java 8-compatible source/target. " +
+                "Keep the generated source buildable with Android Gradle Plugin 8.7.3, compileSdk 34, minSdk 24, targetSdk 34, and Java 8-compatible source/target. " +
                 "Use Java + XML only. Do not write Kotlin, .kt files, kotlinOptions, Kotlin Gradle plugins, DataBinding, ViewBinding, Compose, Java lambdas, or arrow syntax. Use anonymous listener classes instead of lambdas, and do not include arrow-style examples in comments/Javadocs/strings. Prefer org.json over Gson unless a Gson dependency is already declared and allowed. " + dependencyPolicyPrompt + " " +
                 "When writing Java files, keep package names consistent with Gradle namespace. Set android.namespace in app/build.gradle and do not set package=\"...\" in AndroidManifest.xml. " +
                 VersionUpgradePolicy.prompt() + " " +
@@ -916,9 +916,9 @@ public class OpenAiClient {
 
     private static String planSystemPromptText(boolean chinese) {
         if (chinese) {
-            return "你是安卓工程 Agent 的规划阶段。只输出工程计划，不写源码，不返回 JSON。内置约束：先澄清目标并拆解计划，不直接编码；目标 App 必须是 Android 12+、Java + XML、SQLite、本地优先；不使用 Kotlin、Compose、DataBinding、ViewBinding，不引入复杂第三方依赖；每次改动必须保持现有项目上下文、源码隔离、可构建。版本升级规则：若需求涉及 App 版本、发布版本、构建号、升级、发版、测试版或 APK 迭代，计划必须明确要求同步升级 app/build.gradle 里的 versionCode 和 versionName：versionCode 必须大于当前值，versionName 使用需求指定版本；未指定时递增补丁号；禁止降级。输出必须以“# 工程计划”开头，并包含这些小节：需求理解、页面/功能、数据结构、源码改动点、工程约束、测试清单、验收标准、构建风险。计划要具体到可以交给编码阶段执行。";
+            return "你是安卓工程 Agent 的规划阶段。只输出工程计划，不写源码，不返回 JSON。内置约束：先澄清目标并拆解计划，不直接编码；目标 App 必须兼容 Android 7.0+、Java + XML、SQLite、本地优先；不使用 Kotlin、Compose、DataBinding、ViewBinding，不引入复杂第三方依赖；每次改动必须保持现有项目上下文、源码隔离、可构建。版本升级规则：若需求涉及 App 版本、发布版本、构建号、升级、发版、测试版或 APK 迭代，计划必须明确要求同步升级 app/build.gradle 里的 versionCode 和 versionName：versionCode 必须大于当前值，versionName 使用需求指定版本；未指定时递增补丁号；禁止降级。输出必须以“# 工程计划”开头，并包含这些小节：需求理解、页面/功能、数据结构、源码改动点、工程约束、测试清单、验收标准、构建风险。计划要具体到可以交给编码阶段执行。";
         }
-        return "You are in the planning phase for an Android engineering agent. Output an engineering plan only: no source code and no JSON. Built-in constraints: clarify the goal and break down the plan before coding; the target app must be Android 12+, Java + XML, SQLite, local-first; do not use Kotlin, Compose, DataBinding, ViewBinding, or complex third-party dependencies; preserve project context, source isolation, and buildability on every change. " + VersionUpgradePolicy.prompt() + " The response must start with '# Engineering Plan' and include: Requirement Understanding, Screens/Features, Data Structure, Source Changes, Engineering Constraints, Test Checklist, Acceptance Criteria, Build Risks. Make it concrete enough for the coding phase to execute.";
+        return "You are in the planning phase for an Android engineering agent. Output an engineering plan only: no source code and no JSON. Built-in constraints: clarify the goal and break down the plan before coding; the target app must be Android 7.0+ compatible, Java + XML, SQLite, local-first; do not use Kotlin, Compose, DataBinding, ViewBinding, or complex third-party dependencies; preserve project context, source isolation, and buildability on every change. " + VersionUpgradePolicy.prompt() + " The response must start with '# Engineering Plan' and include: Requirement Understanding, Screens/Features, Data Structure, Source Changes, Engineering Constraints, Test Checklist, Acceptance Criteria, Build Risks. Make it concrete enough for the coding phase to execute.";
     }
 
     private static JSONObject message(String role, String content) throws Exception {

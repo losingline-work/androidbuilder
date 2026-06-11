@@ -50,7 +50,7 @@ Tier 3  开放坐标（用户可选开启；任意钉版本坐标，解析预检
 
 文件：`app/src/main/java/com/androidbuilder/agent/DependencyCatalog.java`（+ 测试）
 
-每个条目包含：`groupId:artifactId`、钉死版本（与 AGP 8.7.3 / compileSdk 34 / minSdk 28+ / 纯 Java 消费验证兼容）、所需仓库（mavenCentral/google/**jitpack**）、用途标签、给模型的使用提示（一句话）、所需 Manifest 权限（如网络库 → INTERNET）。
+每个条目包含：`groupId:artifactId`、钉死版本（与 AGP 8.7.3 / compileSdk 34 / minSdk 24+ / 纯 Java 消费验证兼容）、所需仓库（mavenCentral/google/**jitpack**）、用途标签、给模型的使用提示（一句话）、所需 Manifest 权限（如网络库 → INTERNET）。
 
 **v1 编目清单**（全部可从 Java 消费、无注解处理器要求）：
 
