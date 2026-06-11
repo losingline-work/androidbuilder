@@ -75,6 +75,7 @@ public class ProjectActivity extends BaseActivity {
     private final List<FileItem> fileItems = new ArrayList<>();
     private final List<ProjectTaskRecord> taskItems = new ArrayList<>();
     private final List<HermesAgentRunRecord> agentRunItems = new ArrayList<>();
+    private final List<AiConversationRecord> aiLogRecords = new ArrayList<>();
     private final List<ProjectLogEntry> logEntries = new ArrayList<>();
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedBuildLogJobIds = new HashSet<>();
@@ -89,6 +90,7 @@ public class ProjectActivity extends BaseActivity {
     private TextView status;
     private TextView currentPathText;
     private TextView logResultCount;
+    private TextView logDurationSummary;
     private View exportLogsButton;
     private EditText promptInput;
     private EditText logSearchInput;
@@ -157,6 +159,7 @@ public class ProjectActivity extends BaseActivity {
         currentPathText = findViewById(R.id.currentPathText);
         logSearchInput = findViewById(R.id.logSearchInput);
         logResultCount = findViewById(R.id.logResultCount);
+        logDurationSummary = findViewById(R.id.logDurationSummary);
         exportLogsButton = findViewById(R.id.exportLogsButton);
         adapter = new TimelineAdapter();
         messageList = findViewById(R.id.messageList);
@@ -619,8 +622,10 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void rebuildLogEntries() {
+        aiLogRecords.clear();
         logEntries.clear();
-        for (AiConversationRecord record : repository.listAiConversations(projectId)) {
+        aiLogRecords.addAll(repository.listAiConversations(projectId));
+        for (AiConversationRecord record : aiLogRecords) {
             logEntries.add(aiConversationLogEntry(record));
         }
         for (ChatMessage message : repository.listMessages(projectId)) {
@@ -640,6 +645,13 @@ public class ProjectActivity extends BaseActivity {
             logResultCount.setText(logResults.isEmpty()
                     ? getString(R.string.log_query_empty)
                     : getString(R.string.log_query_count, logResults.size(), logEntries.size()));
+        }
+        if (logDurationSummary != null) {
+            String summary = AiCallDurationSummaryPolicy.format(
+                    AiCallDurationSummaryPolicy.summarize(aiLogRecords),
+                    AppSettings.isChinese(this));
+            logDurationSummary.setText(summary);
+            logDurationSummary.setVisibility(summary.isEmpty() ? View.GONE : View.VISIBLE);
         }
         if (exportLogsButton != null) {
             exportLogsButton.setEnabled(!logResults.isEmpty());
