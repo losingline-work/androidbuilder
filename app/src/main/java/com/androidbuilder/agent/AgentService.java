@@ -1178,10 +1178,6 @@ public class AgentService {
                 String policyInstruction = PolicyRewriteInstruction.create(instruction, policyError.getMessage(), attempt + 1);
                 LocalGuardResult rewriteHint = rewritePolicyFailureWithLocalRules(projectId, linkedBuildJobId, policyError.getMessage(), chinese);
                 appendLocalGuardLog(logs, chinese ? "本地规则策略错误提示" : "Local rule policy-error hint", rewriteHint);
-                if (!rewriteHint.usable) {
-                    rewriteHint = rewritePolicyFailureWithCloudGuard(projectId, linkedBuildJobId, instruction, policyError.getMessage(), snapshot, attempt + 1, chinese);
-                    appendLocalGuardLog(logs, chinese ? "云端守卫策略错误提示" : "Cloud guard policy-error hint", rewriteHint);
-                }
                 instruction = rewriteHint.usable && rewriteHint.decision == LocalGuardResult.Decision.REWRITE
                         ? LocalGuardInstructionComposer.forPolicyRewrite(policyInstruction, rewriteHint.additionalInstruction)
                         : policyInstruction;
@@ -1306,24 +1302,6 @@ public class AgentService {
                     result);
         }
         return result;
-    }
-
-    private LocalGuardResult rewritePolicyFailureWithCloudGuard(long projectId, Long linkedBuildJobId, String taskInstruction, String policyError, String focusedSnapshot, int attempt, boolean chinese) {
-        String request = "Retry attempt: " + attempt
-                + "\n\nTask instruction:\n" + truncateForInlineLog(taskInstruction, 12000)
-                + "\n\nPolicy error:\n" + policyError
-                + "\n\nFocused source snapshot:\n" + truncateForInlineLog(focusedSnapshot, 24000);
-        try {
-            String hint = recordCloudAiCall(
-                    projectId,
-                    linkedBuildJobId,
-                    (chinese ? "云端 AI · 策略错误提示优化" : "Cloud AI · policy-error hint") + " #" + attempt,
-                    request,
-                    () -> openAiClient.createPolicyRewriteHint(taskInstruction, policyError, focusedSnapshot, attempt, chinese));
-            return cloudHintResult(chinese ? "云端模型已生成策略错误重试提示。" : "Cloud model produced a policy retry hint.", hint);
-        } catch (Exception error) {
-            return LocalGuardResult.unusable((chinese ? "云端策略提示不可用：" : "Cloud policy hint unavailable: ") + localGuardErrorMessage(error));
-        }
     }
 
     private LocalGuardResult triageBuildFailureWithCloudGuard(long projectId, Long linkedBuildJobId, String buildLog, String focusedSnapshot, boolean chinese) {
