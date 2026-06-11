@@ -6,8 +6,11 @@ public final class ProjectOperationStatus {
     private ProjectOperationStatus() {
     }
 
-    public static boolean shouldShow(String message, boolean busy, boolean autoExecutingPlan, BuildJobRecord latestJob) {
+    public static boolean shouldShow(String message, boolean busy, boolean autoExecutingPlan, BuildJobRecord latestJob, boolean taskPanelLive) {
         if (message == null || message.trim().isEmpty()) {
+            return false;
+        }
+        if (taskPanelLive) {
             return false;
         }
         return busy || autoExecutingPlan || isRunningJob(latestJob);

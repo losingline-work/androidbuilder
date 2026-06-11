@@ -1254,7 +1254,20 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private boolean shouldShowOperationStatus() {
-        return ProjectOperationStatus.shouldShow(operationStatus, busy, autoExecutingPlan, latestJob);
+        return ProjectOperationStatus.shouldShow(operationStatus, busy, autoExecutingPlan, latestJob, isTaskPanelLive());
+    }
+
+    private boolean isTaskPanelLive() {
+        if (taskItems.isEmpty()) {
+            return false;
+        }
+        for (ProjectTaskRecord task : taskItems) {
+            String status = task.status == null ? "pending" : task.status;
+            if ("running".equals(status)) {
+                return true;
+            }
+        }
+        return autoExecutingPlan && currentTaskIndex() >= 0;
     }
 
     private String operationElapsedText() {
