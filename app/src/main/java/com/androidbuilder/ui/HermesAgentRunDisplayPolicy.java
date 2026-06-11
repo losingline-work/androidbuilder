@@ -6,6 +6,8 @@ import org.json.JSONArray;
 import org.json.JSONException;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
@@ -32,6 +34,66 @@ public final class HermesAgentRunDisplayPolicy {
                     .append(join(locks));
         }
         return new Item(title, subtitle.toString(), iconText(status));
+    }
+
+    public static String activeSummary(List<HermesAgentRunRecord> runs, boolean chinese) {
+        List<HermesAgentRunRecord> active = activeRuns(runs);
+        if (active.isEmpty()) {
+            return "";
+        }
+        Collections.sort(active, new Comparator<HermesAgentRunRecord>() {
+            @Override
+            public int compare(HermesAgentRunRecord left, HermesAgentRunRecord right) {
+                if (left.batchIndex != right.batchIndex) {
+                    return left.batchIndex < right.batchIndex ? -1 : 1;
+                }
+                if (left.agentIndex != right.agentIndex) {
+                    return left.agentIndex < right.agentIndex ? -1 : 1;
+                }
+                return Long.compare(left.id, right.id);
+            }
+        });
+        StringBuilder builder = new StringBuilder();
+        builder.append(chinese ? "正在执行 " : "Running ")
+                .append(active.size())
+                .append(chinese ? " 个子 Agent：" : " sub-agent(s): ");
+        int count = 0;
+        for (HermesAgentRunRecord run : active) {
+            if (count > 0) {
+                builder.append(chinese ? "；" : "; ");
+            }
+            if (count >= 3) {
+                builder.append(chinese ? "还有 " : "+")
+                        .append(active.size() - count)
+                        .append(chinese ? " 个" : " more");
+                break;
+            }
+            int agent = Math.max(0, run.agentIndex) + 1;
+            String status = status(run);
+            builder.append("Agent ").append(agent)
+                    .append(chinese ? " " : " ")
+                    .append(statusLabel(status, chinese));
+            String firstLock = firstLockedPath(run.lockedPathsJson);
+            if (!firstLock.isEmpty()) {
+                builder.append(chinese ? " · " : " · ").append(firstLock);
+            }
+            count++;
+        }
+        return builder.toString();
+    }
+
+    private static List<HermesAgentRunRecord> activeRuns(List<HermesAgentRunRecord> runs) {
+        if (runs == null || runs.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<HermesAgentRunRecord> active = new ArrayList<>();
+        for (HermesAgentRunRecord run : runs) {
+            String status = status(run);
+            if ("running".equals(status) || "merge_pending".equals(status)) {
+                active.add(run);
+            }
+        }
+        return active;
     }
 
     private static String detail(HermesAgentRunRecord run, String status) {
@@ -104,6 +166,11 @@ public final class HermesAgentRunDisplayPolicy {
             }
         }
         return paths;
+    }
+
+    private static String firstLockedPath(String json) {
+        List<String> paths = lockedPaths(json);
+        return paths.isEmpty() ? "" : paths.get(0);
     }
 
     private static String join(List<String> values) {

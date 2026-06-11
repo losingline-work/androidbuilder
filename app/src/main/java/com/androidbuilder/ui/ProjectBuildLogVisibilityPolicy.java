@@ -24,7 +24,11 @@ public final class ProjectBuildLogVisibilityPolicy {
         if (job.logsPath == null || job.logsPath.trim().isEmpty()) {
             return false;
         }
-        if (phase.contains("embedded") || phase.contains("termux") || phase.contains("artifact_received") || phase.contains("repair")) {
+        if (phase.contains("embedded")
+                || phase.contains("termux")
+                || phase.contains("artifact_received")
+                || phase.contains("repair")
+                || phase.contains("coding_failed")) {
             return true;
         }
         return content.contains("正在根据构建日志修复") ||

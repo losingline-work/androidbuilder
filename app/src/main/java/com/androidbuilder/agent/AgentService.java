@@ -276,14 +276,14 @@ public class AgentService {
             throw new IllegalStateException(assessment.message(chinese));
         }
         BuildJobRecord job = repository.createBuildJob(projectId);
+        File jobDir = repository.jobDir(projectId, job.id);
+        File logs = new File(jobDir, "build.log");
         HermesExecutionRunRecord executionRun = null;
         List<ProjectTaskRecord> runningTasks = new ArrayList<>();
         try {
             repository.updateProjectPlanStatus(projectId, "coding", job.id);
             repository.updateBuildJob(job.id, "generating", "cloud_spec", null, null, null, 0);
             ensureImplementationTasks(projectId, job.id, plan, chinese);
-            File jobDir = repository.jobDir(projectId, job.id);
-            File logs = new File(jobDir, "build.log");
             File sourceDir = repository.sourceDir(projectId);
             int maxParallel = BuildBackendSettings.parallelAgentLimit(context);
             String baseSourceHash = safeSourceHash(sourceDir);
@@ -375,7 +375,11 @@ public class AgentService {
             if (executionRun != null) {
                 repository.updateHermesExecutionRun(executionRun.id, "failed", executionRun.baseSourceHash);
             }
-            repository.updateBuildJob(job.id, "failed", "coding_failed", null, null, errorMessage, job.retryCount);
+            try {
+                FileUtils.appendText(logs, (chinese ? "执行计划失败：" : "Plan execution failed: ") + errorMessage + "\n");
+            } catch (Exception ignored) {
+            }
+            repository.updateBuildJob(job.id, "failed", "coding_failed", logs.getAbsolutePath(), null, errorMessage, job.retryCount);
             repository.updateProjectPlanStatus(projectId, "planned", job.id);
             if (errorMessage.equals(rawErrorMessage)) {
                 throw error;

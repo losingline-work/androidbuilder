@@ -28,4 +28,11 @@ public class ProjectBuildLogVisibilityPolicyTest {
 
         assertFalse(ProjectBuildLogVisibilityPolicy.shouldShow(job, "Generated source for Demo. Tap Build to start the build."));
     }
+
+    @Test
+    public void showsFailedPlanExecutionWhenLogPathExists() {
+        BuildJobRecord job = new BuildJobRecord(8, 1, "failed", "coding_failed", "/tmp/build.log", null, "Task failed", 0, 0, 0);
+
+        assertTrue(ProjectBuildLogVisibilityPolicy.shouldShow(job, "并行执行下一批：UI"));
+    }
 }

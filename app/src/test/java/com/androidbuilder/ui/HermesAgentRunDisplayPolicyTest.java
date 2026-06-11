@@ -4,6 +4,9 @@ import com.androidbuilder.model.HermesAgentRunRecord;
 
 import org.junit.Test;
 
+import java.util.Arrays;
+import java.util.List;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -43,6 +46,31 @@ public class HermesAgentRunDisplayPolicyTest {
         assertEquals("⇄", HermesAgentRunDisplayPolicy.item(runWithStatus("merge_pending"), false).iconText);
         assertEquals("✓", HermesAgentRunDisplayPolicy.item(runWithStatus("done"), false).iconText);
         assertEquals("!", HermesAgentRunDisplayPolicy.item(runWithStatus("failed"), false).iconText);
+    }
+
+    @Test
+    public void activeSummaryShowsRunningAndMergePendingAgents() {
+        List<HermesAgentRunRecord> runs = Arrays.asList(
+                new HermesAgentRunRecord(2, 1, 10, 0, 1, "merge_pending", "", "", "", "[\"app/src/main/res/layout/main.xml\"]", "", "", 10, 0),
+                new HermesAgentRunRecord(1, 1, 9, 0, 0, "running", "", "", "", "[\"app/src/main/java/MainActivity.java\"]", "", "", 20, 0),
+                new HermesAgentRunRecord(3, 1, 8, 0, 2, "done", "", "", "", "[\"app/src/main/AndroidManifest.xml\"]", "", "", 1, 30));
+
+        String summary = HermesAgentRunDisplayPolicy.activeSummary(runs, true);
+
+        assertTrue(summary.contains("2 个子 Agent"));
+        assertTrue(summary.contains("Agent 1"));
+        assertTrue(summary.contains("运行中"));
+        assertTrue(summary.contains("app/src/main/java/MainActivity.java"));
+        assertTrue(summary.contains("Agent 2"));
+        assertTrue(summary.contains("等待合并"));
+        assertTrue(summary.contains("app/src/main/res/layout/main.xml"));
+    }
+
+    @Test
+    public void activeSummaryIsEmptyWhenNoAgentsAreActive() {
+        List<HermesAgentRunRecord> runs = Arrays.asList(runWithStatus("done"), runWithStatus("failed"));
+
+        assertEquals("", HermesAgentRunDisplayPolicy.activeSummary(runs, false));
     }
 
     private static HermesAgentRunRecord runWithStatus(String status) {

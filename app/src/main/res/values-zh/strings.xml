@@ -14,6 +14,8 @@
     <string name="build_waiting">正在准备构建...</string>
     <string name="conversation">需求沟通</string>
     <string name="copy_log">复制日志</string>
+    <string name="copy_failure_context">复制失败上下文</string>
+    <string name="failure_context">失败上下文</string>
     <string name="export_log">导出日志</string>
     <string name="export_log_saved">日志已保存。</string>
     <string name="export_log_unavailable">日志文件不可用。</string>

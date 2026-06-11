@@ -14,6 +14,8 @@
     <string name="build_waiting">Preparing build...</string>
     <string name="conversation">Conversation</string>
     <string name="copy_log">Copy Log</string>
+    <string name="copy_failure_context">Copy Failure</string>
+    <string name="failure_context">Failure Context</string>
     <string name="export_log">Export Log</string>
     <string name="export_log_saved">Log saved.</string>
     <string name="export_log_unavailable">Log file is not available.</string>

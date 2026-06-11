@@ -27,7 +27,6 @@ import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
 import com.androidbuilder.agent.AgentService;
 import com.androidbuilder.agent.BuildFailureClassifier;
-import com.androidbuilder.agent.BuildLogContextExtractor;
 import com.androidbuilder.agent.HermesRecoveryPolicy;
 import com.androidbuilder.agent.OpenAiClient;
 import com.androidbuilder.backend.BuildBackend;
@@ -65,8 +64,6 @@ import java.util.Set;
 
 public class ProjectActivity extends BaseActivity {
     private static final long MAX_PREVIEW_BYTES = 80 * 1024;
-    private static final int BUILD_LOG_INLINE_LIMIT = 9000;
-    private static final int BUILD_LOG_CONTEXT_RADIUS = 2500;
     private static final int LOG_RESULT_PREVIEW_LIMIT = 420;
     private static final int REQUEST_SAVE_LOG_FILE = 7101;
 
@@ -989,7 +986,7 @@ public class ProjectActivity extends BaseActivity {
         String logs;
         try {
             logs = FileUtils.readText(new File(failed.logsPath));
-            logs = buildFailureContext(logs);
+            logs = ProjectBuildFailureContextPolicy.previewText(logs);
         } catch (Exception error) {
             Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
             return;
@@ -1540,12 +1537,16 @@ public class ProjectActivity extends BaseActivity {
             TextView icon = view.findViewById(R.id.tasksStatusIcon);
             TextView title = view.findViewById(R.id.tasksTitle);
             TextView summary = view.findViewById(R.id.tasksSummary);
+            TextView agentSummary = view.findViewById(R.id.tasksAgentSummary);
             TextView toggle = view.findViewById(R.id.tasksToggle);
             LinearLayout container = view.findViewById(R.id.tasksContainer);
 
             title.setText(R.string.task_card_title);
             icon.setText(taskGroupIcon());
             summary.setText(taskGroupSummary());
+            String activeAgentSummary = HermesAgentRunDisplayPolicy.activeSummary(agentRunItems, AppSettings.isChinese(ProjectActivity.this));
+            agentSummary.setText(activeAgentSummary);
+            agentSummary.setVisibility(activeAgentSummary.isEmpty() ? View.GONE : View.VISIBLE);
             toggle.setText(tasksCollapsed ? R.string.expand_tasks : R.string.collapse_tasks);
             View.OnClickListener toggleListener = v -> {
                 tasksCollapsed = !tasksCollapsed;
@@ -1561,7 +1562,7 @@ public class ProjectActivity extends BaseActivity {
                 List<ProjectTaskRecord> visibleTasks = ProjectTaskListDisplayPolicy.visibleTasks(taskItems, true, agentRunItems);
                 container.setVisibility(visibleTasks.isEmpty() ? View.GONE : View.VISIBLE);
                 for (ProjectTaskRecord task : visibleTasks) {
-                    container.addView(taskRowView(task, taskItems.indexOf(task), false));
+                    container.addView(taskRowView(task, taskItems.indexOf(task), true));
                 }
             } else {
                 container.setVisibility(View.VISIBLE);
@@ -1814,9 +1815,11 @@ public class ProjectActivity extends BaseActivity {
             TextView title = view.findViewById(R.id.buildLogTitle);
             TextView content = view.findViewById(R.id.buildLogContent);
             View copyButton = view.findViewById(R.id.buildLogCopyButton);
+            View failureCopyButton = view.findViewById(R.id.buildLogFailureCopyButton);
             View exportButton = view.findViewById(R.id.buildLogExportButton);
             TextView toggleButton = view.findViewById(R.id.buildLogToggleButton);
             boolean canExport = ProjectLogExportPolicy.canExportBuildLog(job);
+            boolean canCopyFailureContext = canExport && ProjectBuildFailureContextPolicy.canCopyFailureContext(job);
             boolean expanded = job != null && expandedBuildLogJobIds.contains(job.id);
             boolean showContent = ProjectBuildLogExpansionPolicy.shouldShowContent(job, expanded);
             boolean showToggle = ProjectBuildLogExpansionPolicy.shouldShowToggle(job);
@@ -1826,6 +1829,11 @@ public class ProjectActivity extends BaseActivity {
             content.setVisibility(showContent ? View.VISIBLE : View.GONE);
             copyButton.setEnabled(canExport);
             copyButton.setOnClickListener(v -> copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job)));
+            failureCopyButton.setVisibility(canCopyFailureContext ? View.VISIBLE : View.GONE);
+            failureCopyButton.setEnabled(canCopyFailureContext);
+            failureCopyButton.setOnClickListener(v -> copyText(
+                    getString(R.string.failure_context),
+                    ProjectBuildFailureContextPolicy.copyText(job, readBuildLogText(job))));
             exportButton.setEnabled(canExport);
             exportButton.setOnClickListener(v -> exportBuildLog(job));
             toggleButton.setVisibility(showToggle ? View.VISIBLE : View.GONE);
@@ -2035,84 +2043,24 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private String readBuildLogPreview(BuildJobRecord job) {
-        String logs = "";
-        try {
-            logs = FileUtils.readText(new File(job.logsPath));
-        } catch (Exception ignored) {
-        }
+        String logs = readBuildLogText(job);
         if (logs.trim().isEmpty()) {
             return getString(R.string.build_waiting);
         }
         if (logs.length() <= 5000) {
             return logs;
         }
-        return buildFailureContext(logs);
+        return ProjectBuildFailureContextPolicy.previewText(logs);
     }
 
-    private String buildFailureContext(String logs) {
-        if (logs == null || logs.trim().isEmpty()) {
+    private String readBuildLogText(BuildJobRecord job) {
+        if (job == null || job.logsPath == null || job.logsPath.trim().isEmpty()) {
             return "";
         }
-        if (logs.length() <= BUILD_LOG_INLINE_LIMIT) {
-            return logs;
+        try {
+            return FileUtils.readText(new File(job.logsPath));
+        } catch (Exception ignored) {
+            return "";
         }
-        StringBuilder result = new StringBuilder();
-        appendSnippet(result, "First log", logs, 0, Math.min(1600, logs.length()));
-        String missingFieldHints = BuildLogContextExtractor.missingFieldHints(logs);
-        if (!missingFieldHints.isEmpty()) {
-            appendSnippet(result, "Java API consistency hints", missingFieldHints, 0, missingFieldHints.length());
-        }
-        String javaDiagnostics = BuildLogContextExtractor.javaCompileDiagnostics(logs, 9000);
-        if (!javaDiagnostics.isEmpty()) {
-            appendSnippet(result, "Java compile diagnostics", javaDiagnostics, 0, javaDiagnostics.length());
-        }
-        int[] anchors = failureAnchors(logs);
-        for (int anchor : anchors) {
-            if (anchor >= 0) {
-                appendSnippet(result, "Failure context", logs,
-                        Math.max(0, anchor - BUILD_LOG_CONTEXT_RADIUS),
-                        Math.min(logs.length(), anchor + BUILD_LOG_CONTEXT_RADIUS));
-            }
-        }
-        appendSnippet(result, "Last log", logs, Math.max(0, logs.length() - 3500), logs.length());
-        String text = result.toString().trim();
-        if (text.length() > 14000) {
-            return text.substring(0, 14000).trim() + "\n\n...[truncated]";
-        }
-        return text;
-    }
-
-    private int[] failureAnchors(String logs) {
-        return new int[]{
-                indexOfAny(logs, ".java:", "error: cannot find symbol", "has private access", "cannot be applied to given types", "actual and formal argument lists differ"),
-                indexOfAny(logs, "Android resource linking failed", "error: resource", "error: failed linking", "AAPT: error"),
-                indexOfAny(logs, "Namespace not specified", "Manifest merger failed", "package=\"", "> Task :app:processDebugResources FAILED", "Execution failed for task ':app:processDebugResources'", "* What went wrong:"),
-                indexOfAny(logs, "BUILD FAILED", "Caused by:")
-        };
-    }
-
-    private int indexOfAny(String text, String... needles) {
-        int best = -1;
-        for (String needle : needles) {
-            int index = text.indexOf(needle);
-            if (index >= 0 && (best < 0 || index < best)) {
-                best = index;
-            }
-        }
-        return best;
-    }
-
-    private void appendSnippet(StringBuilder result, String label, String text, int start, int end) {
-        if (start >= end) {
-            return;
-        }
-        String snippet = text.substring(start, end).trim();
-        if (snippet.isEmpty() || result.indexOf(snippet) >= 0) {
-            return;
-        }
-        if (result.length() > 0) {
-            result.append("\n\n...\n\n");
-        }
-        result.append(label).append(":\n").append(snippet);
     }
 }
