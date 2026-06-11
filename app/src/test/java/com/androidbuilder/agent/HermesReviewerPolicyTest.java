@@ -58,11 +58,12 @@ public class HermesReviewerPolicyTest {
         TaskOperations gradleWrite = new TaskOperations("gradle", Collections.singletonList(
                 new FileOperation("write", "app/build.gradle", "plugins { id 'com.android.application' }")));
 
-        assertFalse(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, singleJavaWrite));
-        assertTrue(HermesReviewerPolicy.shouldReviewOperations(true, 1, null, singleJavaWrite));
-        assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 2, null, singleJavaWrite));
-        assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, pairedJavaAndLayoutWrite));
-        assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, deleteOperation));
-        assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, gradleWrite));
+        assertFalse(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, singleJavaWrite, 0));
+        assertTrue(HermesReviewerPolicy.shouldReviewOperations(true, 1, null, singleJavaWrite, 0));
+        assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 2, null, singleJavaWrite, 0));
+        assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, pairedJavaAndLayoutWrite, 0));
+        assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, deleteOperation, 0));
+        assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, gradleWrite, 0));
+        assertFalse(HermesReviewerPolicy.shouldReviewOperations(true, 2, null, deleteOperation, 1));
     }
 }

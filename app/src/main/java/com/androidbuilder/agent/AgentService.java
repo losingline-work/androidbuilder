@@ -1028,6 +1028,7 @@ public class AgentService {
         String retryContext = "";
         int negotiationRounds = 0;
         int preflightRewrites = 0;
+        int cloudReviewsUsed = 0;
         List<FailureFingerprint> failureFingerprints = new ArrayList<>();
         for (int attempt = 1; attempt <= POLICY_REWRITE_ATTEMPTS; attempt++) {
             if ((repairFlow || !previousFailure.isEmpty()) && retryContext.isEmpty()) {
@@ -1142,8 +1143,12 @@ public class AgentService {
                         negotiation,
                         repairFlow || !previousFailure.isEmpty(),
                         attempt,
+                        cloudReviewsUsed,
                         logs,
                         chinese);
+                if (hermesReview != null) {
+                    cloudReviewsUsed++;
+                }
                 if (HermesReviewerPolicy.shouldRetry(hermesReview, attempt, POLICY_REWRITE_ATTEMPTS)
                         && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
                     preflightRewrites++;
@@ -1246,8 +1251,8 @@ public class AgentService {
         return (chinese ? "Hermes · 上下文侦察" : "Hermes · Context Scout") + " #" + round;
     }
 
-    private HermesReview reviewOperationsWithHermes(long projectId, Long linkedBuildJobId, String taskTitle, String taskInstruction, String snapshot, String operationsJson, TaskOperations operations, ContextNegotiation negotiation, boolean retryOrRepairFlow, int attempt, File logs, boolean chinese) {
-        if (!HermesReviewerPolicy.shouldReviewOperations(retryOrRepairFlow, attempt, negotiation, operations)) {
+    private HermesReview reviewOperationsWithHermes(long projectId, Long linkedBuildJobId, String taskTitle, String taskInstruction, String snapshot, String operationsJson, TaskOperations operations, ContextNegotiation negotiation, boolean retryOrRepairFlow, int attempt, int cloudReviewsUsed, File logs, boolean chinese) {
+        if (!HermesReviewerPolicy.shouldReviewOperations(retryOrRepairFlow, attempt, negotiation, operations, cloudReviewsUsed)) {
             return null;
         }
         String title = (chinese ? "Hermes · 文件操作审查" : "Hermes · file operation review") + " #" + attempt;

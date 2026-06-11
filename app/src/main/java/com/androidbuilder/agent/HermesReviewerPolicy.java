@@ -20,7 +20,10 @@ final class HermesReviewerPolicy {
         return review == null || review.decision == HermesReview.Decision.FALLBACK;
     }
 
-    static boolean shouldReviewOperations(boolean retryOrRepairFlow, int attempt, ContextNegotiation negotiation, TaskOperations operations) {
+    static boolean shouldReviewOperations(boolean retryOrRepairFlow, int attempt, ContextNegotiation negotiation, TaskOperations operations, int cloudReviewsUsed) {
+        if (cloudReviewsUsed > 0) {
+            return false;
+        }
         if (retryOrRepairFlow || attempt > 1 || hasScoutSignal(negotiation)) {
             return true;
         }
