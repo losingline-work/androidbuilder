@@ -21,7 +21,7 @@ import java.util.List;
 
 public class OpenAiClient {
     private static final int CONNECT_TIMEOUT_MS = 20000;
-    private static final int MODEL_READ_TIMEOUT_MS = 10 * 60 * 1000;
+    private static final int MODEL_READ_TIMEOUT_MS = 3 * 60 * 1000;
     private static final int DEFAULT_READ_TIMEOUT_MS = MODEL_READ_TIMEOUT_MS;
     private static final int TASKS_READ_TIMEOUT_MS = MODEL_READ_TIMEOUT_MS;
     private static final int CODING_READ_TIMEOUT_MS = MODEL_READ_TIMEOUT_MS;

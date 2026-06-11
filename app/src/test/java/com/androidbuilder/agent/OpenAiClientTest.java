@@ -115,10 +115,10 @@ public class OpenAiClientTest {
     }
 
     @Test
-    public void modelReadTimeoutsUseTenMinutes() {
-        assertEquals(600000, OpenAiClient.defaultReadTimeoutMsForTest());
-        assertEquals(600000, OpenAiClient.tasksReadTimeoutMsForTest());
-        assertEquals(600000, OpenAiClient.codingReadTimeoutMsForTest());
+    public void modelReadTimeoutsUseThreeMinutes() {
+        assertEquals(180000, OpenAiClient.defaultReadTimeoutMsForTest());
+        assertEquals(180000, OpenAiClient.tasksReadTimeoutMsForTest());
+        assertEquals(180000, OpenAiClient.codingReadTimeoutMsForTest());
     }
 
     @Test
