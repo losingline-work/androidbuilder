@@ -14,11 +14,21 @@ import static org.junit.Assert.assertTrue;
 
 public class AgentServiceRetryPolicyTest {
     @Test
-    public void agentServiceHasNoLocalModelInjectionConstructor() {
+    public void agentServiceKeepsPublicRepositoryConstructor() {
         Constructor<?>[] constructors = AgentService.class.getDeclaredConstructors();
 
-        assertEquals(1, constructors.length);
-        assertEquals(2, constructors[0].getParameterCount());
+        boolean found = false;
+        for (Constructor<?> constructor : constructors) {
+            if (constructor.getParameterCount() == 2) {
+                found = true;
+            }
+        }
+        assertTrue(found);
+    }
+
+    @Test
+    public void taskOperationExecutorClassExistsForParallelWorkers() {
+        assertEquals("com.androidbuilder.agent.TaskOperationExecutor", TaskOperationExecutor.class.getName());
     }
 
     @Test

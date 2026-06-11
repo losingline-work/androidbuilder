@@ -229,6 +229,16 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void taskSplitPromptRequestsParallelContracts() {
+        String prompt = OpenAiClient.tasksSystemPromptForTest(false);
+
+        assertTrue(prompt.contains("dependsOn"));
+        assertTrue(prompt.contains("produces"));
+        assertTrue(prompt.contains("allowedPaths"));
+        assertTrue(prompt.contains("safe parallel"));
+    }
+
+    @Test
     public void generatedProjectPromptsUseApi24Minimum() {
         String projectPrompt = OpenAiClient.projectFilesSystemPromptForTest(false);
         String taskPrompt = OpenAiClient.taskOperationsSystemPromptForTest(false);

@@ -8,6 +8,7 @@ import com.androidbuilder.model.AppSpec;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
 import com.androidbuilder.model.ContextNegotiation;
+import com.androidbuilder.model.HermesExecutionRunRecord;
 import com.androidbuilder.model.HermesRunEvent;
 import com.androidbuilder.model.HermesReview;
 import com.androidbuilder.model.HermesTaskContract;
@@ -25,6 +26,10 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -63,6 +68,7 @@ public class AgentService {
     private final OpenAiClient openAiClient;
     private final GeneratedProjectWriter writer = new GeneratedProjectWriter();
     private final FileOperationsWriter operationsWriter;
+    private final TaskOperationExecutor taskOperationExecutor;
 
     public AgentService(Context context, AppRepository repository) {
         this.context = context.getApplicationContext();
@@ -71,6 +77,19 @@ public class AgentService {
         this.operationsWriter = new FileOperationsWriter(new DependencyGuard(
                 BuildBackendSettings.dependencyMode(this.context),
                 BuildBackendSettings.offlineMavenDir(this.context)));
+        this.taskOperationExecutor = new TaskOperationExecutor((projectId, linkedBuildJobId, sourceDir, planContent, task, logs, chinese, initialFailureContext, repairFlow) ->
+                createAndApplyTaskOperationsInternal(
+                        projectId,
+                        linkedBuildJobId,
+                        sourceDir,
+                        planContent,
+                        task.title,
+                        task.instruction,
+                        sourceSnapshot(sourceDir),
+                        logs,
+                        chinese,
+                        initialFailureContext,
+                        repairFlow));
     }
 
     public void setProgressListener(OpenAiClient.ProgressListener listener) {
@@ -247,66 +266,102 @@ public class AgentService {
             throw new IllegalStateException(assessment.message(chinese));
         }
         BuildJobRecord job = repository.createBuildJob(projectId);
-        ProjectTaskRecord runningTask = null;
+        HermesExecutionRunRecord executionRun = null;
+        List<ProjectTaskRecord> runningTasks = new ArrayList<>();
         try {
             repository.updateProjectPlanStatus(projectId, "coding", job.id);
             repository.updateBuildJob(job.id, "generating", "cloud_spec", null, null, null, 0);
             ensureImplementationTasks(projectId, job.id, plan, chinese);
-            runningTask = repository.nextPendingProjectTask(projectId);
-            if (runningTask == null) {
+            File jobDir = repository.jobDir(projectId, job.id);
+            File logs = new File(jobDir, "build.log");
+            File sourceDir = repository.sourceDir(projectId);
+            int maxParallel = BuildBackendSettings.parallelAgentLimit(context);
+            String baseSourceHash = safeSourceHash(sourceDir);
+            executionRun = repository.createHermesExecutionRun(
+                    projectId,
+                    job.id,
+                    maxParallel <= 1 ? "serial" : "parallel",
+                    maxParallel,
+                    baseSourceHash);
+            List<ProjectTaskRecord> tasks = repository.listProjectTasks(projectId);
+            HermesParallelBatch batch = HermesParallelScheduler.nextBatch(
+                    tasks,
+                    repository.listActiveHermesAgentRuns(projectId),
+                    maxParallel);
+            if (batch.tasks.isEmpty()) {
                 repository.updateProjectPlanStatus(projectId, "generated", job.id);
                 repository.updateBuildJob(job.id, "generated", "ready_for_build", null, null, null, 0);
+                repository.updateHermesExecutionRun(executionRun.id, "done", baseSourceHash);
                 repository.addMessage(projectId, "assistant", chinese ? "所有计划任务已完成。下一步可以构建。" : "All plan tasks are done. Next, build the project.", job.id);
                 return repository.getBuildJob(job.id);
             }
-            repository.updateProjectTask(runningTask.id, "running", "");
-            repository.addMessage(projectId, "assistant", (chinese ? "执行下一步：" : "Executing next step: ") + runningTask.title, job.id);
-            String previousTaskFailure = "failed".equals(runningTask.status) ? runningTask.resultSummary : "";
-            HermesTaskDecision taskDecision = HermesTaskScheduler.decide(
-                    HermesTaskContractCodec.extractFromInstruction(runningTask.instruction),
-                    previousTaskFailure,
-                    previousTaskFailure.trim().isEmpty() ? 0 : 1,
-                    false);
+            runningTasks.addAll(batch.tasks);
+            String dispatchMessage = batch.tasks.size() == 1
+                    ? (chinese ? "执行下一步：" : "Executing next step: ") + batch.tasks.get(0).title
+                    : (chinese ? "并行执行下一批：" : "Executing next parallel batch: ") + taskTitles(batch.tasks);
+            repository.addMessage(projectId, "assistant", dispatchMessage, job.id);
             recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
-                    job.id + ":" + runningTask.id,
-                    "task_execution",
+                    job.id + ":batch-" + executionRun.id,
+                    "parallel_batch",
                     "orchestrator",
-                    "code",
-                    taskDecision.reason,
-                    "Task title: " + runningTask.title + "\nInstruction: " + HermesTaskContractCodec.stripFromInstruction(runningTask.instruction),
-                    "requiresContextScout=" + taskDecision.requiresContextScout
-                            + "\nrequiresBuildAfter=" + taskDecision.requiresBuildAfter
-                            + "\nretryMode=" + taskDecision.retryMode,
+                    "dispatch",
+                    batch.exclusiveReason.isEmpty() ? "Dispatch safe parallel batch." : batch.exclusiveReason,
+                    "Tasks:\n" + taskTitles(batch.tasks),
+                    "maxParallel=" + maxParallel + "\nbaseSourceHash=" + baseSourceHash,
                     1));
 
-            File jobDir = repository.jobDir(projectId, job.id);
-            File logs = new File(jobDir, "build.log");
-            FileUtils.writeText(logs, (chinese ? "正在执行计划任务：" : "Executing plan task: ") + runningTask.title + "\n");
+            FileUtils.writeText(logs, (chinese ? "正在执行计划任务批次：" : "Executing plan task batch: ") + taskTitles(batch.tasks) + "\n");
             repository.updateBuildJob(job.id, "generating", "cloud_spec", logs.getAbsolutePath(), null, null, 0);
 
-            File sourceDir = repository.sourceDir(projectId);
-            String snapshot = sourceSnapshot(sourceDir);
-            TaskOperations operations = createAndApplyTaskOperations(projectId, job.id, sourceDir, plan.content, runningTask.title, runningTask.instruction, snapshot, logs, chinese, previousTaskFailure, false);
-            repository.updateProjectTask(runningTask.id, "done", operations.summary);
+            List<HermesAgentResult> results = executeParallelBatch(projectId, job, executionRun, plan, batch, sourceDir, jobDir, chinese);
+            HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(sourceDir, results);
+            if (!merge.success) {
+                String summary = merge.summary;
+                if (!merge.conflicts.isEmpty()) {
+                    summary = summary + "\n" + joinLines(merge.conflicts);
+                }
+                markMergeFailure(results, summary);
+                repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
+                throw new IllegalStateException(summary);
+            }
+            for (HermesAgentResult result : merge.mergedResults) {
+                String summary = result.summary.isEmpty()
+                        ? (result.operations == null ? "" : result.operations.summary)
+                        : result.summary;
+                String mergedHash = safeSourceHash(sourceDir, result.touchedPaths);
+                if (result.run != null) {
+                    repository.updateHermesAgentRun(result.run.id, "done", mergedHash, summary, "");
+                }
+                repository.updateProjectTask(result.task.id, "done", summary);
+                FileUtils.appendText(logs, (chinese ? "计划任务完成：" : "Executed plan task: ") + result.task.title + "\n" + summary + "\n");
+            }
+            Exception failedAgentError = firstAgentError(results);
+            if (failedAgentError != null) {
+                repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
+                throw failedAgentError;
+            }
             ProjectTaskRecord next = repository.nextPendingProjectTask(projectId);
             repository.updateProjectPlanStatus(projectId, next == null ? "generated" : "planned", job.id);
+            repository.updateHermesExecutionRun(executionRun.id, "done", safeSourceHash(sourceDir));
 
             File projectZip = new File(jobDir, "project.zip");
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
-            FileUtils.appendText(logs, (chinese ? "计划任务完成：" : "Executed plan task: ") + runningTask.title + "\n" + operations.summary + "\n");
 
-            boolean buildRequiredAfter = HermesTaskScheduler.decide(
-                    HermesTaskContractCodec.extractFromInstruction(runningTask.instruction),
-                    "",
-                    0,
-                    false).requiresBuildAfter;
-            String message = taskCompletionMessage(runningTask.title, next != null, buildRequiredAfter, chinese);
+            boolean buildRequiredAfter = batchRequiresBuild(batch);
+            String completedTitle = batch.tasks.size() == 1 ? batch.tasks.get(0).title : taskTitles(batch.tasks);
+            String message = taskCompletionMessage(completedTitle, next != null, buildRequiredAfter, chinese);
             repository.addMessage(projectId, "assistant", message, job.id);
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
         } catch (Exception error) {
-            if (runningTask != null) {
-                repository.updateProjectTask(runningTask.id, "failed", error.getMessage());
+            for (ProjectTaskRecord runningTask : runningTasks) {
+                ProjectTaskRecord latest = repository.getProjectTask(runningTask.id);
+                if (latest != null && "running".equals(latest.status)) {
+                    repository.updateProjectTask(runningTask.id, "failed", error.getMessage());
+                }
+            }
+            if (executionRun != null) {
+                repository.updateHermesExecutionRun(executionRun.id, "failed", executionRun.baseSourceHash);
             }
             repository.updateBuildJob(job.id, "failed", "coding_failed", null, null, error.getMessage(), job.retryCount);
             repository.updateProjectPlanStatus(projectId, "planned", job.id);
@@ -383,7 +438,174 @@ public class AgentService {
         }
     }
 
+    private List<HermesAgentResult> executeParallelBatch(
+            long projectId,
+            BuildJobRecord job,
+            HermesExecutionRunRecord executionRun,
+            ProjectPlanRecord plan,
+            HermesParallelBatch batch,
+            File sourceDir,
+            File jobDir,
+            boolean chinese) throws Exception {
+        File agentsRoot = new File(jobDir, "agents");
+        HermesAgentWorker worker = new HermesAgentWorker(repository, taskOperationExecutor);
+        if (batch.tasks.size() <= 1) {
+            List<HermesAgentResult> results = new ArrayList<>();
+            results.add(worker.runTask(
+                    projectId,
+                    job.id,
+                    executionRun.id,
+                    plan,
+                    batch.tasks.get(0),
+                    batch.batchIndex,
+                    0,
+                    sourceDir,
+                    agentsRoot,
+                    chinese));
+            return results;
+        }
+        ExecutorService executor = Executors.newFixedThreadPool(batch.tasks.size());
+        try {
+            List<Future<HermesAgentResult>> futures = new ArrayList<>();
+            for (int i = 0; i < batch.tasks.size(); i++) {
+                final int agentIndex = i;
+                final ProjectTaskRecord task = batch.tasks.get(i);
+                futures.add(executor.submit(new Callable<HermesAgentResult>() {
+                    @Override
+                    public HermesAgentResult call() {
+                        return worker.runTask(
+                                projectId,
+                                job.id,
+                                executionRun.id,
+                                plan,
+                                task,
+                                batch.batchIndex,
+                                agentIndex,
+                                sourceDir,
+                                agentsRoot,
+                                chinese);
+                    }
+                }));
+            }
+            List<HermesAgentResult> results = new ArrayList<>();
+            for (Future<HermesAgentResult> future : futures) {
+                results.add(future.get());
+            }
+            return results;
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private void markMergeFailure(List<HermesAgentResult> results, String summary) {
+        if (results == null) {
+            return;
+        }
+        for (HermesAgentResult result : results) {
+            if (result == null || !result.success()) {
+                continue;
+            }
+            if (result.run != null) {
+                repository.updateHermesAgentRun(result.run.id, "failed", "", "", summary);
+            }
+            if (result.task != null) {
+                repository.updateProjectTask(result.task.id, "failed", summary);
+            }
+        }
+    }
+
+    private Exception firstAgentError(List<HermesAgentResult> results) {
+        if (results == null) {
+            return null;
+        }
+        for (HermesAgentResult result : results) {
+            if (result != null && result.error != null) {
+                return result.error;
+            }
+        }
+        return null;
+    }
+
+    private boolean batchRequiresBuild(HermesParallelBatch batch) {
+        if (batch == null || batch.tasks == null) {
+            return false;
+        }
+        for (ProjectTaskRecord task : batch.tasks) {
+            if (HermesTaskScheduler.decide(
+                    HermesTaskContractCodec.extractFromInstruction(task.instruction),
+                    "",
+                    0,
+                    false).requiresBuildAfter) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String safeSourceHash(File sourceDir) {
+        try {
+            return SourceTreeHashPolicy.hash(sourceDir);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private String safeSourceHash(File sourceDir, List<String> relativePaths) {
+        try {
+            return SourceTreeHashPolicy.hash(sourceDir, relativePaths);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private String taskTitles(List<ProjectTaskRecord> tasks) {
+        if (tasks == null || tasks.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (ProjectTaskRecord task : tasks) {
+            if (builder.length() > 0) {
+                builder.append(", ");
+            }
+            builder.append(task.title);
+        }
+        return builder.toString();
+    }
+
+    private String joinLines(List<String> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String line : lines) {
+            if (line == null || line.trim().isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append('\n');
+            }
+            builder.append(line.trim());
+        }
+        return builder.toString();
+    }
+
     private TaskOperations createAndApplyTaskOperations(long projectId, Long linkedBuildJobId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese, String initialFailureContext, boolean repairFlow) throws Exception {
+        ProjectTaskRecord task = new ProjectTaskRecord(
+                0,
+                projectId,
+                0,
+                taskTitle,
+                taskInstruction,
+                "running",
+                "",
+                0,
+                0,
+                0,
+                0);
+        return taskOperationExecutor.execute(projectId, linkedBuildJobId, sourceDir, planContent, task, logs, chinese, initialFailureContext, repairFlow);
+    }
+
+    private TaskOperations createAndApplyTaskOperationsInternal(long projectId, Long linkedBuildJobId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese, String initialFailureContext, boolean repairFlow) throws Exception {
         String instruction = taskInstruction;
         // Recent user requirements live in chat but may never have reached the plan text; feed them
         // to the coding/repair model so it honors intent the plan dropped.

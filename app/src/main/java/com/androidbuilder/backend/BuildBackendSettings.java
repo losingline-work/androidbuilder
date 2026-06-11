@@ -11,6 +11,7 @@ public final class BuildBackendSettings {
     public static final String KEY_BOOTSTRAP_URL = "bootstrap_url";
     public static final String KEY_DEPENDENCY_MODE = "dependency_mode";
     public static final String KEY_CONFIRM_RISKY_PLAN_CHOICES = "confirm_risky_plan_choices";
+    public static final String KEY_PARALLEL_AGENT_LIMIT = "parallel_agent_limit";
     public static final String EMBEDDED = "embedded";
     public static final String EXTERNAL_TERMUX = "external_termux";
     public static final String DEPENDENCY_OFFLINE_SAFE = "offline_safe";
@@ -46,6 +47,22 @@ public final class BuildBackendSettings {
 
     public static void setConfirmRiskyPlanChoices(Context context, boolean value) {
         prefs(context).edit().putBoolean(KEY_CONFIRM_RISKY_PLAN_CHOICES, value).apply();
+    }
+
+    public static int parallelAgentLimit(Context context) {
+        int value = prefs(context).getInt(KEY_PARALLEL_AGENT_LIMIT, 2);
+        if (value < 1) {
+            return 1;
+        }
+        if (value > 3) {
+            return 3;
+        }
+        return value;
+    }
+
+    public static void setParallelAgentLimit(Context context, int value) {
+        int bounded = Math.max(1, Math.min(3, value));
+        prefs(context).edit().putInt(KEY_PARALLEL_AGENT_LIMIT, bounded).apply();
     }
 
     public static File offlineMavenDir(Context context) {

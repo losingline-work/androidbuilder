@@ -684,6 +684,7 @@ public class OpenAiClient {
         return "You split an approved Android engineering plan into a short sequential implementation task list. " +
                 "Return only compact JSON with a tasks array. Each task must have title and instruction. Escape double quotes inside JSON string values, for example use \\\"...\\\" for Gradle/XML snippets, or use single quotes in prose. " +
                 "Each task may also include Hermes task contract fields: allowedPaths, expectedFiles, forbiddenPaths, acceptanceChecks, riskNotes, dependsOn, produces, rollbackScope, riskLevel, and buildRequiredAfter. Use arrays for list fields and boolean for buildRequiredAfter. " +
+                "Use dependsOn and produces to expose a safe execution graph. Use allowedPaths and forbiddenPaths precisely so Hermes can decide safe parallel batches. Tasks may run in safe parallel only when dependencies are satisfied and allowed paths do not overlap; do not claim broad tasks are parallel-safe. " +
                 "Use 3 to 6 tasks. Keep each task as a cohesive coarse phase rather than many tiny file-write tasks. " +
                 "The first task should create or update the Gradle project skeleton when needed, and later tasks should add data, screens, interactions, and polish. " +
                 "Keep Gradle/build configuration in its own task when it changes. Group related values, themes, drawables, menu XML, and layout XML when they support the same screen or navigation shell. " +
