@@ -42,16 +42,16 @@ public class HermesAgentResult {
 
     private static List<String> cleanTouchedPaths(List<String> touchedPaths, TaskOperations operations) {
         List<String> cleaned = new ArrayList<>();
-        if (touchedPaths != null) {
-            for (String path : touchedPaths) {
-                addPath(cleaned, path);
-            }
-        }
-        if (cleaned.isEmpty() && operations != null && operations.operations != null) {
+        if (operations != null && operations.operations != null) {
             for (FileOperation operation : operations.operations) {
                 if (operation != null) {
                     addPath(cleaned, operation.path);
                 }
+            }
+        }
+        if (cleaned.isEmpty() && touchedPaths != null) {
+            for (String path : touchedPaths) {
+                addPath(cleaned, path);
             }
         }
         return cleaned;

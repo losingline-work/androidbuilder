@@ -126,7 +126,7 @@ public class HermesMergeCoordinatorTest {
     }
 
     @Test
-    public void applyExceptionOnlyFailsOffendingResult() throws Exception {
+    public void unsafeOperationPathOnlyFailsOffendingResult() throws Exception {
         File source = temporaryFolder.newFolder("source");
         HermesAgentResult badApply = resultWithOperation(
                 1,
@@ -143,7 +143,7 @@ public class HermesMergeCoordinatorTest {
         assertEquals(1, merge.mergedResults.size());
         assertEquals("clean\n", FileUtils.readText(new File(source, "docs/clean.txt")));
         assertEquals(1, merge.failedResults.size());
-        assertTrue(merge.failedResults.get(0).reason.contains("escapes project source directory"));
+        assertTrue(merge.failedResults.get(0).reason.contains("declared unsafe touched path"));
     }
 
     @Test
