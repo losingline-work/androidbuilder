@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Locale;
 
 public final class HermesDecisionTimelinePolicy {
+    private static final int TASK_ITEM_LIMIT = 5;
+
     private HermesDecisionTimelinePolicy() {
     }
 
@@ -30,6 +32,24 @@ public final class HermesDecisionTimelinePolicy {
         return items;
     }
 
+    public static List<HermesDecisionTimelineItem> forTask(List<AiConversationRecord> records, long taskId) {
+        if (records == null || records.isEmpty() || taskId <= 0) {
+            return Collections.emptyList();
+        }
+        List<AiConversationRecord> filtered = new ArrayList<>();
+        for (AiConversationRecord record : records) {
+            if (record != null && taskId == taskId(record.metadata)) {
+                filtered.add(record);
+            }
+        }
+        Collections.sort(filtered, (left, right) -> Long.compare(right.createdAt, left.createdAt));
+        List<HermesDecisionTimelineItem> items = fromRecords(filtered);
+        if (items.size() <= TASK_ITEM_LIMIT) {
+            return items;
+        }
+        return new ArrayList<>(items.subList(0, TASK_ITEM_LIMIT));
+    }
+
     private static boolean isHermesRecord(AiConversationRecord record) {
         if (record == null) {
             return false;
@@ -44,6 +64,10 @@ public final class HermesDecisionTimelinePolicy {
         String output = blockAfter(record.responseText, "outputSummary:");
         if (!output.isEmpty()) {
             return firstLine(output);
+        }
+        String summary = firstValue(record.responseText, "summary", "");
+        if (!summary.isEmpty()) {
+            return summary;
         }
         String reason = blockAfter(record.requestText, "reason:");
         if (!reason.isEmpty()) {
@@ -77,6 +101,18 @@ public final class HermesDecisionTimelinePolicy {
             }
         }
         return fallback == null ? "" : fallback;
+    }
+
+    private static long taskId(String metadata) {
+        String value = valueFor(metadata, "taskId", "");
+        if (value.isEmpty()) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     private static String firstValue(String text, String key, String fallback) {

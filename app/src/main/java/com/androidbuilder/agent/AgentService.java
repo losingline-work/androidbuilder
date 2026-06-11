@@ -1152,7 +1152,8 @@ public class AgentService {
                     linkedBuildJobId,
                     (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
                     requestLog,
-                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, chinese, callTag));
+                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, chinese, callTag),
+                    taskId);
             try {
                 TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
                 HermesTaskContract taskContract = HermesTaskContractCodec.extractFromInstruction(instruction);
@@ -1161,7 +1162,7 @@ public class AgentService {
                 if (taskContract.hasSignals()) {
                     appendHermesReviewLog(logs, contractTitle, contractReview);
                     recordHermesReviewAi(projectId, linkedBuildJobId, contractTitle,
-                            deterministicPreflightRequest(taskTitle, instruction, operationsJson), contractReview);
+                            deterministicPreflightRequest(taskTitle, instruction, operationsJson), contractReview, taskId);
                 }
                 if (contractReview.decision == HermesReview.Decision.REWRITE
                         && contractReview.rewriteInstruction != null
@@ -1182,7 +1183,7 @@ public class AgentService {
                 String deterministicTitle = (chinese ? "确定性预检" : "Deterministic preflight") + " #" + attempt;
                 appendHermesReviewLog(logs, deterministicTitle, deterministicReview);
                 recordHermesReviewAi(projectId, linkedBuildJobId, deterministicTitle,
-                        deterministicPreflightRequest(taskTitle, instruction, operationsJson), deterministicReview);
+                        deterministicPreflightRequest(taskTitle, instruction, operationsJson), deterministicReview, taskId);
                 // Pre-apply structural rewrites are capped and never throw: they must not starve the
                 // policy-error retry budget, and AndroidSourceGuard + the real build are the final authority.
                 if (deterministicReview.decision == HermesReview.Decision.REWRITE
@@ -1298,7 +1299,8 @@ public class AgentService {
                     linkedBuildJobId,
                     title,
                     request,
-                    () -> openAiClient.negotiateTaskContext(planContent, taskTitle, taskInstruction, snapshot, recentRequirements, previousFailure, chinese, callTag));
+                    () -> openAiClient.negotiateTaskContext(planContent, taskTitle, taskInstruction, snapshot, recentRequirements, previousFailure, chinese, callTag),
+                    taskIdFromCallTag(callTag));
             return ContextNegotiationParser.fromJson(response);
         } catch (Exception error) {
             recordAiConversationSafely(
@@ -1346,7 +1348,8 @@ public class AgentService {
                     linkedBuildJobId,
                     title,
                     request,
-                    () -> openAiClient.reviewTaskOperations(taskTitle, taskInstruction, snapshot, operationsJson, contextScoutNotes, chinese, callTag));
+                    () -> openAiClient.reviewTaskOperations(taskTitle, taskInstruction, snapshot, operationsJson, contextScoutNotes, chinese, callTag),
+                    taskIdFromCallTag(callTag));
             HermesReview review = HermesReviewParser.fromJson(response);
             appendHermesReviewLog(logs, title, review);
             return review;
@@ -1472,6 +1475,10 @@ public class AgentService {
     }
 
     private String recordCloudAiCall(long projectId, Long linkedBuildJobId, String title, String requestText, AiTextCall call) throws Exception {
+        return recordCloudAiCall(projectId, linkedBuildJobId, title, requestText, call, 0);
+    }
+
+    private String recordCloudAiCall(long projectId, Long linkedBuildJobId, String title, String requestText, AiTextCall call, long taskId) throws Exception {
         long startedAt = System.currentTimeMillis();
         try {
             String response = call.run();
@@ -1482,7 +1489,7 @@ public class AgentService {
                     requestText,
                     response,
                     "success",
-                    cloudAiMetadata(elapsedMs(startedAt)),
+                    cloudAiMetadata(elapsedMs(startedAt), taskId),
                     linkedBuildJobId);
             return response;
         } catch (Exception error) {
@@ -1494,7 +1501,7 @@ public class AgentService {
                     requestText,
                     message,
                     "failed",
-                    cloudAiMetadata(elapsedMs(startedAt)),
+                    cloudAiMetadata(elapsedMs(startedAt), taskId),
                     linkedBuildJobId);
             throw error;
         }
@@ -1537,6 +1544,10 @@ public class AgentService {
     }
 
     private void recordHermesReviewAi(long projectId, Long linkedBuildJobId, String title, String requestText, HermesReview review) {
+        recordHermesReviewAi(projectId, linkedBuildJobId, title, requestText, review, 0);
+    }
+
+    private void recordHermesReviewAi(long projectId, Long linkedBuildJobId, String title, String requestText, HermesReview review, long taskId) {
         if (review == null || ((review.summary == null || review.summary.trim().isEmpty())
                 && (review.rewriteInstruction == null || review.rewriteInstruction.trim().isEmpty()))) {
             return;
@@ -1549,7 +1560,7 @@ public class AgentService {
                 requestText,
                 hermesReviewResponseForAiLog(review),
                 status,
-                deterministicPreflightMetadata(),
+                deterministicPreflightMetadata(taskId),
                 linkedBuildJobId);
     }
 
@@ -1599,7 +1610,13 @@ public class AgentService {
     }
 
     private String cloudAiMetadata(long durationMs) {
-        return cloudAiMetadata(openAiClient.currentProvider(), openAiClient.currentModel(), openAiClient.currentEndpoint(), durationMs);
+        return cloudAiMetadata(durationMs, 0);
+    }
+
+    private String cloudAiMetadata(long durationMs, long taskId) {
+        return appendTaskId(
+                cloudAiMetadata(openAiClient.currentProvider(), openAiClient.currentModel(), openAiClient.currentEndpoint(), durationMs),
+                taskId);
     }
 
     static String cloudAiMetadataForTest(String provider, String model, String endpoint, long durationMs) {
@@ -1622,9 +1639,33 @@ public class AgentService {
     }
 
     private String deterministicPreflightMetadata() {
-        return "provider=deterministic-preflight"
+        return deterministicPreflightMetadata(0);
+    }
+
+    private String deterministicPreflightMetadata(long taskId) {
+        return appendTaskId("provider=deterministic-preflight"
                 + "\nmodel=java-rules"
-                + "\nmode=before-hermes";
+                + "\nmode=before-hermes", taskId);
+    }
+
+    private static String appendTaskId(String metadata, long taskId) {
+        if (taskId <= 0) {
+            return metadata == null ? "" : metadata;
+        }
+        String text = metadata == null ? "" : metadata;
+        return text.isEmpty() ? "taskId=" + taskId : text + "\ntaskId=" + taskId;
+    }
+
+    private static long taskIdFromCallTag(String callTag) {
+        String tag = callTag == null ? "" : callTag.trim();
+        if (!tag.startsWith("task:")) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(tag.substring("task:".length()));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     private String historyForAiLog(List<ChatMessage> history) {

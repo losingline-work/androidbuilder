@@ -46,4 +46,24 @@ public class HermesDecisionTimelinePolicyTest {
         assertEquals(1, items.size());
         assertEquals("rewrite", items.get(0).decision);
     }
+
+    @Test
+    public void filtersRecentHermesEventsByTaskId() {
+        AiConversationRecord oldTask = new AiConversationRecord(
+                1, 1, "deterministic", "Hermes · task contract preflight", "", "decision: ok\nsummary: old",
+                "ok", "provider=deterministic-preflight\ntaskId=9", null, 1000L);
+        AiConversationRecord target = new AiConversationRecord(
+                2, 1, "deterministic", "Hermes · file operation review", "", "decision: rewrite\nsummary: target",
+                "rewrite", "provider=deterministic-preflight\ntaskId=7", null, 3000L);
+        AiConversationRecord legacyWithoutTask = new AiConversationRecord(
+                3, 1, "deterministic", "Hermes · file operation review", "", "decision: ok\nsummary: legacy",
+                "ok", "provider=deterministic-preflight", null, 4000L);
+
+        List<HermesDecisionTimelineItem> items = HermesDecisionTimelinePolicy.forTask(
+                Arrays.asList(oldTask, target, legacyWithoutTask), 7);
+
+        assertEquals(1, items.size());
+        assertEquals("rewrite", items.get(0).decision);
+        assertEquals("target", items.get(0).summary);
+    }
 }

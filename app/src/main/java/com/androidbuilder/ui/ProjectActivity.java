@@ -80,6 +80,7 @@ public class ProjectActivity extends BaseActivity {
     private final List<ProjectLogEntry> logEntries = new ArrayList<>();
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedPlanMessageIds = new HashSet<>();
+    private final Set<Long> expandedDecisionTaskIds = new HashSet<>();
     private final Set<Long> expandedBuildLogJobIds = new HashSet<>();
     private boolean tasksCollapsed = ProjectTaskListDisplayPolicy.defaultCollapsed();
     private TimelineAdapter adapter;
@@ -1717,6 +1718,19 @@ public class ProjectActivity extends BaseActivity {
                 }
             }
 
+            if (canShowTaskDecisions(task)) {
+                row.setOnClickListener(v -> {
+                    if (expandedDecisionTaskIds.contains(task.id)) {
+                        expandedDecisionTaskIds.remove(task.id);
+                    } else {
+                        expandedDecisionTaskIds.add(task.id);
+                    }
+                    if (adapter != null) {
+                        adapter.notifyDataSetChanged();
+                    }
+                });
+            }
+
             String stepsText = taskStepsText(task.instruction);
             if (!stepsText.isEmpty()) {
                 TextView steps = new TextView(ProjectActivity.this);
@@ -1725,6 +1739,23 @@ public class ProjectActivity extends BaseActivity {
                 LinearLayout.LayoutParams stepsParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 stepsParams.setMargins(0, dp(4), 0, 0);
                 body.addView(steps, stepsParams);
+            }
+
+            String decisionsText = taskDecisionsText(task);
+            if (!decisionsText.isEmpty()) {
+                TextView decisions = new TextView(ProjectActivity.this);
+                decisions.setText(decisionsText);
+                decisions.setTextSize(12);
+                decisions.setPadding(dp(8), dp(6), dp(8), dp(6));
+                decisions.setBackgroundResource(R.drawable.bg_log_md3);
+                decisions.setTextColor(getResources().getColor(R.color.colorInverseOnSurface));
+                decisions.setOnLongClickListener(v -> {
+                    copyText(getString(R.string.hermes_decisions), decisionsText);
+                    return true;
+                });
+                LinearLayout.LayoutParams decisionParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                decisionParams.setMargins(0, dp(6), 0, 0);
+                body.addView(decisions, decisionParams);
             }
 
             String logText = taskLogText(task, index);
@@ -1745,6 +1776,37 @@ public class ProjectActivity extends BaseActivity {
                 body.addView(log, logParams);
             }
             return row;
+        }
+
+        private boolean canShowTaskDecisions(ProjectTaskRecord task) {
+            if (task == null || task.status == null) {
+                return false;
+            }
+            return "done".equals(task.status) || "failed".equals(task.status);
+        }
+
+        private String taskDecisionsText(ProjectTaskRecord task) {
+            if (task == null || !expandedDecisionTaskIds.contains(task.id)) {
+                return "";
+            }
+            List<HermesDecisionTimelineItem> items = HermesDecisionTimelinePolicy.forTask(repository.listAiConversations(projectId), task.id);
+            if (items.isEmpty()) {
+                return AppSettings.isChinese(ProjectActivity.this) ? "暂无任务决策记录" : "No task decisions yet";
+            }
+            StringBuilder builder = new StringBuilder(AppSettings.isChinese(ProjectActivity.this) ? "决策轨迹" : "Decision trail");
+            SimpleDateFormat format = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+            for (HermesDecisionTimelineItem item : items) {
+                builder.append('\n')
+                        .append(format.format(new Date(item.createdAt)))
+                        .append(" · ")
+                        .append(item.role.isEmpty() ? "Hermes" : item.role)
+                        .append(" · ")
+                        .append(item.decision.isEmpty() ? "event" : item.decision);
+                if (!item.summary.isEmpty()) {
+                    builder.append(" · ").append(item.summary);
+                }
+            }
+            return builder.toString();
         }
 
         private String taskProgressText(ProjectTaskRecord task) {
