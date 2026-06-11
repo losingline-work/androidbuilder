@@ -60,6 +60,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 public class ProjectActivity extends BaseActivity {
@@ -1226,7 +1227,7 @@ public class ProjectActivity extends BaseActivity {
     }
 
     // Called on a worker thread by OpenAiClient while a model response is streaming.
-    private void onModelStreamProgress(int answerChars, int reasoningChars) {
+    private void onModelStreamProgress(String callTag, int answerChars, int reasoningChars) {
         long now = System.currentTimeMillis();
         if (now - lastStreamProgressAt < 300) {
             return;
@@ -1234,6 +1235,12 @@ public class ProjectActivity extends BaseActivity {
         lastStreamProgressAt = now;
         runOnUiThread(() -> {
             if (!busy && !autoExecutingPlan) {
+                return;
+            }
+            if (callTag != null && callTag.startsWith("task:")) {
+                if (adapter != null) {
+                    adapter.notifyDataSetChanged();
+                }
                 return;
             }
             if (answerChars > 0) {
@@ -1686,6 +1693,17 @@ public class ProjectActivity extends BaseActivity {
             status.setTextSize(13);
             body.addView(status);
 
+            String progressText = taskProgressText(task);
+            if (!progressText.isEmpty()) {
+                TextView progress = new TextView(ProjectActivity.this);
+                progress.setText(progressText);
+                progress.setTextSize(12);
+                progress.setTextColor(getResources().getColor(R.color.colorPrimary));
+                LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                progressParams.setMargins(0, dp(4), 0, 0);
+                body.addView(progress, progressParams);
+            }
+
             if (showAgentRun) {
                 String agentRunText = agentRunText(task);
                 if (!agentRunText.isEmpty()) {
@@ -1727,6 +1745,15 @@ public class ProjectActivity extends BaseActivity {
                 body.addView(log, logParams);
             }
             return row;
+        }
+
+        private String taskProgressText(ProjectTaskRecord task) {
+            if (task == null || agentService == null) {
+                return "";
+            }
+            Map<String, com.androidbuilder.agent.StreamProgressRegistry.StreamProgress> snapshot = agentService.streamProgressSnapshot();
+            com.androidbuilder.agent.StreamProgressRegistry.StreamProgress progress = snapshot.get("task:" + task.id);
+            return StreamProgressDisplayPolicy.text(progress, AppSettings.isChinese(ProjectActivity.this), System.currentTimeMillis());
         }
 
         private String agentRunText(ProjectTaskRecord task) {

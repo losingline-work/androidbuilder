@@ -79,11 +79,20 @@ public class AgentService {
     private final GeneratedProjectWriter writer = new GeneratedProjectWriter();
     private final FileOperationsWriter operationsWriter;
     private final TaskOperationExecutor taskOperationExecutor;
+    private final StreamProgressRegistry streamProgressRegistry = new StreamProgressRegistry();
+    private volatile OpenAiClient.ProgressListener progressListener;
 
     public AgentService(Context context, AppRepository repository) {
         this.context = context.getApplicationContext();
         this.repository = repository;
         this.openAiClient = new OpenAiClient(context);
+        this.openAiClient.setProgressListener((callTag, answerChars, reasoningChars) -> {
+            streamProgressRegistry.updateCounts(callTag, answerChars, reasoningChars);
+            OpenAiClient.ProgressListener listener = progressListener;
+            if (listener != null) {
+                listener.onProgress(callTag, answerChars, reasoningChars);
+            }
+        });
         this.operationsWriter = new FileOperationsWriter(new DependencyGuard(
                 BuildBackendSettings.dependencyMode(this.context),
                 BuildBackendSettings.offlineMavenDir(this.context)));
@@ -91,6 +100,7 @@ public class AgentService {
                 createAndApplyTaskOperationsInternal(
                         projectId,
                         linkedBuildJobId,
+                        task.id,
                         sourceDir,
                         planContent,
                         task.title,
@@ -103,7 +113,11 @@ public class AgentService {
     }
 
     public void setProgressListener(OpenAiClient.ProgressListener listener) {
-        openAiClient.setProgressListener(listener);
+        this.progressListener = listener;
+    }
+
+    public Map<String, StreamProgressRegistry.StreamProgress> streamProgressSnapshot() {
+        return streamProgressRegistry.snapshot();
     }
 
     public void generateAsync(long projectId, String prompt, Callback callback) {
@@ -353,6 +367,7 @@ public class AgentService {
                         repository.updateHermesAgentRun(result.run.id, "done", mergedHash, summary, "");
                     }
                     repository.updateProjectTask(result.task.id, "done", summary);
+                    clearStreamProgressForTask(result.task);
                     completedTitles.add(result.task.title);
                     anyMerged = true;
                     FileUtils.appendText(logs, (chinese ? "计划任务完成：" : "Executed plan task: ") + result.task.title + "\n" + summary + "\n");
@@ -411,6 +426,7 @@ public class AgentService {
                 if (latest != null && "running".equals(latest.status)) {
                     repository.updateProjectTask(runningTask.id, "failed", errorMessage);
                 }
+                clearStreamProgressForTask(runningTask);
             }
             if (executionRun != null) {
                 repository.updateHermesExecutionRun(executionRun.id, "failed", executionRun.baseSourceHash);
@@ -896,6 +912,7 @@ public class AgentService {
             }
             if (result.task != null) {
                 repository.updateProjectTask(result.task.id, "failed", reason);
+                clearStreamProgressForTask(result.task);
                 FileUtils.appendText(logs, (chinese ? "计划任务合并失败：" : "Plan task merge failed: ")
                         + result.task.title + "\n" + reason + "\n");
             }
@@ -1008,6 +1025,26 @@ public class AgentService {
         return chinese ? completedTitles.size() + " 个任务" : completedTitles.size() + " tasks";
     }
 
+    private String streamCallTag(long taskId, Long linkedBuildJobId, boolean repairFlow) {
+        if (taskId > 0) {
+            return "task:" + taskId;
+        }
+        if (repairFlow && linkedBuildJobId != null) {
+            return "repair:" + linkedBuildJobId;
+        }
+        return "";
+    }
+
+    private void updateStreamPhase(String callTag, String phase, int attempt) {
+        streamProgressRegistry.updatePhase(callTag, phase, attempt, POLICY_REWRITE_ATTEMPTS);
+    }
+
+    private void clearStreamProgressForTask(ProjectTaskRecord task) {
+        if (task != null) {
+            streamProgressRegistry.clear("task:" + task.id);
+        }
+    }
+
     private String joinLines(List<String> lines) {
         if (lines == null || lines.isEmpty()) {
             return "";
@@ -1041,6 +1078,7 @@ public class AgentService {
         return createAndApplyTaskOperationsInternal(
                 projectId,
                 linkedBuildJobId,
+                0,
                 sourceDir,
                 planContent,
                 task.title,
@@ -1052,8 +1090,9 @@ public class AgentService {
                 repairFlow);
     }
 
-    private TaskOperations createAndApplyTaskOperationsInternal(long projectId, Long linkedBuildJobId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese, String initialFailureContext, boolean repairFlow) throws Exception {
+    private TaskOperations createAndApplyTaskOperationsInternal(long projectId, Long linkedBuildJobId, long taskId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese, String initialFailureContext, boolean repairFlow) throws Exception {
         String instruction = taskInstruction;
+        String callTag = streamCallTag(taskId, linkedBuildJobId, repairFlow);
         // Recent user requirements live in chat but may never have reached the plan text; feed them
         // to the coding/repair model so it honors intent the plan dropped.
         String recentRequirements = ConversationContextPolicy.recentUserRequirements(
@@ -1080,9 +1119,11 @@ public class AgentService {
                     && negotiationRounds < CONTEXT_NEGOTIATION_ROUNDS) {
                 do {
                     negotiationRounds++;
+                    updateStreamPhase(callTag, "scouting", attempt);
                     negotiation = negotiateTaskContextWithFallback(
                             projectId,
                             linkedBuildJobId,
+                            callTag,
                             planContent,
                             taskTitle,
                             instruction,
@@ -1105,12 +1146,13 @@ public class AgentService {
             final String attemptInstruction = instruction;
             final String attemptSnapshot = snapshot;
             final String attemptRetryContext = retryContext;
+            updateStreamPhase(callTag, "coding", attempt);
             String operationsJson = recordCloudAiCall(
                     projectId,
                     linkedBuildJobId,
                     (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
                     requestLog,
-                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, chinese));
+                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, chinese, callTag));
             try {
                 TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
                 HermesTaskContract taskContract = HermesTaskContractCodec.extractFromInstruction(instruction);
@@ -1173,9 +1215,11 @@ public class AgentService {
                     snapshot = sourceSnapshot(sourceDir);
                     continue;
                 }
+                updateStreamPhase(callTag, "reviewing", attempt);
                 HermesReview hermesReview = reviewOperationsWithHermes(
                         projectId,
                         linkedBuildJobId,
+                        callTag,
                         taskTitle,
                         instruction,
                         snapshot,
@@ -1203,6 +1247,7 @@ public class AgentService {
                     snapshot = sourceSnapshot(sourceDir);
                     continue;
                 }
+                updateStreamPhase(callTag, "merging", attempt);
                 operationsWriter.apply(sourceDir, operations);
                 return operations;
             } catch (IllegalArgumentException policyError) {
@@ -1239,7 +1284,7 @@ public class AgentService {
                 && !result.additionalInstruction.trim().isEmpty();
     }
 
-    private ContextNegotiation negotiateTaskContextWithFallback(long projectId, Long linkedBuildJobId, String planContent, String taskTitle, String taskInstruction, String snapshot, String recentRequirements, String previousFailure, boolean repairFlow, int round, boolean chinese) {
+    private ContextNegotiation negotiateTaskContextWithFallback(long projectId, Long linkedBuildJobId, String callTag, String planContent, String taskTitle, String taskInstruction, String snapshot, String recentRequirements, String previousFailure, boolean repairFlow, int round, boolean chinese) {
         String title = hermesContextTitle(repairFlow, round, chinese);
         String request = "Round: " + round
                 + "\n\nTask title:\n" + taskTitle
@@ -1253,7 +1298,7 @@ public class AgentService {
                     linkedBuildJobId,
                     title,
                     request,
-                    () -> openAiClient.negotiateTaskContext(planContent, taskTitle, taskInstruction, snapshot, recentRequirements, previousFailure, chinese));
+                    () -> openAiClient.negotiateTaskContext(planContent, taskTitle, taskInstruction, snapshot, recentRequirements, previousFailure, chinese, callTag));
             return ContextNegotiationParser.fromJson(response);
         } catch (Exception error) {
             recordAiConversationSafely(
@@ -1288,7 +1333,7 @@ public class AgentService {
         return (chinese ? "Hermes · 上下文侦察" : "Hermes · Context Scout") + " #" + round;
     }
 
-    private HermesReview reviewOperationsWithHermes(long projectId, Long linkedBuildJobId, String taskTitle, String taskInstruction, String snapshot, String operationsJson, TaskOperations operations, ContextNegotiation negotiation, boolean retryOrRepairFlow, int attempt, int cloudReviewsUsed, File logs, boolean chinese) {
+    private HermesReview reviewOperationsWithHermes(long projectId, Long linkedBuildJobId, String callTag, String taskTitle, String taskInstruction, String snapshot, String operationsJson, TaskOperations operations, ContextNegotiation negotiation, boolean retryOrRepairFlow, int attempt, int cloudReviewsUsed, File logs, boolean chinese) {
         if (!HermesReviewerPolicy.shouldReviewOperations(retryOrRepairFlow, attempt, negotiation, operations, cloudReviewsUsed)) {
             return null;
         }
@@ -1301,7 +1346,7 @@ public class AgentService {
                     linkedBuildJobId,
                     title,
                     request,
-                    () -> openAiClient.reviewTaskOperations(taskTitle, taskInstruction, snapshot, operationsJson, contextScoutNotes, chinese));
+                    () -> openAiClient.reviewTaskOperations(taskTitle, taskInstruction, snapshot, operationsJson, contextScoutNotes, chinese, callTag));
             HermesReview review = HermesReviewParser.fromJson(response);
             appendHermesReviewLog(logs, title, review);
             return review;

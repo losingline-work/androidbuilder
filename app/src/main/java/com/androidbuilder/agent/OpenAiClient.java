@@ -31,7 +31,7 @@ public class OpenAiClient {
 
     /** Reports streaming progress while a response is being received. Called on a worker thread. */
     public interface ProgressListener {
-        void onProgress(int answerChars, int reasoningChars);
+        void onProgress(String callTag, int answerChars, int reasoningChars);
     }
 
     public static final String PREFS = "cloud_api";
@@ -124,6 +124,10 @@ public class OpenAiClient {
     }
 
     public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, boolean chinese) throws Exception {
+        return createTaskOperations(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, chinese, "");
+    }
+
+    public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, boolean chinese, String callTag) throws Exception {
         return completeChat(
                 taskOperationsSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
@@ -131,10 +135,15 @@ public class OpenAiClient {
                 0.2,
                 chinese,
                 CODING_READ_TIMEOUT_MS,
-                true);
+                true,
+                callTag);
     }
 
     public String negotiateTaskContext(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String previousFailure, boolean chinese) throws Exception {
+        return negotiateTaskContext(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, previousFailure, chinese, "");
+    }
+
+    public String negotiateTaskContext(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String previousFailure, boolean chinese, String callTag) throws Exception {
         return completeChat(
                 contextNegotiationSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
@@ -142,10 +151,15 @@ public class OpenAiClient {
                 0.0,
                 chinese,
                 DEFAULT_READ_TIMEOUT_MS,
-                true);
+                true,
+                callTag);
     }
 
     public String reviewTaskOperations(String taskTitle, String taskInstruction, String sourceSnapshot, String operationsJson, String contextScoutNotes, boolean chinese) throws Exception {
+        return reviewTaskOperations(taskTitle, taskInstruction, sourceSnapshot, operationsJson, contextScoutNotes, chinese, "");
+    }
+
+    public String reviewTaskOperations(String taskTitle, String taskInstruction, String sourceSnapshot, String operationsJson, String contextScoutNotes, boolean chinese, String callTag) throws Exception {
         return completeChat(
                 hermesReviewSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
@@ -153,7 +167,8 @@ public class OpenAiClient {
                 0.0,
                 chinese,
                 DEFAULT_READ_TIMEOUT_MS,
-                true);
+                true,
+                callTag);
     }
 
     public String createPolicyRewriteHint(String taskInstruction, String policyError, String focusedSnapshot, int attempt, boolean chinese) throws Exception {
@@ -181,6 +196,10 @@ public class OpenAiClient {
     }
 
     private String completeChat(String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean chinese, int readTimeoutMs, boolean structuredOutput) throws Exception {
+        return completeChat(systemPrompt, messages, latestUserMessage, temperature, chinese, readTimeoutMs, structuredOutput, "");
+    }
+
+    private String completeChat(String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean chinese, int readTimeoutMs, boolean structuredOutput, String callTag) throws Exception {
         if (!isConfigured()) {
             throw new IllegalStateException(chinese ? "请先在设置里填写模型 API Key。" : "Configure a model API key in Settings first.");
         }
@@ -202,7 +221,7 @@ public class OpenAiClient {
 
         for (int attempt = 0; attempt <= SOCKET_ABORT_RETRIES; attempt++) {
             try {
-                return executeChatRequest(endpoint, apiKey, body, readTimeoutMs, provider, chinese);
+                return executeChatRequest(endpoint, apiKey, body, readTimeoutMs, provider, chinese, callTag);
             } catch (SocketTimeoutException error) {
                 throw new IllegalStateException(chinese ? "模型响应超时。已等待 " + (readTimeoutMs / 1000) + " 秒，请重试或把任务拆得更小。" : "Model response timed out after " + (readTimeoutMs / 1000) + " seconds. Retry or split the task smaller.", error);
             } catch (SocketException error) {
@@ -248,7 +267,7 @@ public class OpenAiClient {
         return chatRequestBody(provider, model, systemPrompt, messages, latestUserMessage, temperature, thinkingEnabled);
     }
 
-    private String executeChatRequest(String endpoint, String apiKey, JSONObject body, int readTimeoutMs, String provider, boolean chinese) throws Exception {
+    private String executeChatRequest(String endpoint, String apiKey, JSONObject body, int readTimeoutMs, String provider, boolean chinese, String callTag) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -272,7 +291,7 @@ public class OpenAiClient {
                 }
                 throw new IllegalStateException(httpErrorMessage(provider, code, error.toString(), chinese));
             }
-            return readChatContent(reader, progressListener);
+            return readChatContent(reader, progressListener, callTag);
         }
     }
 
@@ -282,6 +301,10 @@ public class OpenAiClient {
      * ignored {@code stream:true}.
      */
     static String readChatContent(BufferedReader reader, ProgressListener listener) throws Exception {
+        return readChatContent(reader, listener, "");
+    }
+
+    static String readChatContent(BufferedReader reader, ProgressListener listener, String callTag) throws Exception {
         StringBuilder answer = new StringBuilder();
         StringBuilder raw = new StringBuilder();
         boolean sawStreamEvent = false;
@@ -323,7 +346,7 @@ public class OpenAiClient {
                     int total = answer.length() + reasoningChars;
                     if (total - lastEmitted >= PROGRESS_EMIT_CHARS) {
                         lastEmitted = total;
-                        listener.onProgress(answer.length(), reasoningChars);
+                        listener.onProgress(cleanCallTag(callTag), answer.length(), reasoningChars);
                     }
                 }
             } else {
@@ -335,9 +358,13 @@ public class OpenAiClient {
             return extractChatContent(new JSONObject(raw.toString()));
         }
         if (listener != null) {
-            listener.onProgress(answer.length(), reasoningChars);
+            listener.onProgress(cleanCallTag(callTag), answer.length(), reasoningChars);
         }
         return answer.toString();
+    }
+
+    private static String cleanCallTag(String callTag) {
+        return callTag == null ? "" : callTag.trim();
     }
 
     static String readChatContentForTest(String sse) throws Exception {
