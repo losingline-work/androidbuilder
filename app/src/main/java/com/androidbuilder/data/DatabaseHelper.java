@@ -12,9 +12,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     static final String TABLE_PROJECT_PLANS = "project_plans";
     static final String TABLE_PROJECT_TASKS = "project_tasks";
     static final String TABLE_AI_CONVERSATIONS = "ai_conversations";
+    static final String TABLE_HERMES_EXECUTION_RUNS = "hermes_execution_runs";
+    static final String TABLE_HERMES_AGENT_RUNS = "hermes_agent_runs";
 
     private static final String DB_NAME = "android_builder.db";
-    private static final int DB_VERSION = 5;
+    private static final int DB_VERSION = 6;
 
     public DatabaseHelper(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -66,6 +68,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         createProjectPlansTable(db);
         createProjectTasksTable(db);
         createAiConversationsTable(db);
+        createHermesExecutionRunsTable(db);
+        createHermesAgentRunsTable(db);
         db.execSQL("CREATE INDEX idx_messages_project ON messages(project_id, created_at)");
         db.execSQL("CREATE INDEX idx_jobs_project ON build_jobs(project_id, created_at)");
     }
@@ -88,6 +92,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         if (oldVersion < 5) {
             createAiConversationsTable(db);
+        }
+        if (oldVersion < 6) {
+            createHermesExecutionRunsTable(db);
+            createHermesAgentRunsTable(db);
         }
     }
 
@@ -146,5 +154,45 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "FOREIGN KEY(linked_build_job_id) REFERENCES build_jobs(id) ON DELETE SET NULL" +
                 ")");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_ai_conversations_project ON ai_conversations(project_id, created_at)");
+    }
+
+    private void createHermesExecutionRunsTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS hermes_execution_runs (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "project_id INTEGER NOT NULL," +
+                "build_job_id INTEGER NOT NULL," +
+                "status TEXT NOT NULL DEFAULT 'running'," +
+                "mode TEXT NOT NULL DEFAULT 'parallel'," +
+                "max_parallel INTEGER NOT NULL DEFAULT 1," +
+                "base_source_hash TEXT NOT NULL DEFAULT ''," +
+                "created_at INTEGER NOT NULL," +
+                "updated_at INTEGER NOT NULL," +
+                "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE," +
+                "FOREIGN KEY(build_job_id) REFERENCES build_jobs(id) ON DELETE CASCADE" +
+                ")");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_hermes_execution_runs_project ON hermes_execution_runs(project_id, status, created_at)");
+    }
+
+    private void createHermesAgentRunsTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS hermes_agent_runs (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "execution_run_id INTEGER NOT NULL," +
+                "project_task_id INTEGER NOT NULL," +
+                "batch_index INTEGER NOT NULL," +
+                "agent_index INTEGER NOT NULL," +
+                "status TEXT NOT NULL DEFAULT 'pending'," +
+                "work_dir TEXT NOT NULL DEFAULT ''," +
+                "base_source_hash TEXT NOT NULL DEFAULT ''," +
+                "merged_source_hash TEXT NOT NULL DEFAULT ''," +
+                "locked_paths_json TEXT NOT NULL DEFAULT '[]'," +
+                "summary TEXT NOT NULL DEFAULT ''," +
+                "error_summary TEXT NOT NULL DEFAULT ''," +
+                "started_at INTEGER NOT NULL DEFAULT 0," +
+                "completed_at INTEGER NOT NULL DEFAULT 0," +
+                "FOREIGN KEY(execution_run_id) REFERENCES hermes_execution_runs(id) ON DELETE CASCADE," +
+                "FOREIGN KEY(project_task_id) REFERENCES project_tasks(id) ON DELETE CASCADE" +
+                ")");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_hermes_agent_runs_execution ON hermes_agent_runs(execution_run_id, batch_index, agent_index)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_hermes_agent_runs_task ON hermes_agent_runs(project_task_id, status)");
     }
 }
