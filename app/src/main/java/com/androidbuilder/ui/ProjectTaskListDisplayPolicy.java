@@ -71,6 +71,41 @@ public final class ProjectTaskListDisplayPolicy {
         return visible;
     }
 
+    public static boolean shouldCollapseCompleted(List<ProjectTaskRecord> tasks) {
+        if (tasks == null || tasks.isEmpty()) {
+            return false;
+        }
+        for (ProjectTaskRecord task : tasks) {
+            if (!"done".equals(status(task))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static String completionSummary(List<ProjectTaskRecord> tasks, boolean chinese) {
+        if (!shouldCollapseCompleted(tasks)) {
+            return "";
+        }
+        String base = chinese
+                ? "✓ 已完成 " + tasks.size() + "/" + tasks.size() + " 项任务"
+                : "✓ Completed " + tasks.size() + "/" + tasks.size() + " tasks";
+        long startedAt = Long.MAX_VALUE;
+        long completedAt = 0;
+        for (ProjectTaskRecord task : tasks) {
+            if (task.startedAt > 0) {
+                startedAt = Math.min(startedAt, task.startedAt);
+            }
+            if (task.completedAt > 0) {
+                completedAt = Math.max(completedAt, task.completedAt);
+            }
+        }
+        if (startedAt == Long.MAX_VALUE || completedAt <= startedAt) {
+            return base;
+        }
+        return base + (chinese ? " · 总用时 " : " · total ") + formatDuration(completedAt - startedAt);
+    }
+
     private static Set<Long> activeAgentTaskIds(List<HermesAgentRunRecord> agentRuns) {
         if (agentRuns == null || agentRuns.isEmpty()) {
             return Collections.emptySet();
@@ -157,7 +192,17 @@ public final class ProjectTaskListDisplayPolicy {
     }
 
     private static String status(ProjectTaskRecord task) {
-        return task == null || task.status == null ? "pending" : task.status;
+        return task == null || task.status == null ? "pending" : task.status.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String formatDuration(long durationMs) {
+        long seconds = Math.max(0, Math.round(durationMs / 1000.0d));
+        long minutes = seconds / 60;
+        long remainingSeconds = seconds % 60;
+        if (minutes > 0) {
+            return minutes + "m" + (remainingSeconds == 0 ? "" : remainingSeconds + "s");
+        }
+        return seconds + "s";
     }
 
     public static final class Group {

@@ -222,4 +222,33 @@ public class ProjectTimelinePolicyTest {
         assertEquals(2, entries.get(4).sourceIndex);
         assertEquals(5, entries.size());
     }
+
+    @Test
+    public void preservesThreePartTimelineOrdering() {
+        ProjectTaskRecord task = new ProjectTaskRecord(1, 1, 0, "Task", "", "running", "", 0, 0, 0, 0);
+
+        List<ProjectTimelinePolicy.Entry> entries = ProjectTimelinePolicy.entries(
+                4,
+                Arrays.asList(null, null, 7L, null),
+                Arrays.asList(true, true, true, true),
+                Arrays.asList(false, true, false, false),
+                2,
+                true,
+                null,
+                Collections.singletonList(task),
+                null,
+                false);
+
+        assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, entries.get(0).kind);
+        assertEquals(0, entries.get(0).sourceIndex);
+        assertEquals(ProjectTimelinePolicy.Kind.PLAN_CARD, entries.get(1).kind);
+        assertEquals(1, entries.get(1).sourceIndex);
+        assertEquals(ProjectTimelinePolicy.Kind.TASK_GROUP, entries.get(2).kind);
+        assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, entries.get(3).kind);
+        assertEquals(ProjectTimelinePolicy.Kind.BUILD_LOG, entries.get(4).kind);
+        assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, entries.get(5).kind);
+        assertEquals(3, entries.get(5).sourceIndex);
+        assertEquals(ProjectTimelinePolicy.Kind.OPERATION_STATUS, entries.get(6).kind);
+        assertEquals(7, entries.size());
+    }
 }

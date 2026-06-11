@@ -70,6 +70,19 @@
                     android:textSize="12sp"
                     android:visibility="gone"
                     app:icon="@drawable/ic_copy" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/buildLogActionButton"
+                    style="@style/Widget.AndroidBuilder.Button.Outlined"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="8dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="@string/install"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <LinearLayout

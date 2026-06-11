@@ -988,6 +988,10 @@ public class ProjectActivity extends BaseActivity {
     private void repairLatest() {
         latestJob = repository.latestBuildJob(projectId);
         BuildJobRecord failed = repairTargetJob();
+        repairBuildJob(failed);
+    }
+
+    private void repairBuildJob(BuildJobRecord failed) {
         boolean repairable = failed != null && isRepairableFailure(failed);
         if (!ProjectBuildActionPolicy.canRepair(busy, failed, repairable)) {
             int message = failed != null && "failed".equals(failed.status) && !repairable
@@ -1059,7 +1063,10 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void installLatest() {
-        BuildJobRecord job = repository.latestBuildJobWithApk(projectId);
+        installJob(repository.latestBuildJobWithApk(projectId));
+    }
+
+    private void installJob(BuildJobRecord job) {
         if (job == null || job.apkPath == null) {
             Toast.makeText(this, R.string.no_apk_yet, Toast.LENGTH_SHORT).show();
             return;
@@ -1882,6 +1889,10 @@ public class ProjectActivity extends BaseActivity {
         }
 
         private String taskGroupSummary() {
+            String completionSummary = ProjectTaskListDisplayPolicy.completionSummary(taskItems, AppSettings.isChinese(ProjectActivity.this));
+            if (!completionSummary.isEmpty()) {
+                return completionSummary;
+            }
             int done = 0;
             int failed = 0;
             int runningIndex = -1;
@@ -1970,10 +1981,12 @@ public class ProjectActivity extends BaseActivity {
             TextView content = view.findViewById(R.id.buildLogContent);
             View copyButton = view.findViewById(R.id.buildLogCopyButton);
             View failureCopyButton = view.findViewById(R.id.buildLogFailureCopyButton);
+            TextView actionButton = view.findViewById(R.id.buildLogActionButton);
             View exportButton = view.findViewById(R.id.buildLogExportButton);
             TextView toggleButton = view.findViewById(R.id.buildLogToggleButton);
             boolean canExport = ProjectLogExportPolicy.canExportBuildLog(job);
             boolean canCopyFailureContext = canExport && ProjectBuildFailureContextPolicy.canCopyFailureContext(job);
+            ProjectBuildCardActionPolicy.Action cardAction = ProjectBuildCardActionPolicy.action(job, job != null && isRepairableFailure(job));
             boolean expanded = job != null && expandedBuildLogJobIds.contains(job.id);
             boolean showContent = ProjectBuildLogExpansionPolicy.shouldShowContent(job, expanded);
             boolean showToggle = ProjectBuildLogExpansionPolicy.shouldShowToggle(job);
@@ -1988,6 +2001,15 @@ public class ProjectActivity extends BaseActivity {
             failureCopyButton.setOnClickListener(v -> copyText(
                     getString(R.string.failure_context),
                     ProjectBuildFailureContextPolicy.copyText(job, readBuildLogText(job))));
+            actionButton.setVisibility(cardAction == ProjectBuildCardActionPolicy.Action.NONE ? View.GONE : View.VISIBLE);
+            actionButton.setText(cardAction == ProjectBuildCardActionPolicy.Action.REPAIR ? R.string.repair_build : R.string.install);
+            actionButton.setOnClickListener(v -> {
+                if (cardAction == ProjectBuildCardActionPolicy.Action.INSTALL) {
+                    installJob(job);
+                } else if (cardAction == ProjectBuildCardActionPolicy.Action.REPAIR) {
+                    repairBuildJob(job);
+                }
+            });
             exportButton.setEnabled(canExport);
             exportButton.setOnClickListener(v -> exportBuildLog(job));
             toggleButton.setVisibility(showToggle ? View.VISIBLE : View.GONE);

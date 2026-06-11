@@ -64,12 +64,37 @@ public class ProjectTaskListDisplayPolicyTest {
         assertEquals("Next", visible.get(1).title);
     }
 
+    @Test
+    public void completedTasksCollapseToSummary() {
+        List<ProjectTaskRecord> tasks = Arrays.asList(
+                task(10, 0, "One", "", "done", 1000, 3000),
+                task(11, 1, "Two", "", "done", 2000, 61000));
+
+        assertTrue(ProjectTaskListDisplayPolicy.shouldCollapseCompleted(tasks));
+        assertEquals("✓ 已完成 2/2 项任务 · 总用时 1m",
+                ProjectTaskListDisplayPolicy.completionSummary(tasks, true));
+    }
+
+    @Test
+    public void failedTasksDoNotCollapseToCompletedSummary() {
+        List<ProjectTaskRecord> tasks = Arrays.asList(
+                task(10, 0, "One", "", "done"),
+                task(11, 1, "Two", "", "failed"));
+
+        assertFalse(ProjectTaskListDisplayPolicy.shouldCollapseCompleted(tasks));
+        assertEquals("", ProjectTaskListDisplayPolicy.completionSummary(tasks, true));
+    }
+
     private static ProjectTaskRecord task(int order, String title, String instruction, String status) {
         return task(0, order, title, instruction, status);
     }
 
     private static ProjectTaskRecord task(long id, int order, String title, String instruction, String status) {
         return new ProjectTaskRecord(id, 1, order, title, instruction, status, "", 0, 0, 0, 0);
+    }
+
+    private static ProjectTaskRecord task(long id, int order, String title, String instruction, String status, long startedAt, long completedAt) {
+        return new ProjectTaskRecord(id, 1, order, title, instruction, status, "", 0, 0, startedAt, completedAt);
     }
 
     private static String instructionWithProduces(String produces) {
