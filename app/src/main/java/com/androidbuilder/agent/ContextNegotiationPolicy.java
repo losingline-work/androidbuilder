@@ -3,7 +3,7 @@ package com.androidbuilder.agent;
 import com.androidbuilder.model.ContextNegotiation;
 
 final class ContextNegotiationPolicy {
-    static final int MAX_NEGOTIATION_ROUNDS = 2;
+    static final int MAX_NEGOTIATION_ROUNDS = 1;
 
     private ContextNegotiationPolicy() {
     }

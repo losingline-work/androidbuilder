@@ -69,7 +69,7 @@ public class ContextNegotiationPolicyTest {
                 Collections.emptyList(),
                 "Patch existing DAO only.");
 
-        assertTrue(ContextNegotiationPolicy.shouldContinueNegotiation(notReady, 1));
+        assertFalse(ContextNegotiationPolicy.shouldContinueNegotiation(notReady, 1));
         assertFalse(ContextNegotiationPolicy.shouldContinueNegotiation(ready, 1));
         assertFalse(ContextNegotiationPolicy.shouldContinueNegotiation(notReady, ContextNegotiationPolicy.MAX_NEGOTIATION_ROUNDS));
     }

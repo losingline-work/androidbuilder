@@ -38,7 +38,7 @@ public class AgentServiceRetryPolicyTest {
 
     @Test
     public void contextNegotiationRoundsAreBounded() {
-        assertTrue(AgentService.contextNegotiationRoundsForTest() <= 2);
+        assertTrue(AgentService.contextNegotiationRoundsForTest() <= 1);
     }
 
     @Test
