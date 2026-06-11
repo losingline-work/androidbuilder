@@ -39,6 +39,7 @@ public class SettingsActivity extends BaseActivity {
     private String[] languageLabels;
     private String[] backendLabels;
     private String[] dependencyModeLabels;
+    private String[] parallelAgentLabels;
     private String[] openaiModelLabels;
     private String[] deepseekModelLabels;
     private String[] minimaxModelLabels;
@@ -55,6 +56,7 @@ public class SettingsActivity extends BaseActivity {
     private AutoCompleteTextView languageSpinner;
     private AutoCompleteTextView backendSpinner;
     private AutoCompleteTextView dependencyModeSpinner;
+    private AutoCompleteTextView parallelAgentSpinner;
     private View termuxSection;
     private View openaiModelLayout;
     private View deepseekModelLayout;
@@ -94,6 +96,7 @@ public class SettingsActivity extends BaseActivity {
         languageSpinner = findViewById(R.id.languageSpinner);
         backendSpinner = findViewById(R.id.backendSpinner);
         dependencyModeSpinner = findViewById(R.id.dependencyModeSpinner);
+        parallelAgentSpinner = findViewById(R.id.parallelAgentSpinner);
         termuxSection = findViewById(R.id.termuxSection);
         runtimeBootstrapUrlInput = findViewById(R.id.runtimeBootstrapUrlInput);
         runtimeStatusText = findViewById(R.id.runtimeStatusText);
@@ -106,6 +109,7 @@ public class SettingsActivity extends BaseActivity {
         select(languageSpinner, languageLabels, languageIndex(AppSettings.language(this)));
         select(backendSpinner, backendLabels, backendIndex(BuildBackendSettings.selected(this)));
         select(dependencyModeSpinner, dependencyModeLabels, dependencyModeIndex(BuildBackendSettings.dependencyMode(this)));
+        select(parallelAgentSpinner, parallelAgentLabels, parallelAgentIndex(BuildBackendSettings.parallelAgentLimit(this)));
         runtimeBootstrapUrlInput.setText(BuildBackendSettings.prefs(this).getString(BuildBackendSettings.KEY_BOOTSTRAP_URL, ""));
         findViewById(R.id.saveSettingsButton).setOnClickListener(v -> save());
         findViewById(R.id.importOfflineMavenButton).setOnClickListener(v -> importOfflineMaven());
@@ -132,6 +136,7 @@ public class SettingsActivity extends BaseActivity {
         languageLabels = new String[]{getString(R.string.language_system), "English", "中文"};
         backendLabels = new String[]{getString(R.string.backend_embedded), getString(R.string.backend_external_termux)};
         dependencyModeLabels = new String[]{getString(R.string.dependency_mode_offline_safe), getString(R.string.dependency_mode_local_cache), getString(R.string.dependency_mode_online)};
+        parallelAgentLabels = new String[]{getString(R.string.parallel_agents_serial), getString(R.string.parallel_agents_two), getString(R.string.parallel_agents_three)};
         openaiModelLabels = OpenAiClient.openAiModels();
         deepseekModelLabels = new String[]{getString(R.string.deepseek_model_v4_flash), getString(R.string.deepseek_model_v4_pro)};
         minimaxModelLabels = new String[]{
@@ -147,6 +152,7 @@ public class SettingsActivity extends BaseActivity {
         configureDropdown(languageSpinner, languageLabels);
         configureDropdown(backendSpinner, backendLabels);
         configureDropdown(dependencyModeSpinner, dependencyModeLabels);
+        configureDropdown(parallelAgentSpinner, parallelAgentLabels);
         configureDropdown(openaiModelSpinner, openaiModelLabels);
         configureDropdown(deepseekModelSpinner, deepseekModelLabels);
         configureDropdown(minimaxModelSpinner, minimaxModelLabels);
@@ -162,6 +168,9 @@ public class SettingsActivity extends BaseActivity {
     }
 
     private void configureDropdown(AutoCompleteTextView view, String[] labels) {
+        if (view == null) {
+            return;
+        }
         view.setAdapter(new ArrayAdapter<>(this, R.layout.row_dropdown_item, labels));
         view.setThreshold(0);
     }
@@ -342,6 +351,7 @@ public class SettingsActivity extends BaseActivity {
         AppSettings.prefs(this).edit().putString(AppSettings.KEY_LANGUAGE, languageAt(selectedIndex(languageSpinner, languageLabels))).apply();
         BuildBackendSettings.setSelected(this, backendAt(selectedIndex(backendSpinner, backendLabels)));
         BuildBackendSettings.setDependencyMode(this, dependencyModeAt(selectedIndex(dependencyModeSpinner, dependencyModeLabels)));
+        BuildBackendSettings.setParallelAgentLimit(this, parallelAgentLimitAt(selectedIndex(parallelAgentSpinner, parallelAgentLabels)));
         BuildBackendSettings.prefs(this).edit().putString(BuildBackendSettings.KEY_BOOTSTRAP_URL, runtimeBootstrapUrlInput.getText().toString().trim()).apply();
         Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show();
         recreate();
@@ -361,6 +371,9 @@ public class SettingsActivity extends BaseActivity {
     }
 
     private void select(AutoCompleteTextView view, String[] labels, int index) {
+        if (view == null || labels == null) {
+            return;
+        }
         if (labels.length == 0) {
             return;
         }
@@ -369,6 +382,9 @@ public class SettingsActivity extends BaseActivity {
     }
 
     private int selectedIndex(AutoCompleteTextView view, String[] labels) {
+        if (view == null || labels == null) {
+            return 0;
+        }
         String value = view.getText() == null ? "" : view.getText().toString();
         for (int index = 0; index < labels.length; index++) {
             if (labels[index].equals(value)) {
@@ -376,6 +392,26 @@ public class SettingsActivity extends BaseActivity {
             }
         }
         return 0;
+    }
+
+    private int parallelAgentIndex(int limit) {
+        if (limit <= 1) {
+            return 0;
+        }
+        if (limit >= 3) {
+            return 2;
+        }
+        return 1;
+    }
+
+    private int parallelAgentLimitAt(int index) {
+        if (index <= 0) {
+            return 1;
+        }
+        if (index >= 2) {
+            return 3;
+        }
+        return 2;
     }
 
     private static final class ProviderDraft {

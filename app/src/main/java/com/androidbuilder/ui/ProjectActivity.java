@@ -38,6 +38,7 @@ import com.androidbuilder.install.ApkInstaller;
 import com.androidbuilder.model.AiConversationRecord;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
+import com.androidbuilder.model.HermesAgentRunRecord;
 import com.androidbuilder.model.ProjectLogEntry;
 import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
@@ -76,6 +77,7 @@ public class ProjectActivity extends BaseActivity {
     private final List<ChatMessage> messages = new ArrayList<>();
     private final List<FileItem> fileItems = new ArrayList<>();
     private final List<ProjectTaskRecord> taskItems = new ArrayList<>();
+    private final List<HermesAgentRunRecord> agentRunItems = new ArrayList<>();
     private final List<ProjectLogEntry> logEntries = new ArrayList<>();
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedBuildLogJobIds = new HashSet<>();
@@ -311,6 +313,8 @@ public class ProjectActivity extends BaseActivity {
         messages.addAll(repository.listMessages(projectId));
         taskItems.clear();
         taskItems.addAll(repository.listProjectTasks(projectId));
+        agentRunItems.clear();
+        agentRunItems.addAll(repository.listHermesAgentRunsForProject(projectId));
         adapter.notifyDataSetChanged();
         loadSourceDirectory(currentSourceDir == null ? sourceRoot : currentSourceDir, false);
         updateFileBrowserButton();
@@ -346,6 +350,8 @@ public class ProjectActivity extends BaseActivity {
             taskItems.clear();
             taskItems.addAll(latestTasks);
         }
+        agentRunItems.clear();
+        agentRunItems.addAll(repository.listHermesAgentRunsForProject(projectId));
         if (adapter != null) {
             adapter.notifyDataSetChanged();
         }
@@ -1552,17 +1558,17 @@ public class ProjectActivity extends BaseActivity {
 
             container.removeAllViews();
             if (tasksCollapsed) {
-                List<ProjectTaskRecord> visibleTasks = ProjectTaskListDisplayPolicy.visibleTasks(taskItems, true);
+                List<ProjectTaskRecord> visibleTasks = ProjectTaskListDisplayPolicy.visibleTasks(taskItems, true, agentRunItems);
                 container.setVisibility(visibleTasks.isEmpty() ? View.GONE : View.VISIBLE);
                 for (ProjectTaskRecord task : visibleTasks) {
-                    container.addView(taskRowView(task, taskItems.indexOf(task)));
+                    container.addView(taskRowView(task, taskItems.indexOf(task), false));
                 }
             } else {
                 container.setVisibility(View.VISIBLE);
                 for (ProjectTaskListDisplayPolicy.Group group : ProjectTaskListDisplayPolicy.groups(taskItems, false)) {
                     container.addView(taskPhaseHeaderView(group));
                     for (ProjectTaskRecord task : group.tasks) {
-                        container.addView(taskRowView(task, taskItems.indexOf(task)));
+                        container.addView(taskRowView(task, taskItems.indexOf(task), true));
                     }
                 }
             }
@@ -1581,7 +1587,7 @@ public class ProjectActivity extends BaseActivity {
             return header;
         }
 
-        private View taskRowView(ProjectTaskRecord task, int index) {
+        private View taskRowView(ProjectTaskRecord task, int index, boolean showAgentRun) {
             LinearLayout row = new LinearLayout(ProjectActivity.this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(android.view.Gravity.TOP);
@@ -1614,6 +1620,19 @@ public class ProjectActivity extends BaseActivity {
             status.setTextSize(13);
             body.addView(status);
 
+            if (showAgentRun) {
+                String agentRunText = agentRunText(task);
+                if (!agentRunText.isEmpty()) {
+                    TextView agentRun = new TextView(ProjectActivity.this);
+                    agentRun.setText(agentRunText);
+                    agentRun.setTextSize(12);
+                    agentRun.setTextColor(getResources().getColor(R.color.colorOnSurfaceVariant));
+                    LinearLayout.LayoutParams agentParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    agentParams.setMargins(0, dp(4), 0, 0);
+                    body.addView(agentRun, agentParams);
+                }
+            }
+
             String stepsText = taskStepsText(task.instruction);
             if (!stepsText.isEmpty()) {
                 TextView steps = new TextView(ProjectActivity.this);
@@ -1642,6 +1661,40 @@ public class ProjectActivity extends BaseActivity {
                 body.addView(log, logParams);
             }
             return row;
+        }
+
+        private String agentRunText(ProjectTaskRecord task) {
+            HermesAgentRunRecord run = latestAgentRunForTask(task);
+            if (run == null) {
+                return "";
+            }
+            HermesAgentRunDisplayPolicy.Item item = HermesAgentRunDisplayPolicy.item(run, AppSettings.isChinese(ProjectActivity.this));
+            return item.iconText + " " + item.title + " · " + item.subtitle;
+        }
+
+        private HermesAgentRunRecord latestAgentRunForTask(ProjectTaskRecord task) {
+            if (task == null) {
+                return null;
+            }
+            HermesAgentRunRecord latest = null;
+            for (HermesAgentRunRecord run : agentRunItems) {
+                if (run.projectTaskId != task.id) {
+                    continue;
+                }
+                if (latest == null || isNewerAgentRun(run, latest)) {
+                    latest = run;
+                }
+            }
+            return latest;
+        }
+
+        private boolean isNewerAgentRun(HermesAgentRunRecord candidate, HermesAgentRunRecord current) {
+            long candidateTime = Math.max(candidate.completedAt, candidate.startedAt);
+            long currentTime = Math.max(current.completedAt, current.startedAt);
+            if (candidateTime != currentTime) {
+                return candidateTime > currentTime;
+            }
+            return candidate.id > current.id;
         }
 
         private String taskGroupIcon() {

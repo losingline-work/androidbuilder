@@ -66,6 +66,10 @@
     <string name="dependency_mode_offline_safe">离线安全</string>
     <string name="dependency_mode_local_cache">本地缓存</string>
     <string name="dependency_mode_online">联网增强</string>
+    <string name="parallel_agents_title">并行子 Agent</string>
+    <string name="parallel_agents_serial">关闭 · 串行执行</string>
+    <string name="parallel_agents_two">2 个子 Agent · 推荐</string>
+    <string name="parallel_agents_three">3 个子 Agent · 更快，但 API 压力更高</string>
     <string name="import_offline_maven">导入 offline-maven.zip</string>
     <string name="offline_maven_empty">尚未导入本地 Maven 缓存。</string>
     <string name="offline_maven_ready">已准备 %1$d 个本地 Maven 产物：%2$s</string>

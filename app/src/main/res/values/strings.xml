@@ -66,6 +66,10 @@
     <string name="dependency_mode_offline_safe">Offline safe</string>
     <string name="dependency_mode_local_cache">Local cache</string>
     <string name="dependency_mode_online">Online enhanced</string>
+    <string name="parallel_agents_title">Parallel sub-agents</string>
+    <string name="parallel_agents_serial">Off - serial execution</string>
+    <string name="parallel_agents_two">2 sub-agents - recommended</string>
+    <string name="parallel_agents_three">3 sub-agents - faster, higher API pressure</string>
     <string name="import_offline_maven">Import offline-maven.zip</string>
     <string name="offline_maven_empty">No local Maven cache imported.</string>
     <string name="offline_maven_ready">%1$d local Maven artifacts ready at %2$s</string>

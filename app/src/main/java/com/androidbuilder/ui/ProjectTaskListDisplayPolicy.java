@@ -1,15 +1,18 @@
 package com.androidbuilder.ui;
 
 import com.androidbuilder.agent.HermesTaskContractCodec;
+import com.androidbuilder.model.HermesAgentRunRecord;
 import com.androidbuilder.model.HermesTaskContract;
 import com.androidbuilder.model.ProjectTaskRecord;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public final class ProjectTaskListDisplayPolicy {
     private ProjectTaskListDisplayPolicy() {
@@ -41,6 +44,10 @@ public final class ProjectTaskListDisplayPolicy {
     }
 
     public static List<ProjectTaskRecord> visibleTasks(List<ProjectTaskRecord> tasks, boolean collapsed) {
+        return visibleTasks(tasks, collapsed, Collections.emptyList());
+    }
+
+    public static List<ProjectTaskRecord> visibleTasks(List<ProjectTaskRecord> tasks, boolean collapsed, List<HermesAgentRunRecord> agentRuns) {
         if (tasks == null || tasks.isEmpty()) {
             return Collections.emptyList();
         }
@@ -49,9 +56,10 @@ public final class ProjectTaskListDisplayPolicy {
         }
         List<ProjectTaskRecord> visible = new ArrayList<>();
         ProjectTaskRecord firstPending = null;
+        Set<Long> activeAgentTaskIds = activeAgentTaskIds(agentRuns);
         for (ProjectTaskRecord task : tasks) {
             String status = status(task);
-            if ("failed".equals(status) || "running".equals(status)) {
+            if ("failed".equals(status) || "running".equals(status) || activeAgentTaskIds.contains(task.id)) {
                 visible.add(task);
             } else if ("pending".equals(status) && firstPending == null) {
                 firstPending = task;
@@ -61,6 +69,20 @@ public final class ProjectTaskListDisplayPolicy {
             visible.add(firstPending);
         }
         return visible;
+    }
+
+    private static Set<Long> activeAgentTaskIds(List<HermesAgentRunRecord> agentRuns) {
+        if (agentRuns == null || agentRuns.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Set<Long> ids = new HashSet<>();
+        for (HermesAgentRunRecord run : agentRuns) {
+            String status = run == null || run.status == null ? "" : run.status.trim().toLowerCase(Locale.ROOT);
+            if ("running".equals(status) || "merge_pending".equals(status) || "failed".equals(status)) {
+                ids.add(run.projectTaskId);
+            }
+        }
+        return ids;
     }
 
     private static boolean shouldExpandGroup(List<ProjectTaskRecord> tasks, boolean collapsed) {

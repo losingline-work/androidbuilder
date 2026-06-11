@@ -8,6 +8,7 @@ import com.androidbuilder.model.AppSpec;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
 import com.androidbuilder.model.ContextNegotiation;
+import com.androidbuilder.model.FileOperation;
 import com.androidbuilder.model.HermesExecutionRunRecord;
 import com.androidbuilder.model.HermesRunEvent;
 import com.androidbuilder.model.HermesReview;
@@ -23,8 +24,11 @@ import com.androidbuilder.util.NameUtils;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -61,6 +65,12 @@ public class AgentService {
 
     private interface AiTextCall {
         String run() throws Exception;
+    }
+
+    private static class ParallelRepairMergeException extends Exception {
+        ParallelRepairMergeException(String message) {
+            super(message);
+        }
     }
 
     private final Context context;
@@ -354,18 +364,23 @@ public class AgentService {
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
         } catch (Exception error) {
+            String rawErrorMessage = error.getMessage() == null ? error.toString() : error.getMessage();
+            String errorMessage = HermesParallelExecutionPolicy.userMessageForBatchFailure(rawErrorMessage, chinese);
             for (ProjectTaskRecord runningTask : runningTasks) {
                 ProjectTaskRecord latest = repository.getProjectTask(runningTask.id);
                 if (latest != null && "running".equals(latest.status)) {
-                    repository.updateProjectTask(runningTask.id, "failed", error.getMessage());
+                    repository.updateProjectTask(runningTask.id, "failed", errorMessage);
                 }
             }
             if (executionRun != null) {
                 repository.updateHermesExecutionRun(executionRun.id, "failed", executionRun.baseSourceHash);
             }
-            repository.updateBuildJob(job.id, "failed", "coding_failed", null, null, error.getMessage(), job.retryCount);
+            repository.updateBuildJob(job.id, "failed", "coding_failed", null, null, errorMessage, job.retryCount);
             repository.updateProjectPlanStatus(projectId, "planned", job.id);
-            throw error;
+            if (errorMessage.equals(rawErrorMessage)) {
+                throw error;
+            }
+            throw new IllegalStateException(errorMessage, error);
         }
     }
 
@@ -405,18 +420,52 @@ public class AgentService {
                     && triage.additionalInstruction != null && !triage.additionalInstruction.trim().isEmpty()
                     ? LocalGuardInstructionComposer.forBuildTriage(baseInstruction, triage.additionalInstruction)
                     : baseInstruction;
-            TaskOperations operations = createAndApplyTaskOperations(
-                    projectId,
-                    job.id,
-                    sourceDir,
-                    planContent,
-                    chinese ? "修复构建失败" : "Repair build failure",
-                    instruction,
-                    snapshot,
-                    logs,
-                    chinese,
-                    buildLog,
-                    true);
+            List<HermesRepairShard> repairShards = HermesRepairShardingPolicy.shards(buildLog);
+            TaskOperations operations = null;
+            if (canUseParallelRepair(repairShards)) {
+                try {
+                    operations = repairBuildInParallel(
+                            projectId,
+                            job,
+                            sourceDir,
+                            jobDir,
+                            planContent,
+                            instruction,
+                            buildLog,
+                            repairShards,
+                            chinese);
+                } catch (Exception parallelError) {
+                    if (parallelError instanceof ParallelRepairMergeException) {
+                        throw parallelError;
+                    }
+                    String message = parallelError.getMessage() == null ? parallelError.toString() : parallelError.getMessage();
+                    FileUtils.appendText(logs, (chinese ? "并行修复回退到单 Agent：" : "Parallel repair fell back to single Agent: ") + message + "\n");
+                    recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
+                            job.id + ":repair-parallel-fallback",
+                            "repair",
+                            "orchestrator",
+                            "fallback",
+                            "Parallel repair failed before committing a successful merge; falling back to single repair.",
+                            message,
+                            "Single repair path remains the source of truth.",
+                            1));
+                    operations = null;
+                }
+            }
+            if (operations == null) {
+                operations = createAndApplyTaskOperations(
+                        projectId,
+                        job.id,
+                        sourceDir,
+                        planContent,
+                        chinese ? "修复构建失败" : "Repair build failure",
+                        instruction,
+                        snapshot,
+                        logs,
+                        chinese,
+                        buildLog,
+                        true);
+            }
 
             File projectZip = new File(jobDir, "project.zip");
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
@@ -436,6 +485,297 @@ public class AgentService {
             repository.addMessage(projectId, "assistant", context.getString(com.androidbuilder.R.string.repair_build_failed, message), job.id);
             throw error;
         }
+    }
+
+    private boolean canUseParallelRepair(List<HermesRepairShard> shards) {
+        if (BuildBackendSettings.parallelAgentLimit(context) <= 1 || shards == null || shards.size() <= 1) {
+            return false;
+        }
+        List<String> focusPaths = new ArrayList<>();
+        for (HermesRepairShard shard : shards) {
+            if (shard == null || shard.exclusive || shard.focusPath.isEmpty()) {
+                return false;
+            }
+            for (String existing : focusPaths) {
+                if (HermesFileLockPolicy.conflicts(
+                        Collections.singletonList(existing),
+                        Collections.singletonList(shard.focusPath))) {
+                    return false;
+                }
+            }
+            focusPaths.add(shard.focusPath);
+        }
+        return true;
+    }
+
+    private TaskOperations repairBuildInParallel(
+            long projectId,
+            BuildJobRecord job,
+            File sourceDir,
+            File jobDir,
+            String planContent,
+            String baseInstruction,
+            String buildLog,
+            List<HermesRepairShard> shards,
+            boolean chinese) throws Exception {
+        int maxParallel = Math.min(BuildBackendSettings.parallelAgentLimit(context), shards.size());
+        String baseSourceHash = safeSourceHash(sourceDir);
+        HermesExecutionRunRecord executionRun = repository.createHermesExecutionRun(
+                projectId,
+                job.id,
+                "repair_parallel",
+                maxParallel,
+                baseSourceHash);
+        File agentsRoot = new File(jobDir, "repair-agents");
+        FileUtils.deleteRecursively(agentsRoot);
+        FileUtils.appendText(new File(jobDir, "build.log"),
+                (chinese ? "尝试并行修复分片：" : "Trying parallel repair shards: ") + repairShardTitles(shards) + "\n");
+        repository.addMessage(projectId, "assistant",
+                chinese ? "检测到多个独立构建错误，正在尝试并行修复。" : "Detected multiple independent build errors; trying parallel repair.",
+                job.id);
+        recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
+                job.id + ":repair-parallel",
+                "parallel_repair",
+                "orchestrator",
+                "dispatch",
+                "Dispatch independent build repair shards.",
+                repairShardTitles(shards),
+                "maxParallel=" + maxParallel + "\nbaseSourceHash=" + baseSourceHash,
+                1));
+
+        List<HermesAgentResult> results = executeParallelRepairShards(
+                projectId,
+                job,
+                planContent,
+                baseInstruction,
+                buildLog,
+                shards,
+                sourceDir,
+                agentsRoot,
+                maxParallel,
+                chinese);
+        Exception failedAgentError = firstAgentError(results);
+        if (failedAgentError != null) {
+            repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
+            throw failedAgentError;
+        }
+
+        HermesMergeCoordinator.MergePlan plan = HermesMergeCoordinator.plan(results);
+        if (!plan.canMergeAll) {
+            List<HermesAgentResult> safeResults = nonConflictingRepairResults(results);
+            if (safeResults.isEmpty()) {
+                repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
+                throw new IllegalStateException("Parallel repair merge blocked by conflicts: " + joinLines(plan.conflicts));
+            }
+            HermesMergeCoordinator.MergeResult partialMerge = HermesMergeCoordinator.merge(sourceDir, safeResults);
+            if (!partialMerge.success) {
+                repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
+                throw new ParallelRepairMergeException(partialMerge.summary);
+            }
+            repository.updateHermesExecutionRun(executionRun.id, "failed", safeSourceHash(sourceDir));
+            String message = chinese
+                    ? "并行修复中有冲突；已合并无冲突修复，未合并的剩余问题建议再用单 Agent 修复。"
+                    : "Parallel repair had conflicts; merged non-conflicting fixes and left the remaining fixes unmerged. Use single Agent repair for the rest.";
+            repository.addMessage(projectId, "assistant", message, job.id);
+            return aggregateRepairOperations(partialMerge.mergedResults, message + "\n" + joinLines(plan.conflicts));
+        }
+
+        HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(sourceDir, results);
+        if (!merge.success) {
+            repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
+            throw new ParallelRepairMergeException(merge.summary);
+        }
+        repository.updateHermesExecutionRun(executionRun.id, "done", safeSourceHash(sourceDir));
+        return aggregateRepairOperations(merge.mergedResults,
+                chinese ? "并行构建修复完成。" : "Parallel build repair complete.");
+    }
+
+    private List<HermesAgentResult> executeParallelRepairShards(
+            long projectId,
+            BuildJobRecord job,
+            String planContent,
+            String baseInstruction,
+            String buildLog,
+            List<HermesRepairShard> shards,
+            File sourceDir,
+            File agentsRoot,
+            int maxParallel,
+            boolean chinese) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(maxParallel);
+        try {
+            List<Future<HermesAgentResult>> futures = new ArrayList<>();
+            for (int i = 0; i < shards.size(); i++) {
+                final int shardIndex = i;
+                final HermesRepairShard shard = shards.get(i);
+                futures.add(executor.submit(new Callable<HermesAgentResult>() {
+                    @Override
+                    public HermesAgentResult call() {
+                        return runRepairShard(
+                                projectId,
+                                job.id,
+                                planContent,
+                                baseInstruction,
+                                buildLog,
+                                shard,
+                                shardIndex,
+                                sourceDir,
+                                agentsRoot,
+                                chinese);
+                    }
+                }));
+            }
+            List<HermesAgentResult> results = new ArrayList<>();
+            for (Future<HermesAgentResult> future : futures) {
+                results.add(future.get());
+            }
+            return results;
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private HermesAgentResult runRepairShard(
+            long projectId,
+            long linkedBuildJobId,
+            String planContent,
+            String baseInstruction,
+            String buildLog,
+            HermesRepairShard shard,
+            int shardIndex,
+            File canonicalSource,
+            File agentsRoot,
+            boolean chinese) {
+        File agentRoot = new File(agentsRoot, "repair-" + shardIndex);
+        File scratchSource = new File(agentRoot, "source");
+        File logs = new File(agentRoot, "agent.log");
+        ProjectTaskRecord task = new ProjectTaskRecord(
+                shardIndex + 1,
+                projectId,
+                shardIndex,
+                "Repair build failure: " + shard.focusPath,
+                focusedRepairInstruction(baseInstruction, shard),
+                "running",
+                "",
+                0,
+                0,
+                0,
+                0);
+        try {
+            FileUtils.deleteRecursively(agentRoot);
+            if (canonicalSource.exists()) {
+                FileUtils.copyRecursively(canonicalSource, scratchSource);
+            } else if (!scratchSource.mkdirs()) {
+                throw new IllegalStateException("Cannot create scratch source: " + scratchSource);
+            }
+            FileUtils.writeText(logs, (chinese ? "并行修复分片：" : "Parallel repair shard: ") + shard.focusPath + "\n");
+            TaskOperations operations = taskOperationExecutor.execute(
+                    projectId,
+                    linkedBuildJobId,
+                    scratchSource,
+                    planContent,
+                    task,
+                    logs,
+                    chinese,
+                    shard.logExcerpt.isEmpty() ? buildLog : shard.logExcerpt,
+                    true);
+            String summary = operations.summary == null ? "" : operations.summary;
+            return new HermesAgentResult(task, null, HermesTaskContract.empty(), operations,
+                    Collections.<String>emptyList(), summary, null);
+        } catch (Exception error) {
+            return new HermesAgentResult(task, null, HermesTaskContract.empty(), null,
+                    Collections.singletonList(shard.focusPath), "", error);
+        }
+    }
+
+    private String focusedRepairInstruction(String baseInstruction, HermesRepairShard shard) {
+        return baseInstruction
+                + "\n\nRepair only diagnostics related to this focus path:\n"
+                + shard.focusPath
+                + "\n\nRelevant log excerpt:\n"
+                + shard.logExcerpt;
+    }
+
+    private List<HermesAgentResult> nonConflictingRepairResults(List<HermesAgentResult> results) {
+        Map<String, HermesAgentResult> owners = new HashMap<>();
+        Set<HermesAgentResult> blocked = new HashSet<>();
+        for (HermesAgentResult result : results) {
+            if (result == null || !result.success()) {
+                continue;
+            }
+            for (String path : result.touchedPaths) {
+                if (path == null || path.trim().isEmpty()) {
+                    continue;
+                }
+                if (path.contains("*")) {
+                    blocked.add(result);
+                    continue;
+                }
+                String normalized;
+                try {
+                    normalized = PathValidator.normalizeGeneratedPath(path);
+                } catch (IllegalArgumentException error) {
+                    blocked.add(result);
+                    continue;
+                }
+                HermesAgentResult owner = owners.get(normalized);
+                if (owner != null && owner != result) {
+                    blocked.add(owner);
+                    blocked.add(result);
+                } else {
+                    owners.put(normalized, result);
+                }
+            }
+        }
+        List<HermesAgentResult> safe = new ArrayList<>();
+        for (HermesAgentResult result : results) {
+            if (result != null && result.success() && !blocked.contains(result)) {
+                safe.add(result);
+            }
+        }
+        return safe;
+    }
+
+    private TaskOperations aggregateRepairOperations(List<HermesAgentResult> results, String fallbackSummary) {
+        List<FileOperation> operations = new ArrayList<>();
+        StringBuilder summary = new StringBuilder();
+        if (fallbackSummary != null && !fallbackSummary.trim().isEmpty()) {
+            summary.append(fallbackSummary.trim());
+        }
+        if (results != null) {
+            for (HermesAgentResult result : results) {
+                if (result == null || result.operations == null) {
+                    continue;
+                }
+                if (result.operations.operations != null) {
+                    operations.addAll(result.operations.operations);
+                }
+                String resultSummary = result.summary.isEmpty() ? result.operations.summary : result.summary;
+                if (resultSummary != null && !resultSummary.trim().isEmpty()) {
+                    if (summary.length() > 0) {
+                        summary.append('\n');
+                    }
+                    summary.append(resultSummary.trim());
+                }
+            }
+        }
+        return new TaskOperations(summary.toString(), operations);
+    }
+
+    private String repairShardTitles(List<HermesRepairShard> shards) {
+        if (shards == null || shards.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (HermesRepairShard shard : shards) {
+            if (shard == null || shard.focusPath.isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(", ");
+            }
+            builder.append(shard.focusPath);
+        }
+        return builder.toString();
     }
 
     private List<HermesAgentResult> executeParallelBatch(
@@ -602,7 +942,18 @@ public class AgentService {
                 0,
                 0,
                 0);
-        return taskOperationExecutor.execute(projectId, linkedBuildJobId, sourceDir, planContent, task, logs, chinese, initialFailureContext, repairFlow);
+        return createAndApplyTaskOperationsInternal(
+                projectId,
+                linkedBuildJobId,
+                sourceDir,
+                planContent,
+                task.title,
+                task.instruction,
+                snapshot == null || snapshot.trim().isEmpty() ? sourceSnapshot(sourceDir) : snapshot,
+                logs,
+                chinese,
+                initialFailureContext,
+                repairFlow);
     }
 
     private TaskOperations createAndApplyTaskOperationsInternal(long projectId, Long linkedBuildJobId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese, String initialFailureContext, boolean repairFlow) throws Exception {

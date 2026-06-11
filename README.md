@@ -9,6 +9,8 @@ Android Builder 是一个运行在安卓手机上的自动开发 Agent 控制 Ap
 - 云端模型：支持 OpenAI-compatible API，并内置 OpenAI / DeepSeek / 自定义服务配置。
 - 多语言：支持跟随系统、English、中文。
 - 生成目标：Kotlin + XML 的简单多页面 CRUD Android App。
+- Hermes 并行执行：计划任务会按文件锁和任务契约拆成安全批次，多个逻辑子 Agent 在独立 scratch source 中并行生成文件操作，再由合并协调器写回 canonical source。设置页可选择串行、2 个或 3 个子 Agent。
+- Hermes 修复/守护：构建修复会先分诊日志；资源缺失、独立 Java 符号缺失等低耦合错误可分片并行修复，Gradle、Manifest、构造签名等共享风险保持单 Agent。
 - 构建后端：
   - 默认：内置运行环境 `embedded-runtime`。
   - 兼容模式：外部 Termux。
@@ -28,7 +30,7 @@ Android Builder 是一个运行在安卓手机上的自动开发 Agent 控制 Ap
 关键代码：
 
 - `app/src/main/java/com/androidbuilder/ui/`：项目列表、项目详情、设置页、第三方声明页。
-- `app/src/main/java/com/androidbuilder/agent/`：需求转 App 规格、云端模型调用、生成 Android 项目源码。
+- `app/src/main/java/com/androidbuilder/agent/`：需求转 App 规格、云端模型调用、Hermes 任务调度、并行子 Agent、合并守护、生成 Android 项目源码。
 - `app/src/main/java/com/androidbuilder/backend/`：构建后端抽象、内置后端、外部 Termux 兼容后端、runtime 安装器。
 - `app/src/main/java/com/androidbuilder/data/`：SQLite 本地数据库和仓储。
 - `embedded-runtime/src/main/java/com/androidbuilder/embeddedruntime/EmbeddedRuntime.java`：私有运行环境目录、bootstrap 安装、工具链检查。
@@ -183,7 +185,9 @@ $ANDROID_HOME/platform-tools/adb install -r app/build/outputs/apk/debug/app-debu
 
 - OpenAI
 - DeepSeek
+- MiniMax
 - Custom OpenAI-compatible endpoint
+- 并行子 Agent 数量：串行、2 个、3 个。遇到 API 429/限流时建议切回串行或 2 个。
 
 DeepSeek 默认配置：
 
@@ -198,8 +202,13 @@ SQLite 表：
 
 - `projects`
 - `messages`
+- `project_plans`
+- `project_tasks`
 - `build_jobs`
 - `artifacts`
+- `ai_conversations`
+- `hermes_execution_runs`
+- `hermes_agent_runs`
 
 项目文件存储：
 

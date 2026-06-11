@@ -1,5 +1,6 @@
 package com.androidbuilder.ui;
 
+import com.androidbuilder.model.HermesAgentRunRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
 
 import org.junit.Test;
@@ -47,8 +48,28 @@ public class ProjectTaskListDisplayPolicyTest {
         assertFalse(visible.contains(tasks.get(3)));
     }
 
+    @Test
+    public void collapsedListShowsTaskWithMergePendingAgentRun() {
+        List<ProjectTaskRecord> tasks = Arrays.asList(
+                task(10, 0, "Done", "", "done"),
+                task(11, 1, "Merging", "", "done"),
+                task(12, 2, "Next", "", "pending"));
+        List<HermesAgentRunRecord> agentRuns = Arrays.asList(
+                new HermesAgentRunRecord(1, 2, 11, 1, 0, "merge_pending", "", "", "", "[]", "", "", 0, 0));
+
+        List<ProjectTaskRecord> visible = ProjectTaskListDisplayPolicy.visibleTasks(tasks, true, agentRuns);
+
+        assertEquals(2, visible.size());
+        assertEquals("Merging", visible.get(0).title);
+        assertEquals("Next", visible.get(1).title);
+    }
+
     private static ProjectTaskRecord task(int order, String title, String instruction, String status) {
-        return new ProjectTaskRecord(0, 1, order, title, instruction, status, "", 0, 0, 0, 0);
+        return task(0, order, title, instruction, status);
+    }
+
+    private static ProjectTaskRecord task(long id, int order, String title, String instruction, String status) {
+        return new ProjectTaskRecord(id, 1, order, title, instruction, status, "", 0, 0, 0, 0);
     }
 
     private static String instructionWithProduces(String produces) {
