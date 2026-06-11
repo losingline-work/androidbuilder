@@ -104,11 +104,11 @@ public class OpenAiClient {
     }
 
     public String createSpecJson(List<ChatMessage> messages, String latestPrompt, boolean chinese) throws Exception {
-        return completeChat(specSystemPrompt(chinese), messages, "Latest approved implementation request: " + latestPrompt, 0.2, chinese, DEFAULT_READ_TIMEOUT_MS);
+        return completeChat(specSystemPrompt(chinese), messages, "Latest approved implementation request: " + latestPrompt, 0.2, chinese, DEFAULT_READ_TIMEOUT_MS, true);
     }
 
     public String createProjectFilesJson(List<ChatMessage> messages, String latestPrompt, boolean chinese) throws Exception {
-        return completeChat(projectFilesSystemPrompt(chinese), messages, "Latest approved engineering plan to implement: " + latestPrompt, 0.2, chinese, CODING_READ_TIMEOUT_MS);
+        return completeChat(projectFilesSystemPrompt(chinese), messages, "Latest approved engineering plan to implement: " + latestPrompt, 0.2, chinese, CODING_READ_TIMEOUT_MS, true);
     }
 
     public String createEngineeringPlan(List<ChatMessage> messages, String latestPrompt, boolean chinese) throws Exception {
@@ -116,7 +116,7 @@ public class OpenAiClient {
     }
 
     public String createImplementationTasks(String plan, boolean chinese) throws Exception {
-        return completeChat(tasksSystemPrompt(chinese), java.util.Collections.emptyList(), "Approved engineering plan:\n\n" + plan, 0.2, chinese, TASKS_READ_TIMEOUT_MS);
+        return completeChat(tasksSystemPrompt(chinese), java.util.Collections.emptyList(), "Approved engineering plan:\n\n" + plan, 0.2, chinese, TASKS_READ_TIMEOUT_MS, true);
     }
 
     public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, boolean chinese) throws Exception {
@@ -130,7 +130,8 @@ public class OpenAiClient {
                 taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext),
                 0.2,
                 chinese,
-                CODING_READ_TIMEOUT_MS);
+                CODING_READ_TIMEOUT_MS,
+                true);
     }
 
     public String negotiateTaskContext(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String previousFailure, boolean chinese) throws Exception {
@@ -140,7 +141,8 @@ public class OpenAiClient {
                 contextNegotiationUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, previousFailure, chinese),
                 0.0,
                 chinese,
-                DEFAULT_READ_TIMEOUT_MS);
+                DEFAULT_READ_TIMEOUT_MS,
+                true);
     }
 
     public String reviewTaskOperations(String taskTitle, String taskInstruction, String sourceSnapshot, String operationsJson, String contextScoutNotes, boolean chinese) throws Exception {
@@ -150,7 +152,8 @@ public class OpenAiClient {
                 hermesReviewUserPrompt(taskTitle, taskInstruction, sourceSnapshot, operationsJson, contextScoutNotes),
                 0.0,
                 chinese,
-                DEFAULT_READ_TIMEOUT_MS);
+                DEFAULT_READ_TIMEOUT_MS,
+                true);
     }
 
     public String createPolicyRewriteHint(String taskInstruction, String policyError, String focusedSnapshot, int attempt, boolean chinese) throws Exception {
@@ -174,6 +177,10 @@ public class OpenAiClient {
     }
 
     private String completeChat(String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean chinese, int readTimeoutMs) throws Exception {
+        return completeChat(systemPrompt, messages, latestUserMessage, temperature, chinese, readTimeoutMs, false);
+    }
+
+    private String completeChat(String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean chinese, int readTimeoutMs, boolean structuredOutput) throws Exception {
         if (!isConfigured()) {
             throw new IllegalStateException(chinese ? "请先在设置里填写模型 API Key。" : "Configure a model API key in Settings first.");
         }
@@ -190,7 +197,7 @@ public class OpenAiClient {
         if (PROVIDER_MINIMAX.equals(provider) && !isSupportedMiniMaxModel(model)) {
             throw new IllegalStateException(chinese ? "MiniMax 仅支持 MiniMax-M3、MiniMax-M2.7、MiniMax-M2.5、MiniMax-M2.1 和 MiniMax-M2 系列模型。" : "MiniMax supports MiniMax-M3, MiniMax-M2.7, MiniMax-M2.5, MiniMax-M2.1, and MiniMax-M2 series models.");
         }
-        boolean thinkingEnabled = thinkingEnabledForProvider(prefs, provider);
+        boolean thinkingEnabled = effectiveThinking(thinkingEnabledForProvider(prefs, provider), structuredOutput);
         JSONObject body = chatRequestBody(provider, model, systemPrompt, messages, latestUserMessage, temperature, thinkingEnabled);
 
         for (int attempt = 0; attempt <= SOCKET_ABORT_RETRIES; attempt++) {
@@ -485,6 +492,14 @@ public class OpenAiClient {
             return true;
         }
         return !"false".equals(scopedValue(prefs, provider, KEY_THINKING, "true"));
+    }
+
+    static boolean effectiveThinkingForTest(boolean userEnabled, boolean structuredOutput) {
+        return effectiveThinking(userEnabled, structuredOutput);
+    }
+
+    private static boolean effectiveThinking(boolean userEnabled, boolean structuredOutput) {
+        return userEnabled && !structuredOutput;
     }
 
     private static String scopedValue(SharedPreferences prefs, String provider, String key, String defaultValue) {

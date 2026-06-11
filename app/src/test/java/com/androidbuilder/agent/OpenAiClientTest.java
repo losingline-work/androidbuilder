@@ -399,6 +399,14 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void structuredOutputDisablesEffectiveThinkingEvenWhenUserEnabledIt() {
+        assertFalse(OpenAiClient.effectiveThinkingForTest(true, true));
+        assertFalse(OpenAiClient.effectiveThinkingForTest(false, true));
+        assertFalse(OpenAiClient.effectiveThinkingForTest(false, false));
+        assertTrue(OpenAiClient.effectiveThinkingForTest(true, false));
+    }
+
+    @Test
     public void onlyMiniMaxAndDeepSeekSupportThinkingToggle() {
         assertTrue(OpenAiClient.supportsThinkingToggle(OpenAiClient.PROVIDER_MINIMAX));
         assertTrue(OpenAiClient.supportsThinkingToggle(OpenAiClient.PROVIDER_DEEPSEEK));
