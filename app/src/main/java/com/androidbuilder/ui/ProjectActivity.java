@@ -855,13 +855,9 @@ public class ProjectActivity extends BaseActivity {
                 runOnUiThread(() -> {
                     refresh();
                     latestPlan = repository.latestProjectPlan(projectId);
-                    if (autoExecutingPlan && latestPlan != null && "planned".equals(latestPlan.status)) {
-                        executePlanStep();
-                    } else {
-                        autoExecutingPlan = false;
-                        setBusy(false);
-                        Toast.makeText(ProjectActivity.this, R.string.source_generated_from_plan, Toast.LENGTH_SHORT).show();
-                    }
+                    autoExecutingPlan = false;
+                    setBusy(false);
+                    Toast.makeText(ProjectActivity.this, R.string.source_generated_from_plan, Toast.LENGTH_SHORT).show();
                 });
             }
 

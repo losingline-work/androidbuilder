@@ -294,76 +294,110 @@ public class AgentService {
                     maxParallel <= 1 ? "serial" : "parallel",
                     maxParallel,
                     baseSourceHash);
-            List<ProjectTaskRecord> tasks = repository.listProjectTasks(projectId);
-            HermesParallelBatch batch = HermesParallelScheduler.nextBatch(
-                    tasks,
-                    repository.listActiveHermesAgentRuns(projectId),
-                    maxParallel);
-            if (batch.tasks.isEmpty()) {
-                repository.updateProjectPlanStatus(projectId, "generated", job.id);
-                repository.updateBuildJob(job.id, "generated", "ready_for_build", null, null, null, 0);
-                repository.updateHermesExecutionRun(executionRun.id, "done", baseSourceHash);
-                repository.addMessage(projectId, "assistant", chinese ? "所有计划任务已完成。下一步可以构建。" : "All plan tasks are done. Next, build the project.", job.id);
-                return repository.getBuildJob(job.id);
-            }
-            runningTasks.addAll(batch.tasks);
-            String dispatchMessage = batch.tasks.size() == 1
-                    ? (chinese ? "执行下一步：" : "Executing next step: ") + batch.tasks.get(0).title
-                    : (chinese ? "并行执行下一批：" : "Executing next parallel batch: ") + taskTitles(batch.tasks);
-            repository.addMessage(projectId, "assistant", dispatchMessage, job.id);
-            recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
-                    job.id + ":batch-" + executionRun.id,
-                    "parallel_batch",
-                    "orchestrator",
-                    "dispatch",
-                    batch.exclusiveReason.isEmpty() ? "Dispatch safe parallel batch." : batch.exclusiveReason,
-                    "Tasks:\n" + taskTitles(batch.tasks),
-                    "maxParallel=" + maxParallel + "\nbaseSourceHash=" + baseSourceHash,
-                    1));
+            Map<Long, Integer> dispatchCounts = new HashMap<>();
+            List<String> completedTitles = new ArrayList<>();
+            boolean anyMerged = false;
+            boolean buildRequiredAfter = false;
+            int batchIndex = 0;
 
-            FileUtils.writeText(logs, (chinese ? "正在执行计划任务批次：" : "Executing plan task batch: ") + taskTitles(batch.tasks) + "\n");
+            FileUtils.writeText(logs, chinese ? "开始执行计划任务。\n" : "Starting plan execution.\n");
             repository.updateBuildJob(job.id, "generating", "cloud_spec", logs.getAbsolutePath(), null, null, 0);
 
-            List<HermesAgentResult> results = executeParallelBatch(projectId, job, executionRun, plan, batch, sourceDir, jobDir, chinese);
-            HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(sourceDir, results);
-            if (!merge.success) {
-                String summary = mergeFailureSummary(merge, firstAgentError(results));
-                repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
-                throw new IllegalStateException(summary);
-            }
-            for (HermesAgentResult result : merge.mergedResults) {
-                String summary = result.summary.isEmpty()
-                        ? (result.operations == null ? "" : result.operations.summary)
-                        : result.summary;
-                String mergedHash = safeSourceHash(sourceDir, result.touchedPaths);
-                if (result.run != null) {
-                    repository.updateHermesAgentRun(result.run.id, "done", mergedHash, summary, "");
+            while (true) {
+                List<ProjectTaskRecord> tasks = repository.listProjectTasks(projectId);
+                List<ProjectTaskRecord> allowedTasks = HermesDispatchBudget.allowedTasks(tasks, dispatchCounts);
+                HermesParallelBatch scheduledBatch = HermesParallelScheduler.nextBatch(
+                        allowedTasks,
+                        repository.listActiveHermesAgentRuns(projectId),
+                        maxParallel);
+                if (scheduledBatch.tasks.isEmpty()) {
+                    break;
                 }
-                repository.updateProjectTask(result.task.id, "done", summary);
-                FileUtils.appendText(logs, (chinese ? "计划任务完成：" : "Executed plan task: ") + result.task.title + "\n" + summary + "\n");
+                batchIndex++;
+                HermesParallelBatch batch = new HermesParallelBatch(batchIndex, scheduledBatch.tasks, scheduledBatch.exclusiveReason);
+                for (ProjectTaskRecord task : batch.tasks) {
+                    HermesDispatchBudget.markDispatched(dispatchCounts, task.id);
+                }
+                runningTasks.addAll(batch.tasks);
+                String dispatchMessage = batch.tasks.size() == 1
+                        ? (chinese ? "执行下一步：" : "Executing next step: ") + batch.tasks.get(0).title
+                        : (chinese ? "并行执行下一批：" : "Executing next parallel batch: ") + taskTitles(batch.tasks);
+                repository.addMessage(projectId, "assistant", dispatchMessage, job.id);
+                recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
+                        job.id + ":batch-" + executionRun.id + "-" + batchIndex,
+                        "parallel_batch",
+                        "orchestrator",
+                        "dispatch",
+                        batch.exclusiveReason.isEmpty() ? "Dispatch safe parallel batch." : batch.exclusiveReason,
+                        "Tasks:\n" + taskTitles(batch.tasks),
+                        "maxParallel=" + maxParallel + "\nbaseSourceHash=" + baseSourceHash,
+                        batchIndex));
+
+                FileUtils.appendText(logs, (chinese ? "正在执行计划任务批次：" : "Executing plan task batch: ")
+                        + taskTitles(batch.tasks) + "\n");
+                repository.updateBuildJob(job.id, "generating", "cloud_spec", logs.getAbsolutePath(), null, null, 0);
+
+                List<HermesAgentResult> results = executeParallelBatch(projectId, job, executionRun, plan, batch, sourceDir, jobDir, chinese);
+                HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(sourceDir, results);
+                if (!merge.success) {
+                    String summary = mergeFailureSummary(merge, firstAgentError(results));
+                    repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
+                    throw new IllegalStateException(summary);
+                }
+                for (HermesAgentResult result : merge.mergedResults) {
+                    String summary = result.summary.isEmpty()
+                            ? (result.operations == null ? "" : result.operations.summary)
+                            : result.summary;
+                    String mergedHash = safeSourceHash(sourceDir, result.touchedPaths);
+                    if (result.run != null) {
+                        repository.updateHermesAgentRun(result.run.id, "done", mergedHash, summary, "");
+                    }
+                    repository.updateProjectTask(result.task.id, "done", summary);
+                    completedTitles.add(result.task.title);
+                    anyMerged = true;
+                    FileUtils.appendText(logs, (chinese ? "计划任务完成：" : "Executed plan task: ") + result.task.title + "\n" + summary + "\n");
+                }
+                markMergeFailedResults(merge.failedResults, logs, chinese);
+                Exception failedAgentError = firstAgentError(results);
+                int failedCount = merge.failedResults.size();
+                if (merge.mergedResults.isEmpty() && !batch.tasks.isEmpty()) {
+                    if (!anyMerged) {
+                        repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
+                        throw new IllegalStateException(mergeFailureSummary(merge, null), failedAgentError);
+                    }
+                    FileUtils.appendText(logs, chinese
+                            ? "本批次未合并任何任务；保留失败任务并继续检查其它可执行任务。\n"
+                            : "No tasks merged in this batch; keeping failed tasks and checking other ready work.\n");
+                }
+                if (failedCount > 0) {
+                    FileUtils.appendText(logs, (chinese ? "本批次失败任务数：" : "Failed tasks in this batch: ") + failedCount + "\n");
+                }
+                buildRequiredAfter = buildRequiredAfter || batchRequiresBuild(batch);
+                HermesScratchCleanup.afterMerge(agentsRoot, failedCount == 0);
             }
-            markMergeFailedResults(merge.failedResults, logs, chinese);
-            Exception failedAgentError = firstAgentError(results);
-            int failedCount = merge.failedResults.size();
-            if (merge.mergedResults.isEmpty() && !batch.tasks.isEmpty()) {
-                repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
-                throw new IllegalStateException(mergeFailureSummary(merge, null), failedAgentError);
-            }
+
             ProjectTaskRecord next = repository.nextPendingProjectTask(projectId);
-            repository.updateProjectPlanStatus(projectId, next == null ? "generated" : "planned", job.id);
-            repository.updateHermesExecutionRun(executionRun.id, "done", safeSourceHash(sourceDir));
-            HermesScratchCleanup.afterMerge(agentsRoot, failedCount == 0);
+            List<ProjectTaskRecord> finalTasks = repository.listProjectTasks(projectId);
+            int failedTasks = countTasksWithStatus(finalTasks, "failed");
+            boolean complete = next == null && failedTasks == 0;
+            repository.updateProjectPlanStatus(projectId, complete ? "generated" : "planned", job.id);
+            repository.updateHermesExecutionRun(executionRun.id, failedTasks == 0 ? "done" : "failed", safeSourceHash(sourceDir));
+            HermesScratchCleanup.afterMerge(agentsRoot, failedTasks == 0);
 
             File projectZip = new File(jobDir, "project.zip");
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
 
-            boolean buildRequiredAfter = batchRequiresBuild(batch);
-            String completedTitle = batch.tasks.size() == 1 ? batch.tasks.get(0).title : taskTitles(batch.tasks);
-            String message = taskCompletionMessage(completedTitle, next != null, buildRequiredAfter, chinese);
-            if (failedCount > 0) {
+            String message;
+            if (completedTitles.isEmpty()) {
+                message = chinese ? "所有计划任务已完成。下一步可以构建。" : "All plan tasks are done. Next, build the project.";
+            } else {
+                String completedTitle = executionCompletionTitle(completedTitles, chinese);
+                message = taskCompletionMessage(completedTitle, next != null && failedTasks == 0, buildRequiredAfter, chinese);
+            }
+            if (failedTasks > 0) {
                 message += chinese
-                        ? "；" + failedCount + " 个任务失败，将自动重试。"
-                        : "; " + failedCount + " task(s) failed and will be retried.";
+                        ? "；仍有 " + failedTasks + " 个任务失败，可查看日志后再次执行计划重试。"
+                        : "; " + failedTasks + " task(s) still failed. Review the logs and run the plan again to retry.";
             }
             repository.addMessage(projectId, "assistant", message, job.id);
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
@@ -949,6 +983,29 @@ public class AgentService {
             builder.append(task.title);
         }
         return builder.toString();
+    }
+
+    private int countTasksWithStatus(List<ProjectTaskRecord> tasks, String status) {
+        if (tasks == null || tasks.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (ProjectTaskRecord task : tasks) {
+            if (task != null && task.status != null && task.status.equalsIgnoreCase(status)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private String executionCompletionTitle(List<String> completedTitles, boolean chinese) {
+        if (completedTitles == null || completedTitles.isEmpty()) {
+            return chinese ? "本轮执行" : "this execution";
+        }
+        if (completedTitles.size() == 1) {
+            return completedTitles.get(0);
+        }
+        return chinese ? completedTitles.size() + " 个任务" : completedTitles.size() + " tasks";
     }
 
     private String joinLines(List<String> lines) {
