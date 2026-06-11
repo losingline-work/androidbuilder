@@ -23,14 +23,26 @@ public class HermesMergeCoordinatorTest {
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
-    public void mergeRejectsTwoResultsTouchingSamePath() {
-        HermesAgentResult left = resultWithPath(1, "app/src/main/res/values/strings.xml");
-        HermesAgentResult right = resultWithPath(2, "app/src/main/res/values/strings.xml");
+    public void conflictSkipsLaterTaskAndMergesEarlier() throws Exception {
+        File source = temporaryFolder.newFolder("source");
+        HermesAgentResult laterInputFirst = resultWithOperation(
+                2,
+                "docs/shared.txt",
+                new FileOperation("write", "docs/shared.txt", "later\n"));
+        HermesAgentResult earlierInputSecond = resultWithOperation(
+                1,
+                "docs/shared.txt",
+                new FileOperation("write", "docs/shared.txt", "earlier\n"));
 
-        HermesMergeCoordinator.MergePlan plan = HermesMergeCoordinator.plan(Arrays.asList(left, right));
+        HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(source, Arrays.asList(laterInputFirst, earlierInputSecond));
 
-        assertFalse(plan.canMergeAll);
-        assertEquals(1, plan.conflicts.size());
+        assertTrue(merge.success);
+        assertEquals(1, merge.mergedResults.size());
+        assertEquals(1, merge.mergedResults.get(0).task.sortOrder);
+        assertEquals("earlier\n", FileUtils.readText(new File(source, "docs/shared.txt")));
+        assertEquals(1, merge.failedResults.size());
+        assertEquals(2, merge.failedResults.get(0).result.task.sortOrder);
+        assertTrue(merge.failedResults.get(0).reason.contains("Path conflict"));
     }
 
     @Test
@@ -55,7 +67,86 @@ public class HermesMergeCoordinatorTest {
         HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(source, Collections.singletonList(result));
 
         assertTrue(merge.success);
+        assertEquals(0, merge.failedResults.size());
         assertEquals("merged\n", FileUtils.readText(new File(source, "docs/generated.txt")));
+    }
+
+    @Test
+    public void contractRejectionOnlyFailsOffendingResult() throws Exception {
+        File source = temporaryFolder.newFolder("source");
+        HermesAgentResult rejected = resultWithContract(
+                1,
+                "docs/rejected.txt",
+                new FileOperation("write", "docs/rejected.txt", "bad\n"),
+                new HermesTaskContract(
+                        Collections.emptyList(),
+                        Collections.singletonList("docs/expected.txt"),
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        "",
+                        false));
+        HermesAgentResult clean = resultWithOperation(
+                2,
+                "docs/clean.txt",
+                new FileOperation("write", "docs/clean.txt", "clean\n"));
+
+        HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(source, Arrays.asList(rejected, clean));
+
+        assertTrue(merge.success);
+        assertEquals(1, merge.mergedResults.size());
+        assertEquals("clean\n", FileUtils.readText(new File(source, "docs/clean.txt")));
+        assertFalse(new File(source, "docs/rejected.txt").exists());
+        assertEquals(1, merge.failedResults.size());
+        assertTrue(merge.failedResults.get(0).reason.contains("Contract guard rejected"));
+    }
+
+    @Test
+    public void applyExceptionOnlyFailsOffendingResult() throws Exception {
+        File source = temporaryFolder.newFolder("source");
+        HermesAgentResult badApply = resultWithOperation(
+                1,
+                "docs/safe-label.txt",
+                new FileOperation("write", "../evil.txt", "bad\n"));
+        HermesAgentResult clean = resultWithOperation(
+                2,
+                "docs/clean.txt",
+                new FileOperation("write", "docs/clean.txt", "clean\n"));
+
+        HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(source, Arrays.asList(badApply, clean));
+
+        assertTrue(merge.success);
+        assertEquals(1, merge.mergedResults.size());
+        assertEquals("clean\n", FileUtils.readText(new File(source, "docs/clean.txt")));
+        assertEquals(1, merge.failedResults.size());
+        assertTrue(merge.failedResults.get(0).reason.contains("escapes project source directory"));
+    }
+
+    @Test
+    public void allFailedYieldsNoMergedResults() throws Exception {
+        File source = temporaryFolder.newFolder("source");
+        HermesTaskContract contract = new HermesTaskContract(
+                Collections.emptyList(),
+                Collections.singletonList("docs/expected.txt"),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                "",
+                false);
+        HermesAgentResult first = resultWithContract(1, "docs/one.txt", new FileOperation("write", "docs/one.txt", "one\n"), contract);
+        HermesAgentResult second = resultWithContract(2, "docs/two.txt", new FileOperation("write", "docs/two.txt", "two\n"), contract);
+
+        HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(source, Arrays.asList(first, second));
+
+        assertTrue(merge.success);
+        assertEquals(0, merge.mergedResults.size());
+        assertEquals(2, merge.failedResults.size());
     }
 
     private HermesAgentResult resultWithPath(int sortOrder, String path) {
@@ -63,12 +154,16 @@ public class HermesMergeCoordinatorTest {
     }
 
     private HermesAgentResult resultWithOperation(int sortOrder, String path, FileOperation operation) {
+        return resultWithContract(sortOrder, path, operation, HermesTaskContract.empty());
+    }
+
+    private HermesAgentResult resultWithContract(int sortOrder, String path, FileOperation operation, HermesTaskContract contract) {
         ProjectTaskRecord task = new ProjectTaskRecord(
                 sortOrder, 1, sortOrder, "Task " + sortOrder, "", "merge_pending", "", 0, 0, 0, 0);
         return new HermesAgentResult(
                 task,
                 null,
-                HermesTaskContract.empty(),
+                contract,
                 new TaskOperations("write " + path, Collections.singletonList(operation)),
                 Collections.singletonList(path),
                 "ok",

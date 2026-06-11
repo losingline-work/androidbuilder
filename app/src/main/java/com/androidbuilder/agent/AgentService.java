@@ -327,11 +327,7 @@ public class AgentService {
             List<HermesAgentResult> results = executeParallelBatch(projectId, job, executionRun, plan, batch, sourceDir, jobDir, chinese);
             HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(sourceDir, results);
             if (!merge.success) {
-                String summary = merge.summary;
-                if (!merge.conflicts.isEmpty()) {
-                    summary = summary + "\n" + joinLines(merge.conflicts);
-                }
-                markMergeFailure(results, summary);
+                String summary = mergeFailureSummary(merge, firstAgentError(results));
                 repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
                 throw new IllegalStateException(summary);
             }
@@ -346,15 +342,20 @@ public class AgentService {
                 repository.updateProjectTask(result.task.id, "done", summary);
                 FileUtils.appendText(logs, (chinese ? "计划任务完成：" : "Executed plan task: ") + result.task.title + "\n" + summary + "\n");
             }
+            markMergeFailedResults(merge.failedResults, logs, chinese);
             Exception failedAgentError = firstAgentError(results);
-            if (failedAgentError != null) {
+            int failedCount = merge.failedResults.size() + agentErrorCount(results);
+            if (merge.mergedResults.isEmpty() && !batch.tasks.isEmpty()) {
                 repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
-                throw failedAgentError;
+                if (failedAgentError != null) {
+                    throw failedAgentError;
+                }
+                throw new IllegalStateException(mergeFailureSummary(merge, null));
             }
             ProjectTaskRecord next = repository.nextPendingProjectTask(projectId);
             repository.updateProjectPlanStatus(projectId, next == null ? "generated" : "planned", job.id);
             repository.updateHermesExecutionRun(executionRun.id, "done", safeSourceHash(sourceDir));
-            HermesScratchCleanup.afterMerge(agentsRoot, true);
+            HermesScratchCleanup.afterMerge(agentsRoot, failedCount == 0);
 
             File projectZip = new File(jobDir, "project.zip");
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
@@ -362,6 +363,11 @@ public class AgentService {
             boolean buildRequiredAfter = batchRequiresBuild(batch);
             String completedTitle = batch.tasks.size() == 1 ? batch.tasks.get(0).title : taskTitles(batch.tasks);
             String message = taskCompletionMessage(completedTitle, next != null, buildRequiredAfter, chinese);
+            if (failedCount > 0) {
+                message += chinese
+                        ? "；" + failedCount + " 个任务失败，将自动重试。"
+                        : "; " + failedCount + " task(s) failed and will be retried.";
+            }
             repository.addMessage(projectId, "assistant", message, job.id);
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
@@ -844,19 +850,23 @@ public class AgentService {
         }
     }
 
-    private void markMergeFailure(List<HermesAgentResult> results, String summary) {
-        if (results == null) {
+    private void markMergeFailedResults(List<HermesMergeCoordinator.FailedResult> failedResults, File logs, boolean chinese) throws Exception {
+        if (failedResults == null) {
             return;
         }
-        for (HermesAgentResult result : results) {
-            if (result == null || !result.success()) {
+        for (HermesMergeCoordinator.FailedResult failed : failedResults) {
+            if (failed == null || failed.result == null) {
                 continue;
             }
+            HermesAgentResult result = failed.result;
+            String reason = failed.reason == null || failed.reason.isEmpty() ? "Merge failed." : failed.reason;
             if (result.run != null) {
-                repository.updateHermesAgentRun(result.run.id, "failed", "", "", summary);
+                repository.updateHermesAgentRun(result.run.id, "failed", "", "", reason);
             }
             if (result.task != null) {
-                repository.updateProjectTask(result.task.id, "failed", summary);
+                repository.updateProjectTask(result.task.id, "failed", reason);
+                FileUtils.appendText(logs, (chinese ? "计划任务合并失败：" : "Plan task merge failed: ")
+                        + result.task.title + "\n" + reason + "\n");
             }
         }
     }
@@ -871,6 +881,44 @@ public class AgentService {
             }
         }
         return null;
+    }
+
+    private int agentErrorCount(List<HermesAgentResult> results) {
+        if (results == null) {
+            return 0;
+        }
+        int count = 0;
+        for (HermesAgentResult result : results) {
+            if (result != null && result.error != null) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private String mergeFailureSummary(HermesMergeCoordinator.MergeResult merge, Exception failedAgentError) {
+        StringBuilder summary = new StringBuilder();
+        if (merge != null && merge.summary != null && !merge.summary.trim().isEmpty()) {
+            summary.append(merge.summary.trim());
+        }
+        if (merge != null && merge.failedResults != null) {
+            for (HermesMergeCoordinator.FailedResult failed : merge.failedResults) {
+                if (failed == null || failed.reason.isEmpty()) {
+                    continue;
+                }
+                if (summary.length() > 0) {
+                    summary.append('\n');
+                }
+                summary.append(failed.reason);
+            }
+        }
+        if (failedAgentError != null) {
+            if (summary.length() > 0) {
+                summary.append('\n');
+            }
+            summary.append(failedAgentError.getMessage() == null ? failedAgentError.toString() : failedAgentError.getMessage());
+        }
+        return summary.length() == 0 ? "Hermes merge failed." : summary.toString();
     }
 
     private boolean batchRequiresBuild(HermesParallelBatch batch) {
