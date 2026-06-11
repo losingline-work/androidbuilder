@@ -278,6 +278,7 @@ public class AgentService {
         BuildJobRecord job = repository.createBuildJob(projectId);
         File jobDir = repository.jobDir(projectId, job.id);
         File logs = new File(jobDir, "build.log");
+        File agentsRoot = new File(jobDir, "agents");
         HermesExecutionRunRecord executionRun = null;
         List<ProjectTaskRecord> runningTasks = new ArrayList<>();
         try {
@@ -353,6 +354,7 @@ public class AgentService {
             ProjectTaskRecord next = repository.nextPendingProjectTask(projectId);
             repository.updateProjectPlanStatus(projectId, next == null ? "generated" : "planned", job.id);
             repository.updateHermesExecutionRun(executionRun.id, "done", safeSourceHash(sourceDir));
+            HermesScratchCleanup.afterMerge(agentsRoot, true);
 
             File projectZip = new File(jobDir, "project.zip");
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
@@ -364,6 +366,7 @@ public class AgentService {
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
         } catch (Exception error) {
+            HermesScratchCleanup.afterMerge(agentsRoot, false);
             String rawErrorMessage = error.getMessage() == null ? error.toString() : error.getMessage();
             String errorMessage = HermesParallelExecutionPolicy.userMessageForBatchFailure(rawErrorMessage, chinese);
             for (ProjectTaskRecord runningTask : runningTasks) {
