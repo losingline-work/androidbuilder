@@ -344,13 +344,10 @@ public class AgentService {
             }
             markMergeFailedResults(merge.failedResults, logs, chinese);
             Exception failedAgentError = firstAgentError(results);
-            int failedCount = merge.failedResults.size() + agentErrorCount(results);
+            int failedCount = merge.failedResults.size();
             if (merge.mergedResults.isEmpty() && !batch.tasks.isEmpty()) {
                 repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
-                if (failedAgentError != null) {
-                    throw failedAgentError;
-                }
-                throw new IllegalStateException(mergeFailureSummary(merge, null));
+                throw new IllegalStateException(mergeFailureSummary(merge, null), failedAgentError);
             }
             ProjectTaskRecord next = repository.nextPendingProjectTask(projectId);
             repository.updateProjectPlanStatus(projectId, next == null ? "generated" : "planned", job.id);
@@ -881,19 +878,6 @@ public class AgentService {
             }
         }
         return null;
-    }
-
-    private int agentErrorCount(List<HermesAgentResult> results) {
-        if (results == null) {
-            return 0;
-        }
-        int count = 0;
-        for (HermesAgentResult result : results) {
-            if (result != null && result.error != null) {
-                count++;
-            }
-        }
-        return count;
     }
 
     private String mergeFailureSummary(HermesMergeCoordinator.MergeResult merge, Exception failedAgentError) {

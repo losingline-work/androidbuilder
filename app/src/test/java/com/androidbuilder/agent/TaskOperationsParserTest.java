@@ -21,6 +21,18 @@ public class TaskOperationsParserTest {
     }
 
     @Test
+    public void fromJson_recoversOperationObjectsPrefixedByStrayQuote() throws Exception {
+        TaskOperations operations = TaskOperationsParser.fromJson("{\"summary\":\"Wrote files\",\"operations\":[" +
+                "{\"action\":\"write\",\"path\":\"settings.gradle\",\"content\":\"include ':app'\\n\"}," +
+                "\"{\"action\":\"write\",\"path\":\"app/build.gradle\",\"content\":\"plugins {}\\n\"}" +
+                "]}");
+
+        assertEquals("Wrote files", operations.summary);
+        assertEquals(2, operations.operations.size());
+        assertEquals("app/build.gradle", operations.operations.get(1).path);
+    }
+
+    @Test
     public void fromJson_rejectsUnsafePath() {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> TaskOperationsParser.fromJson("{\"summary\":\"x\",\"operations\":[" +
                 "{\"action\":\"write\",\"path\":\"../settings.gradle\",\"content\":\"bad\"}" +

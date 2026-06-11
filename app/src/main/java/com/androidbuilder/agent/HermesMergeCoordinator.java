@@ -22,7 +22,7 @@ public final class HermesMergeCoordinator {
         List<HermesAgentResult> successful = successfulResults(results);
         sortByTaskOrder(successful);
         List<HermesAgentResult> mergeable = new ArrayList<>();
-        List<FailedResult> failed = new ArrayList<>();
+        List<FailedResult> failed = failedInputResults(results);
         Map<String, HermesAgentResult> owners = new HashMap<>();
         for (HermesAgentResult result : successful) {
             List<String> normalizedPaths = new ArrayList<>();
@@ -106,6 +106,31 @@ public final class HermesMergeCoordinator {
             }
         }
         return successful;
+    }
+
+    private static List<FailedResult> failedInputResults(List<HermesAgentResult> results) {
+        List<FailedResult> failed = new ArrayList<>();
+        if (results == null) {
+            return failed;
+        }
+        for (HermesAgentResult result : results) {
+            if (result == null || result.success()) {
+                continue;
+            }
+            failed.add(new FailedResult(result, agentFailureReason(result)));
+        }
+        return failed;
+    }
+
+    private static String agentFailureReason(HermesAgentResult result) {
+        if (result == null) {
+            return "Missing Hermes agent result.";
+        }
+        if (result.error != null) {
+            String message = result.error.getMessage() == null ? result.error.toString() : result.error.getMessage();
+            return "Task " + taskLabel(result) + " agent failed: " + message;
+        }
+        return "Task " + taskLabel(result) + " agent produced no file operations.";
     }
 
     private static List<String> touchedPaths(HermesAgentResult result) {

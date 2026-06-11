@@ -170,6 +170,20 @@ public class HermesMergeCoordinatorTest {
         assertEquals(2, merge.failedResults.size());
     }
 
+    @Test
+    public void agentErrorCountsAsFailedResult() throws Exception {
+        File source = temporaryFolder.newFolder("source");
+        HermesAgentResult failed = resultWithError(1, new IllegalArgumentException("Unterminated array at character 632"));
+
+        HermesMergeCoordinator.MergeResult merge = HermesMergeCoordinator.merge(source, Collections.singletonList(failed));
+
+        assertTrue(merge.success);
+        assertEquals(0, merge.mergedResults.size());
+        assertEquals(1, merge.failedResults.size());
+        assertTrue(merge.summary.contains("failed 1"));
+        assertTrue(merge.failedResults.get(0).reason.contains("Unterminated array"));
+    }
+
     private HermesAgentResult resultWithPath(int sortOrder, String path) {
         return resultWithOperation(sortOrder, path, new FileOperation("write", path, ""));
     }
@@ -189,5 +203,18 @@ public class HermesMergeCoordinatorTest {
                 Collections.singletonList(path),
                 "ok",
                 null);
+    }
+
+    private HermesAgentResult resultWithError(int sortOrder, Exception error) {
+        ProjectTaskRecord task = new ProjectTaskRecord(
+                sortOrder, 1, sortOrder, "Task " + sortOrder, "", "failed", "", 0, 0, 0, 0);
+        return new HermesAgentResult(
+                task,
+                null,
+                HermesTaskContract.empty(),
+                null,
+                Collections.singletonList("app/src/main/java/com/generated/app/Broken.java"),
+                "",
+                error);
     }
 }
