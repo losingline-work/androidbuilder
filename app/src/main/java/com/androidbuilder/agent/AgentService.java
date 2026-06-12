@@ -41,9 +41,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class AgentService {
-    private static final int SOURCE_SNAPSHOT_LIMIT = 18000;
+    private static final int SOURCE_SNAPSHOT_LIMIT = 24000;
+    private static final int SOURCE_FULL_TEXT_LAYER_LIMIT = 14000;
+    private static final int SOURCE_API_DIGEST_LIMIT = 6000;
+    private static final int SOURCE_RESOURCE_INDEX_LIMIT = 3000;
     private static final int SOURCE_FILE_PREVIEW_LIMIT = 3500;
-    private static final int SOURCE_FOCUS_FILE_LIMIT = 12000;
     private static final int BUILD_LOG_PREVIEW_LIMIT = 7000;
     private static final int POLICY_REWRITE_ATTEMPTS = 5;
     // Pre-apply structural rewrites are capped separately so
@@ -2036,24 +2038,62 @@ public class AgentService {
     }
 
     private String sourceSnapshot(File sourceDir, String focusText) {
-        StringBuilder snapshot = new StringBuilder();
-        Set<String> seen = new HashSet<>();
-        appendFocusedSourceFiles(sourceDir, focusText, snapshot, seen);
+        return buildSourceSnapshot(sourceDir, focusText);
+    }
+
+    static String sourceSnapshotForTest(File sourceDir, String focusText) {
+        return buildSourceSnapshot(sourceDir, focusText);
+    }
+
+    private static String buildSourceSnapshot(File sourceDir, String focusText) {
+        List<SourceSnapshotComposer.TextSection> fullTextSections = new ArrayList<>();
+        Set<String> fullTextPaths = new HashSet<>();
+        appendFocusedSourceFiles(sourceDir, focusText, fullTextSections, fullTextPaths);
         // General tree, ordered most-relevant first so that, if the budget runs out, the files
         // dropped are the least relevant (assets/configs) rather than Java/layouts.
         List<File> candidates = new java.util.ArrayList<>();
         collectSourceFiles(sourceDir, candidates);
         sortByRelevance(sourceDir, candidates);
         for (File file : candidates) {
-            appendSourceFile(sourceDir, file, snapshot, seen, false);
+            String path = relativePath(sourceDir, file);
+            if (fullTextPaths.contains(path) || isJavaSourcePath(path)) {
+                continue;
+            }
+            appendSourceFile(sourceDir, file, fullTextSections, fullTextPaths, false);
         }
-        // Tell the model exactly which source files it cannot see, so it stops aligning against
-        // files it has not been shown (a common cause of cross-file API mismatches).
-        appendOmittedFilesNote(sourceDir, candidates, seen, snapshot);
-        return snapshot.length() == 0 ? "(empty)" : snapshot.toString();
+        String javaApiDigest = javaApiDigest(sourceDir, fullTextPaths);
+        String resourceIndex = resourceIndex(sourceDir);
+        String contextNote = omittedFilesNote(sourceDir, candidates, fullTextPaths);
+        return SourceSnapshotComposer.assemble(
+                fullTextSections,
+                javaApiDigest,
+                resourceIndex,
+                contextNote,
+                SOURCE_FULL_TEXT_LAYER_LIMIT,
+                SOURCE_SNAPSHOT_LIMIT);
     }
 
-    private void collectSourceFiles(File file, List<File> out) {
+    private static String javaApiDigest(File sourceDir, Set<String> fullTextPaths) {
+        try {
+            return JavaApiDigest.digestTree(sourceDir, fullTextPaths, SOURCE_API_DIGEST_LIMIT);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static String resourceIndex(File sourceDir) {
+        try {
+            return ResourceIndexDigest.digest(sourceDir, SOURCE_RESOURCE_INDEX_LIMIT);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static boolean isJavaSourcePath(String path) {
+        return path != null && path.toLowerCase(java.util.Locale.ROOT).endsWith(".java");
+    }
+
+    private static void collectSourceFiles(File file, List<File> out) {
         if (file == null || !file.exists()) {
             return;
         }
@@ -2079,7 +2119,7 @@ public class AgentService {
                 || lower.endsWith(".properties") || lower.endsWith(".json") || lower.endsWith(".pro");
     }
 
-    private void sortByRelevance(File root, List<File> files) {
+    private static void sortByRelevance(File root, List<File> files) {
         java.util.Collections.sort(files, (a, b) -> {
             int byScore = Integer.compare(relevanceScore(relativePath(root, a)), relevanceScore(relativePath(root, b)));
             return byScore != 0 ? byScore : relativePath(root, a).compareTo(relativePath(root, b));
@@ -2106,78 +2146,79 @@ public class AgentService {
         return 5;
     }
 
-    private String relativePath(File root, File file) {
+    private static String relativePath(File root, File file) {
         return root.toURI().relativize(file.toURI()).getPath();
     }
 
-    private void appendOmittedFilesNote(File root, List<File> candidates, Set<String> seen, StringBuilder snapshot) {
+    private static String omittedFilesNote(File root, List<File> candidates, Set<String> fullTextPaths) {
         List<String> omitted = new java.util.ArrayList<>();
         for (File file : candidates) {
             String path = relativePath(root, file);
-            if (!seen.contains(path)) {
+            if (!fullTextPaths.contains(path)) {
                 omitted.add(path);
             }
         }
         if (omitted.isEmpty()) {
-            return;
+            return "";
         }
         int shown = Math.min(omitted.size(), 40);
-        snapshot.append("\n--- context note ---\n");
-        snapshot.append("The project is larger than the context budget, so ").append(omitted.size())
-                .append(" source file(s) below were omitted from this snapshot. Do not assume their contents; only reference or modify files shown above, and keep every change consistent with the APIs you can actually see. Omitted files:\n");
+        StringBuilder note = new StringBuilder();
+        note.append("The project is larger than the full-text context budget, so ").append(omitted.size())
+                .append(" source file(s) below were not shown as full text. Java files may still be represented in the API digest. Do not assume omitted file bodies; only reference or modify files shown above, and keep every change consistent with the APIs you can actually see. Files not shown in full text:\n");
         for (int i = 0; i < shown; i++) {
-            snapshot.append("- ").append(omitted.get(i)).append('\n');
+            note.append("- ").append(omitted.get(i)).append('\n');
         }
         if (omitted.size() > shown) {
-            snapshot.append("- ...and ").append(omitted.size() - shown).append(" more\n");
+            note.append("- ...and ").append(omitted.size() - shown).append(" more\n");
         }
+        return note.toString();
     }
 
-    private void appendFocusedSourceFiles(File root, String focusText, StringBuilder snapshot, Set<String> seen) {
+    private static void appendFocusedSourceFiles(File root, String focusText, List<SourceSnapshotComposer.TextSection> sections, Set<String> seen) {
         if (focusText == null || focusText.trim().isEmpty()) {
             return;
         }
         // Files that the failure points at are appended in full (not preview-truncated) and first,
         // so the model can see and fix the whole offending file, e.g. every synthetic view access.
         Matcher pathMatcher = Pattern.compile("(?:^|/)(app/src/[^\\s:]+\\.(?:kt|java|xml|gradle|kts))").matcher(focusText);
-        while (pathMatcher.find() && snapshot.length() <= SOURCE_SNAPSHOT_LIMIT) {
+        while (pathMatcher.find()) {
             File file = new File(root, pathMatcher.group(1));
-            appendSourceFile(root, file, snapshot, seen, true);
+            appendSourceFile(root, file, sections, seen, true);
         }
         // Guard/compiler messages often name only the bare file ("... in AddTransactionActivity.java."),
         // so also resolve plain file names by searching the tree.
         Matcher nameMatcher = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*\\.(?:kt|java|xml))\\b").matcher(focusText);
-        while (nameMatcher.find() && snapshot.length() <= SOURCE_SNAPSHOT_LIMIT) {
-            appendSourceFilesNamed(root, root, nameMatcher.group(1), snapshot, seen, true);
+        while (nameMatcher.find()) {
+            appendSourceFilesNamed(root, root, nameMatcher.group(1), sections, seen, true);
         }
         for (String type : BuildLogContextExtractor.referencedJavaTypes(focusText)) {
-            appendSourceFilesNamed(root, root, type + ".java", snapshot, seen, true);
+            appendSourceFilesNamed(root, root, type + ".java", sections, seen, true);
         }
         // Capitalized type identifiers named in the failure (e.g. "CategoryDao", "DBHelper" from a
         // constructor-mismatch message) are pulled in full so the model can reconcile caller and class.
         Matcher typeMatcher = Pattern.compile("\\b([A-Z][A-Za-z0-9_]*)\\b").matcher(focusText);
         int typeBudget = 16;
         Set<String> triedTypes = new HashSet<>();
-        while (typeMatcher.find() && typeBudget > 0 && snapshot.length() <= SOURCE_SNAPSHOT_LIMIT) {
+        while (typeMatcher.find() && typeBudget > 0) {
             String typeName = typeMatcher.group(1);
             if (!triedTypes.add(typeName)) {
                 continue;
             }
             typeBudget--;
-            appendSourceFilesNamed(root, root, typeName + ".java", snapshot, seen, true);
+            appendSourceFilesNamed(root, root, typeName + ".java", sections, seen, true);
         }
         if (focusText.contains("Unresolved reference") || focusText.contains("findViewById") || focusText.contains("R.id")) {
-            appendSourceSnapshot(root, new File(root, "app/src/main/res/layout"), snapshot, seen);
+            appendSourceSnapshot(root, new File(root, "app/src/main/res/layout"), sections, seen);
         }
     }
 
-    private void appendSourceFilesNamed(File root, File file, String fileName, StringBuilder snapshot, Set<String> seen, boolean full) {
-        if (file == null || !file.exists() || snapshot.length() > SOURCE_SNAPSHOT_LIMIT) {
+    private static void appendSourceFilesNamed(File root, File file, String fileName, List<SourceSnapshotComposer.TextSection> sections, Set<String> seen, boolean full) {
+        if (file == null || !file.exists()) {
             return;
         }
         if (file.isFile()) {
             if (file.getName().equals(fileName)) {
-                appendSourceFile(root, file, snapshot, seen, full);
+                appendSourceFile(root, file, sections, seen, full);
             }
             return;
         }
@@ -2186,12 +2227,12 @@ public class AgentService {
             return;
         }
         for (File child : children) {
-            appendSourceFilesNamed(root, child, fileName, snapshot, seen, full);
+            appendSourceFilesNamed(root, child, fileName, sections, seen, full);
         }
     }
 
-    private void appendSourceSnapshot(File root, File file, StringBuilder snapshot, Set<String> seen) {
-        if (file == null || !file.exists() || snapshot.length() > SOURCE_SNAPSHOT_LIMIT) {
+    private static void appendSourceSnapshot(File root, File file, List<SourceSnapshotComposer.TextSection> sections, Set<String> seen) {
+        if (file == null || !file.exists()) {
             return;
         }
         if (file.isDirectory()) {
@@ -2200,19 +2241,19 @@ public class AgentService {
                 return;
             }
             for (File child : children) {
-                appendSourceSnapshot(root, child, snapshot, seen);
+                appendSourceSnapshot(root, child, sections, seen);
             }
             return;
         }
-        appendSourceFile(root, file, snapshot, seen);
+        appendSourceFile(root, file, sections, seen);
     }
 
-    private void appendSourceFile(File root, File file, StringBuilder snapshot, Set<String> seen) {
-        appendSourceFile(root, file, snapshot, seen, false);
+    private static void appendSourceFile(File root, File file, List<SourceSnapshotComposer.TextSection> sections, Set<String> seen) {
+        appendSourceFile(root, file, sections, seen, false);
     }
 
-    private void appendSourceFile(File root, File file, StringBuilder snapshot, Set<String> seen, boolean full) {
-        if (file == null || !file.exists() || snapshot.length() > SOURCE_SNAPSHOT_LIMIT) {
+    private static void appendSourceFile(File root, File file, List<SourceSnapshotComposer.TextSection> sections, Set<String> seen, boolean full) {
+        if (file == null || !file.exists()) {
             return;
         }
         try {
@@ -2221,22 +2262,20 @@ public class AgentService {
                 return;
             }
             if (isLikelyBinaryPath(path)) {
-                snapshot.append(path).append(" [binary]\n");
+                sections.add(SourceSnapshotComposer.textSection(path, "[binary]\n"));
                 return;
             }
-            snapshot.append("\n--- ").append(path).append(" ---\n");
             String text = FileUtils.readText(file);
-            int limit = full ? SOURCE_FOCUS_FILE_LIMIT : SOURCE_FILE_PREVIEW_LIMIT;
-            if (text.length() > limit) {
-                text = text.substring(0, limit) + "\n...[truncated]";
+            if (!full && text.length() > SOURCE_FILE_PREVIEW_LIMIT) {
+                text = text.substring(0, SOURCE_FILE_PREVIEW_LIMIT) + "\n...[truncated]";
             }
-            snapshot.append(text).append("\n");
+            sections.add(SourceSnapshotComposer.textSection(path, text));
         } catch (Exception ignored) {
             // Best-effort prompt context only; unreadable files should not block generation.
         }
     }
 
-    private boolean isLikelyBinaryPath(String path) {
+    private static boolean isLikelyBinaryPath(String path) {
         String lower = path.toLowerCase(java.util.Locale.ROOT);
         return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
                 lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".apk") ||

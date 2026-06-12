@@ -13,6 +13,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class AndroidSourceGuard {
+    private static final int MAX_REPORTED_VIOLATIONS = 10;
     private static final Pattern XML_ID = Pattern.compile("android:id\\s*=\\s*[\"']@\\+?id/([A-Za-z_][A-Za-z0-9_]*)[\"']");
     private static final String APP_R_PREFIX = "(?<![A-Za-z0-9_.])R\\.";
     private static final Pattern R_ID = Pattern.compile(APP_R_PREFIX + "id\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
@@ -45,7 +46,9 @@ public class AndroidSourceGuard {
         collectValueResources(resDir, symbols);
         JavaApiSymbols javaSymbols = new JavaApiSymbols();
         collectJavaApiSymbols(sourceDir, javaSymbols);
-        validateFiles(sourceDir, symbols, javaSymbols);
+        List<String> violations = new ArrayList<>();
+        validateFiles(sourceDir, symbols, javaSymbols, violations);
+        throwIfViolations(violations);
     }
 
     private void collectXmlIds(File file, Set<String> ids) throws Exception {
@@ -192,19 +195,19 @@ public class AndroidSourceGuard {
         }
     }
 
-    private void validateFiles(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols) throws Exception {
+    private void validateFiles(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols, List<String> violations) throws Exception {
         if (file == null || !file.exists()) {
             return;
         }
         if (file.isFile()) {
             String name = file.getName();
             if (name.endsWith(".kt")) {
-                throw new IllegalArgumentException("Generated source policy blocked Kotlin source file: " + name + ". Use Java source files (.java) only.");
+                addViolation(violations, "Generated source policy blocked Kotlin source file: " + name + ". Use Java source files (.java) only.");
             }
             if (name.endsWith(".java")) {
-                validateSourceFile(file, symbols, javaSymbols);
+                validateSourceFile(file, symbols, javaSymbols, violations);
             } else if (name.endsWith(".xml")) {
-                validateXmlFile(file, symbols);
+                validateXmlFile(file, symbols, violations);
             }
             return;
         }
@@ -213,41 +216,43 @@ public class AndroidSourceGuard {
             return;
         }
         for (File child : children) {
-            validateFiles(child, symbols, javaSymbols);
+            validateFiles(child, symbols, javaSymbols, violations);
         }
     }
 
-    private void validateSourceFile(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols) throws Exception {
+    private void validateSourceFile(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols, List<String> violations) throws Exception {
         String content = FileUtils.readText(file);
         if (content.contains("kotlinx.android.synthetic")) {
-            throw new IllegalArgumentException("Generated source policy blocked Kotlin synthetic view imports in " + file.getName() + ". Use findViewById on the inflated root/dialog view.");
+            addViolation(violations, "Generated source policy blocked Kotlin synthetic view imports in " + file.getName() + ". Use findViewById on the inflated root/dialog view.");
         }
         if (content.matches("(?s).*import\\s+.*\\.databinding\\..*Binding.*")) {
-            throw new IllegalArgumentException("Generated source policy blocked DataBinding/ViewBinding imports in " + file.getName() + ". Use findViewById with plain XML ids.");
+            addViolation(violations, "Generated source policy blocked DataBinding/ViewBinding imports in " + file.getName() + ". Use findViewById with plain XML ids.");
         }
         if (FRAGMENT_CLASS.matcher(content).find() && NAKED_FIND_VIEW.matcher(content).find()) {
-            throw new IllegalArgumentException("Generated source policy blocked Fragment findViewById usage in " + file.getName() + ". Use rootView.findViewById or requireView().findViewById.");
+            addViolation(violations, "Generated source policy blocked Fragment findViewById usage in " + file.getName() + ". Use rootView.findViewById or requireView().findViewById.");
         }
-        rejectMissingResource(R_ID, symbols.ids, "Generated source policy blocked missing XML id: R.id.%s in %s.", content, file);
-        rejectMissingResource(R_LAYOUT, symbols.layouts, "Generated source policy blocked missing layout resource: R.layout.%s in %s.", content, file);
-        rejectMissingResource(R_STRING, symbols.strings, "Generated source policy blocked missing string resource: R.string.%s in %s.", content, file);
-        rejectMissingResource(R_COLOR, symbols.colors, "Generated source policy blocked missing color resource: R.color.%s in %s.", content, file);
-        rejectMissingResource(R_DRAWABLE, symbols.drawables, "Generated source policy blocked missing drawable resource: R.drawable.%s in %s.", content, file);
-        rejectMissingResource(R_MIPMAP, symbols.mipmaps, "Generated source policy blocked missing mipmap resource: R.mipmap.%s in %s.", content, file);
-        rejectMissingResource(R_STYLE, symbols.styles, "Generated source policy blocked missing style resource: R.style.%s in %s.", content, file);
+        rejectMissingResource(R_ID, symbols.ids, "Generated source policy blocked missing XML id: R.id.%s in %s.", content, file, violations);
+        rejectMissingResource(R_LAYOUT, symbols.layouts, "Generated source policy blocked missing layout resource: R.layout.%s in %s.", content, file, violations);
+        rejectMissingResource(R_STRING, symbols.strings, "Generated source policy blocked missing string resource: R.string.%s in %s.", content, file, violations);
+        rejectMissingResource(R_COLOR, symbols.colors, "Generated source policy blocked missing color resource: R.color.%s in %s.", content, file, violations);
+        rejectMissingResource(R_DRAWABLE, symbols.drawables, "Generated source policy blocked missing drawable resource: R.drawable.%s in %s.", content, file, violations);
+        rejectMissingResource(R_MIPMAP, symbols.mipmaps, "Generated source policy blocked missing mipmap resource: R.mipmap.%s in %s.", content, file, violations);
+        rejectMissingResource(R_STYLE, symbols.styles, "Generated source policy blocked missing style resource: R.style.%s in %s.", content, file, violations);
+        boolean syntheticViewViolation = false;
         for (String id : symbols.ids) {
             if (isLikelySyntheticViewId(id) && usesLikelySyntheticView(content, id) && !declaresVariable(content, id)) {
-                throw new IllegalArgumentException("Generated source policy blocked synthetic view access: " + id + " in " + file.getName() + ". Declare it with findViewById from the inflated root/dialog view.");
+                addViolation(violations, "Generated source policy blocked synthetic view access: " + id + " in " + file.getName() + ". Declare it with findViewById from the inflated root/dialog view.");
+                syntheticViewViolation = true;
             }
         }
-        if (content.contains("->")) {
-            throw new IllegalArgumentException("Generated source policy blocked Java lambda syntax in " + file.getName() + ". Use anonymous listener classes instead of ->.");
+        if (!syntheticViewViolation && content.contains("->")) {
+            addViolation(violations, "Generated source policy blocked Java lambda syntax in " + file.getName() + ". Use anonymous listener classes instead of ->.");
         }
         String sanitized = stripJavaCommentsAndStrings(content);
-        validateClassFieldAccess(file, sanitized, javaSymbols);
-        validateCustomFieldAccess(file, sanitized, javaSymbols);
-        validateConstructorCalls(file, sanitized, javaSymbols);
-        validateCustomMethodCalls(file, sanitized, javaSymbols);
+        validateClassFieldAccess(file, sanitized, javaSymbols, violations);
+        validateCustomFieldAccess(file, sanitized, javaSymbols, violations);
+        validateConstructorCalls(file, sanitized, javaSymbols, violations);
+        validateCustomMethodCalls(file, sanitized, javaSymbols, violations);
     }
 
     private void collectJavaApiSymbols(File file, JavaApiSymbols symbols) throws Exception {
@@ -366,7 +371,7 @@ public class AndroidSourceGuard {
         return "new".equals(content.substring(cursor + 1, end));
     }
 
-    private void validateCustomFieldAccess(File file, String content, JavaApiSymbols javaSymbols) {
+    private void validateCustomFieldAccess(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
         Map<String, String> variableTypes = collectVariableTypes(content);
         String currentClass = firstClassName(content);
         if (!currentClass.isEmpty()) {
@@ -384,12 +389,12 @@ public class AndroidSourceGuard {
                 continue;
             }
             if (!javaSymbols.hasField(type, fieldName)) {
-                throw new IllegalArgumentException("Generated source policy blocked missing model field: " + type + "." + fieldName + " in " + file.getName() + ". Add the field/getter or update the caller to use an existing API.");
+                addViolation(violations, "Generated source policy blocked missing model field: " + type + "." + fieldName + " in " + file.getName() + ". Add the field/getter or update the caller to use an existing API.");
             }
         }
     }
 
-    private void validateClassFieldAccess(File file, String content, JavaApiSymbols javaSymbols) {
+    private void validateClassFieldAccess(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
         Matcher matcher = JAVA_FIELD_ACCESS.matcher(content);
         while (matcher.find()) {
             if (isMethodCall(content, matcher.end())) {
@@ -404,7 +409,7 @@ public class AndroidSourceGuard {
                 continue;
             }
             if (!javaSymbols.hasField(className, fieldName)) {
-                throw new IllegalArgumentException("Generated source policy blocked missing class field: " + className + "." + fieldName + " in " + file.getName() + ". Add the constant/field to " + className + " or update the caller to use an existing API.");
+                addViolation(violations, "Generated source policy blocked missing class field: " + className + "." + fieldName + " in " + file.getName() + ". Add the constant/field to " + className + " or update the caller to use an existing API.");
             }
         }
     }
@@ -417,7 +422,7 @@ public class AndroidSourceGuard {
         return cursor < content.length() && content.charAt(cursor) == '(';
     }
 
-    private void validateConstructorCalls(File file, String content, JavaApiSymbols javaSymbols) {
+    private void validateConstructorCalls(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
         Map<String, String> variableTypes = collectVariableTypes(content);
         String currentClass = firstClassName(content);
         Matcher matcher = JAVA_NEW_EXPRESSION.matcher(content);
@@ -430,12 +435,12 @@ public class AndroidSourceGuard {
             List<List<String>> constructors = javaSymbols.availableConstructors(className);
             boolean hasMatchingArity = hasMatchingArity(constructors, argumentTypes.size());
             if (!hasMatchingArity || (allKnown(argumentTypes) && !matchesAnyConstructor(argumentTypes, constructors, javaSymbols))) {
-                throw new IllegalArgumentException("Generated source policy blocked constructor argument mismatch: new " + className + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ", but available constructors are " + describeConstructors(className, constructors) + ". Update the constructor or caller consistently.");
+                addViolation(violations, "Generated source policy blocked constructor argument mismatch: new " + className + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ", but available constructors are " + describeConstructors(className, constructors) + ". Update the constructor or caller consistently.");
             }
         }
     }
 
-    private void validateCustomMethodCalls(File file, String content, JavaApiSymbols javaSymbols) {
+    private void validateCustomMethodCalls(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
         Map<String, String> variableTypes = collectVariableTypes(content);
         String currentClass = firstClassName(content);
         if (!currentClass.isEmpty()) {
@@ -460,10 +465,11 @@ public class AndroidSourceGuard {
                 continue;
             }
             if (!javaSymbols.hasMethod(type, methodName)) {
-                throw new IllegalArgumentException("Generated source policy blocked missing method: " + type + "." + methodName + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ". Add the method or update the caller to use an existing API.");
+                addViolation(violations, "Generated source policy blocked missing method: " + type + "." + methodName + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ". Add the method or update the caller to use an existing API.");
+                continue;
             }
             if (allKnown(argumentTypes) && !javaSymbols.hasMethodSignature(type, methodName, argumentTypes, this)) {
-                throw new IllegalArgumentException("Generated source policy blocked method argument mismatch: " + type + "." + methodName + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ". Update the method signature or caller consistently.");
+                addViolation(violations, "Generated source policy blocked method argument mismatch: " + type + "." + methodName + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ". Update the method signature or caller consistently.");
             }
         }
     }
@@ -861,14 +867,14 @@ public class AndroidSourceGuard {
         return builder.toString();
     }
 
-    private void validateXmlFile(File file, ResourceSymbols symbols) throws Exception {
+    private void validateXmlFile(File file, ResourceSymbols symbols, List<String> violations) throws Exception {
         String content = FileUtils.readText(file);
         Matcher matcher = XML_RESOURCE_REFERENCE.matcher(content);
         while (matcher.find()) {
             String type = matcher.group(1);
             String name = matcher.group(2);
             if (!knownXmlResources(symbols, type).contains(name)) {
-                throw new IllegalArgumentException("Generated source policy blocked missing XML resource reference: @" + type + "/" + name + " in " + file.getName() + ".");
+                addViolation(violations, "Generated source policy blocked missing XML resource reference: @" + type + "/" + name + " in " + file.getName() + ".");
             }
         }
     }
@@ -895,14 +901,41 @@ public class AndroidSourceGuard {
         return new HashSet<>();
     }
 
-    private void rejectMissingResource(Pattern pattern, Set<String> knownNames, String message, String content, File file) {
+    private void rejectMissingResource(Pattern pattern, Set<String> knownNames, String message, String content, File file, List<String> violations) {
         Matcher matcher = pattern.matcher(content);
         while (matcher.find()) {
             String name = matcher.group(1);
             if (!knownNames.contains(name)) {
-                throw new IllegalArgumentException(String.format(message, name, file.getName()));
+                addViolation(violations, String.format(message, name, file.getName()));
             }
         }
+    }
+
+    private void addViolation(List<String> violations, String message) {
+        if (violations.size() < MAX_REPORTED_VIOLATIONS) {
+            violations.add(message);
+        }
+    }
+
+    private void throwIfViolations(List<String> violations) {
+        if (violations.isEmpty()) {
+            return;
+        }
+        if (violations.size() == 1) {
+            throw new IllegalArgumentException(violations.get(0));
+        }
+        throw new IllegalArgumentException(joinViolations(violations));
+    }
+
+    private String joinViolations(List<String> violations) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < violations.size(); i++) {
+            if (i > 0) {
+                builder.append('\n');
+            }
+            builder.append(violations.get(i));
+        }
+        return builder.toString();
     }
 
     private boolean isLikelySyntheticViewId(String id) {

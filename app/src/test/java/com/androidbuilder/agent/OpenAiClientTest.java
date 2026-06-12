@@ -273,6 +273,15 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void taskOperationsPromptTreatsResourceIndexAsAuthoritative() {
+        String prompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(prompt.contains("resource index"));
+        assertTrue(prompt.contains("only authoritative resource truth table"));
+        assertTrue(prompt.contains("return blocked instead of inventing it"));
+    }
+
+    @Test
     public void hermesReviewPromptRequestsStructuredDecision() {
         String system = OpenAiClient.hermesReviewSystemPromptForTest(false);
         String user = OpenAiClient.hermesReviewUserPromptForTest(

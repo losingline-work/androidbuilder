@@ -12,7 +12,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 final class TaskDraftContextPolicy {
-    static final int DRAFT_SECTION_LIMIT = 12000;
+    static final int DRAFT_SECTION_LIMIT = 14000;
     private static final String TRUNCATED = "\n...[truncated]";
 
     private TaskDraftContextPolicy() {
@@ -66,6 +66,14 @@ final class TaskDraftContextPolicy {
                 }
             }
         }
+        String apiDigest = draftApiDigest(normalized, selected);
+        if (!apiDigest.isEmpty()) {
+            builder.append("\nDraft API digest (your own previous work - keep consistent with it):\n");
+            builder.append(apiDigest);
+            if (builder.length() == 0 || builder.charAt(builder.length() - 1) != '\n') {
+                builder.append('\n');
+            }
+        }
         return trimToLimit(builder.toString().trim(), limit);
     }
 
@@ -102,6 +110,28 @@ final class TaskDraftContextPolicy {
             }
         }
         return selected;
+    }
+
+    private static String draftApiDigest(List<FileOperation> operations, List<FileOperation> selected) {
+        Set<String> selectedPaths = new HashSet<>();
+        for (FileOperation operation : selected) {
+            selectedPaths.add(operation.path);
+        }
+        StringBuilder builder = new StringBuilder();
+        for (FileOperation operation : operations) {
+            if (!"write".equals(operation.action)
+                    || operation.path == null
+                    || !operation.path.endsWith(".java")
+                    || selectedPaths.contains(operation.path)) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append('\n');
+            }
+            builder.append("--- operation write ").append(operation.path).append(" API ---\n");
+            builder.append(JavaApiDigest.digestSource(operation.path, operation.content == null ? "" : operation.content)).append('\n');
+        }
+        return builder.toString().trim();
     }
 
     private static Set<String> referencedFileNames(String error) {

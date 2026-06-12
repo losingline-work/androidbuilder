@@ -10,6 +10,7 @@ import java.io.File;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 public class AndroidSourceGuardTest {
     @Rule
@@ -87,6 +88,24 @@ public class AndroidSourceGuardTest {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
 
         assertEquals("Generated source policy blocked missing layout resource: R.layout.missing_screen in MainActivity.java.", error.getMessage());
+    }
+
+    @Test
+    public void reportsMultipleGeneratedSourceViolationsTogether() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/MainActivity.java",
+                "package com.example;\nclass MainActivity { void bind(View button) { findViewById(R.id.toolbar); button.setOnClickListener(v -> open()); } void open() {} }");
+        write(root, "app/src/main/java/com/example/DBHelper.java",
+                "package com.example;\nclass DBHelper { static final String TABLE_CATEGORY = \"categories\"; }");
+        write(root, "app/src/main/java/com/example/CategoryDao.java",
+                "package com.example;\nclass CategoryDao { String order() { return DBHelper.COL_CATEGORY_ID + \" ASC\"; } }");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertTrue(error.getMessage().startsWith("Generated source policy blocked"));
+        assertTrue(error.getMessage().contains("Generated source policy blocked missing XML id: R.id.toolbar in MainActivity.java."));
+        assertTrue(error.getMessage().contains("Generated source policy blocked Java lambda syntax in MainActivity.java. Use anonymous listener classes instead of ->."));
+        assertTrue(error.getMessage().contains("Generated source policy blocked missing class field: DBHelper.COL_CATEGORY_ID in CategoryDao.java. Add the constant/field to DBHelper or update the caller to use an existing API."));
     }
 
     @Test

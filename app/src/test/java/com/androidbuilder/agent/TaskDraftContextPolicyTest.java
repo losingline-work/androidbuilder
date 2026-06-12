@@ -35,7 +35,7 @@ public class TaskDraftContextPolicyTest {
     public void correctionSectionIncludesReferencedJavaType() {
         TaskOperations draft = operations(
                 write("app/src/main/java/com/example/CategoryDao.java", "class CategoryDao { CategoryDao(Context context) {} }\n"),
-                write("app/src/main/java/com/example/RecordDao.java", "class RecordDao {}\n"));
+                write("app/src/main/java/com/example/RecordDao.java", "class RecordDao { public void list() { int hiddenBody = 1; } }\n"));
 
         String section = TaskDraftContextPolicy.correctionSection(
                 draft,
@@ -43,7 +43,32 @@ public class TaskDraftContextPolicyTest {
                 2000);
 
         assertTrue(section.contains("CategoryDao(Context context)"));
-        assertFalse(section.contains("class RecordDao"));
+        assertTrue(section.contains("Draft API digest (your own previous work - keep consistent with it):"));
+        assertTrue(section.contains("class RecordDao { void list(); }"));
+        assertFalse(section.contains("hiddenBody"));
+    }
+
+    @Test
+    public void correctionSectionIncludesFullErroredFileAndApiDigestForOtherDraftJavaFiles() {
+        FileOperation[] files = new FileOperation[15];
+        files[0] = write("app/src/main/java/com/example/DBHelper.java",
+                "class DBHelper { public void broken() { int offendingFullBody = 1; } }\n");
+        for (int i = 1; i < files.length; i++) {
+            files[i] = write("app/src/main/java/com/example/Other" + i + ".java",
+                    "class Other" + i + " { public void api" + i + "() { int hiddenBody" + i + " = " + i + "; } }\n");
+        }
+        TaskOperations draft = operations(files);
+
+        String section = TaskDraftContextPolicy.correctionSection(
+                draft,
+                "Generated source policy blocked missing class field: DBHelper.COL_ID in DBHelper.java.",
+                TaskDraftContextPolicy.DRAFT_SECTION_LIMIT);
+
+        assertTrue(section.contains("offendingFullBody"));
+        assertTrue(section.contains("Draft API digest (your own previous work - keep consistent with it):"));
+        assertTrue(section.contains("class Other14 { void api14(); }"));
+        assertFalse(section.contains("hiddenBody14"));
+        assertTrue(section.length() <= 14000);
     }
 
     @Test
