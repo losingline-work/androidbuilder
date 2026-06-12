@@ -167,6 +167,8 @@ public class OpenAiClientTest {
         assertTrue(system.contains("Return only compact JSON"));
         assertTrue(system.contains("neededFiles"));
         assertTrue(system.contains("patchIntent"));
+        assertTrue(system.contains("Request a file in neededFiles only if it plausibly already exists"));
+        assertTrue(system.contains("Never set ready=false solely because files that do not exist yet are missing"));
         assertTrue(user.contains("Previous failure summary"));
         assertTrue(user.contains("Fix DAO mismatch"));
         assertTrue(user.contains("Current source snapshot"));
@@ -279,6 +281,9 @@ public class OpenAiClientTest {
         assertTrue(prompt.contains("resource index"));
         assertTrue(prompt.contains("only authoritative resource truth table"));
         assertTrue(prompt.contains("return blocked instead of inventing it"));
+        assertTrue(prompt.contains("Conversely, every name listed here EXISTS"));
+        assertTrue(prompt.contains("The snapshot inventory (full text + API digest + coverage note) is complete"));
+        assertTrue(prompt.contains("creating it is part of your task when needed"));
     }
 
     @Test

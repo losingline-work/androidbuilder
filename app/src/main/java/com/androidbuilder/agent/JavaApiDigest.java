@@ -316,7 +316,7 @@ final class JavaApiDigest {
                 "new".equals(value) || "class".equals(value);
     }
 
-    private static String stripJavaCommentsAndStrings(String content) {
+    static String stripJavaCommentsAndStrings(String content) {
         StringBuilder builder = new StringBuilder(content.length());
         boolean inString = false;
         boolean inChar = false;

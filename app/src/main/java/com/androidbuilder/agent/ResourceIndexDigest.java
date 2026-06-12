@@ -29,25 +29,28 @@ final class ResourceIndexDigest {
         return render(collectResources(sourceDir), maxChars);
     }
 
-    private static Map<String, TreeSet<String>> collectResources(File sourceDir) throws Exception {
-        Map<String, TreeSet<String>> resources = new TreeMap<>();
+    private static ResourceIndex collectResources(File sourceDir) throws Exception {
+        ResourceIndex index = new ResourceIndex();
         for (String type : TYPE_ORDER) {
-            resources.put(type, new TreeSet<String>());
+            index.resources.put(type, new TreeSet<String>());
         }
         File resDir = resolveResDir(sourceDir);
-        collect(resDir, resources);
-        return resources;
+        collect(resDir, index);
+        return index;
     }
 
-    private static String render(Map<String, TreeSet<String>> resources, int maxChars) {
+    private static String render(ResourceIndex index, int maxChars) {
         List<String> sections = new ArrayList<>();
-        for (String type : TYPE_ORDER) {
-            TreeSet<String> names = resources.get(type);
-            if (names == null || names.isEmpty()) {
-                continue;
-            }
-            sections.add("R." + type + ": " + join(names));
-        }
+        appendResourceSection(sections, index.resources, "id");
+        appendResourceSection(sections, index.resources, "layout");
+        appendResourceSection(sections, index.resources, "string");
+        appendLayoutIdSection(sections, index.idsByLayout);
+        appendResourceSection(sections, index.resources, "menu");
+        appendResourceSection(sections, index.resources, "drawable");
+        appendResourceSection(sections, index.resources, "mipmap");
+        appendResourceSection(sections, index.resources, "color");
+        appendResourceSection(sections, index.resources, "dimen");
+        appendResourceSection(sections, index.resources, "style");
         if (sections.isEmpty()) {
             return "(no Android resources found)";
         }
@@ -55,6 +58,28 @@ final class ResourceIndexDigest {
             return joinSections(sections);
         }
         return joinBudgetedSections(sections, maxChars);
+    }
+
+    private static void appendResourceSection(List<String> sections, Map<String, TreeSet<String>> resources, String type) {
+        TreeSet<String> names = resources.get(type);
+        if (names != null && !names.isEmpty()) {
+            sections.add("R." + type + ": " + join(names));
+        }
+    }
+
+    private static void appendLayoutIdSection(List<String> sections, TreeMap<String, TreeSet<String>> idsByLayout) {
+        if (idsByLayout.isEmpty()) {
+            return;
+        }
+        List<String> groups = new ArrayList<>();
+        for (Map.Entry<String, TreeSet<String>> entry : idsByLayout.entrySet()) {
+            if (!entry.getValue().isEmpty()) {
+                groups.add(entry.getKey() + "[" + join(entry.getValue()) + "]");
+            }
+        }
+        if (!groups.isEmpty()) {
+            sections.add("R.id by layout: " + joinList(groups, " | "));
+        }
     }
 
     private static String joinBudgetedSections(List<String> sections, int maxChars) {
@@ -109,7 +134,7 @@ final class ResourceIndexDigest {
         return sourceDir;
     }
 
-    private static void collect(File file, Map<String, TreeSet<String>> resources) throws Exception {
+    private static void collect(File file, ResourceIndex index) throws Exception {
         if (file == null || !file.exists()) {
             return;
         }
@@ -119,7 +144,7 @@ final class ResourceIndexDigest {
                 return;
             }
             for (File child : children) {
-                collect(child, resources);
+                collect(child, index);
             }
             return;
         }
@@ -129,29 +154,35 @@ final class ResourceIndexDigest {
         String resourceName = dot > 0 ? fileName.substring(0, dot) : fileName;
         if (fileName.endsWith(".xml")) {
             String text = FileUtils.readText(file);
-            collectXmlIds(text, resources.get("id"));
+            TreeSet<String> ids = collectXmlIds(text);
+            index.resources.get("id").addAll(ids);
             if (parent.startsWith("values")) {
-                collectValueResources(text, resources);
+                collectValueResources(text, index.resources);
+            }
+            if (parent.startsWith("layout") && !ids.isEmpty()) {
+                index.idsByLayout.put(resourceName, ids);
             }
         }
         if (parent.startsWith("layout") && fileName.endsWith(".xml")) {
-            resources.get("layout").add(resourceName);
+            index.resources.get("layout").add(resourceName);
         } else if (parent.startsWith("menu") && fileName.endsWith(".xml")) {
-            resources.get("menu").add(resourceName);
+            index.resources.get("menu").add(resourceName);
         } else if (parent.startsWith("drawable")) {
-            resources.get("drawable").add(resourceName);
+            index.resources.get("drawable").add(resourceName);
         } else if (parent.startsWith("mipmap")) {
-            resources.get("mipmap").add(resourceName);
+            index.resources.get("mipmap").add(resourceName);
         } else if (parent.startsWith("color")) {
-            resources.get("color").add(resourceName);
+            index.resources.get("color").add(resourceName);
         }
     }
 
-    private static void collectXmlIds(String text, TreeSet<String> ids) {
+    private static TreeSet<String> collectXmlIds(String text) {
+        TreeSet<String> ids = new TreeSet<>();
         Matcher matcher = XML_ID.matcher(text);
         while (matcher.find()) {
             ids.add(matcher.group(1));
         }
+        return ids;
     }
 
     private static void collectValueResources(String text, Map<String, TreeSet<String>> resources) {
@@ -190,5 +221,21 @@ final class ResourceIndexDigest {
             builder.append(sections.get(i));
         }
         return builder.toString();
+    }
+
+    private static String joinList(List<String> values, String separator) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                builder.append(separator);
+            }
+            builder.append(values.get(i));
+        }
+        return builder.toString();
+    }
+
+    private static final class ResourceIndex {
+        final Map<String, TreeSet<String>> resources = new TreeMap<>();
+        final TreeMap<String, TreeSet<String>> idsByLayout = new TreeMap<>();
     }
 }

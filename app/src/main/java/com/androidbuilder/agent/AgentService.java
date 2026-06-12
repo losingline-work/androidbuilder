@@ -45,6 +45,7 @@ public class AgentService {
     private static final int SOURCE_FULL_TEXT_LAYER_LIMIT = 14000;
     private static final int SOURCE_API_DIGEST_LIMIT = 6000;
     private static final int SOURCE_RESOURCE_INDEX_LIMIT = 3000;
+    private static final int SOURCE_CONTEXT_NOTE_RESERVE = 2500;
     private static final int SOURCE_FILE_PREVIEW_LIMIT = 3500;
     private static final int BUILD_LOG_PREVIEW_LIMIT = 7000;
     private static final int POLICY_REWRITE_ATTEMPTS = 5;
@@ -1171,7 +1172,7 @@ public class AgentService {
                             negotiationRounds,
                             chinese);
                     if (negotiation != null) {
-                        retryContext = ContextNegotiationPolicy.retryContext(previousFailure, negotiation);
+                        retryContext = ContextNegotiationPolicy.retryContext(previousFailure, negotiation, missingNeededFiles(sourceDir, negotiation));
                         String focusText = ContextNegotiationPolicy.focusText(negotiation, previousFailure);
                         if (!focusText.isEmpty()) {
                             snapshot = sourceSnapshot(sourceDir, focusText);
@@ -2049,6 +2050,8 @@ public class AgentService {
         List<SourceSnapshotComposer.TextSection> fullTextSections = new ArrayList<>();
         Set<String> fullTextPaths = new HashSet<>();
         appendFocusedSourceFiles(sourceDir, focusText, fullTextSections, fullTextPaths);
+        appendSourceFile(sourceDir, new File(sourceDir, "app/src/main/AndroidManifest.xml"), fullTextSections, fullTextPaths, true);
+        appendSourceFile(sourceDir, new File(sourceDir, "app/build.gradle"), fullTextSections, fullTextPaths, true);
         // General tree, ordered most-relevant first so that, if the budget runs out, the files
         // dropped are the least relevant (assets/configs) rather than Java/layouts.
         List<File> candidates = new java.util.ArrayList<>();
@@ -2061,16 +2064,43 @@ public class AgentService {
             }
             appendSourceFile(sourceDir, file, fullTextSections, fullTextPaths, false);
         }
-        String javaApiDigest = javaApiDigest(sourceDir, fullTextPaths);
         String resourceIndex = resourceIndex(sourceDir);
-        String contextNote = omittedFilesNote(sourceDir, candidates, fullTextPaths);
-        return SourceSnapshotComposer.assemble(
+        SourceSnapshotComposer.Composition composition = composeSourceSnapshot(
+                sourceDir,
                 fullTextSections,
-                javaApiDigest,
                 resourceIndex,
-                contextNote,
-                SOURCE_FULL_TEXT_LAYER_LIMIT,
-                SOURCE_SNAPSHOT_LIMIT);
+                fullTextPaths);
+        String contextNote = snapshotCoverageNote(sourceDir, candidates, fullTextPaths, composition);
+        return SourceSnapshotComposer.appendContextNote(composition.text, contextNote, SOURCE_SNAPSHOT_LIMIT);
+    }
+
+    private static SourceSnapshotComposer.Composition composeSourceSnapshot(
+            File sourceDir,
+            List<SourceSnapshotComposer.TextSection> fullTextSections,
+            String resourceIndex,
+            Set<String> initiallyExcludedJavaPaths) {
+        Set<String> excludedJavaPaths = new HashSet<>(initiallyExcludedJavaPaths);
+        SourceSnapshotComposer.Composition composition = null;
+        for (int i = 0; i < 4; i++) {
+            String javaApiDigest = javaApiDigest(sourceDir, excludedJavaPaths);
+            composition = SourceSnapshotComposer.compose(
+                    fullTextSections,
+                    javaApiDigest,
+                    resourceIndex,
+                    SOURCE_FULL_TEXT_LAYER_LIMIT,
+                    SOURCE_SNAPSHOT_LIMIT - SOURCE_CONTEXT_NOTE_RESERVE);
+            Set<String> nextExcluded = new HashSet<>(composition.fullyIncludedPaths);
+            if (composition.partiallyIncludedPath != null) {
+                nextExcluded.add(composition.partiallyIncludedPath);
+            }
+            if (nextExcluded.equals(excludedJavaPaths)) {
+                return composition;
+            }
+            excludedJavaPaths = nextExcluded;
+        }
+        return composition == null
+                ? SourceSnapshotComposer.compose(fullTextSections, "", resourceIndex, SOURCE_FULL_TEXT_LAYER_LIMIT, SOURCE_SNAPSHOT_LIMIT - SOURCE_CONTEXT_NOTE_RESERVE)
+                : composition;
     }
 
     private static String javaApiDigest(File sourceDir, Set<String> fullTextPaths) {
@@ -2087,6 +2117,22 @@ public class AgentService {
         } catch (Exception ignored) {
             return "";
         }
+    }
+
+    private static List<String> missingNeededFiles(File sourceDir, ContextNegotiation negotiation) {
+        List<String> missing = new ArrayList<>();
+        if (sourceDir == null || negotiation == null) {
+            return missing;
+        }
+        for (String path : negotiation.neededFiles) {
+            if (path == null || path.trim().isEmpty()) {
+                continue;
+            }
+            if (!new File(sourceDir, path).exists()) {
+                missing.add(path);
+            }
+        }
+        return missing;
     }
 
     private static boolean isJavaSourcePath(String path) {
@@ -2150,28 +2196,48 @@ public class AgentService {
         return root.toURI().relativize(file.toURI()).getPath();
     }
 
-    private static String omittedFilesNote(File root, List<File> candidates, Set<String> fullTextPaths) {
-        List<String> omitted = new java.util.ArrayList<>();
+    private static String snapshotCoverageNote(File root, List<File> candidates, Set<String> enqueuedFullTextPaths, SourceSnapshotComposer.Composition composition) {
+        Set<String> fullyIncluded = new HashSet<>(composition.fullyIncludedPaths);
+        String partial = composition.partiallyIncludedPath;
+        List<String> digestOnly = new java.util.ArrayList<>();
+        List<String> notShown = new java.util.ArrayList<>();
         for (File file : candidates) {
             String path = relativePath(root, file);
-            if (!fullTextPaths.contains(path)) {
-                omitted.add(path);
+            if (fullyIncluded.contains(path)) {
+                continue;
+            }
+            if (path.equals(partial)) {
+                continue;
+            }
+            if (isJavaSourcePath(path)) {
+                digestOnly.add(path);
+            } else if (enqueuedFullTextPaths.contains(path)) {
+                notShown.add(path);
             }
         }
-        if (omitted.isEmpty()) {
-            return "";
-        }
-        int shown = Math.min(omitted.size(), 40);
         StringBuilder note = new StringBuilder();
-        note.append("The project is larger than the full-text context budget, so ").append(omitted.size())
-                .append(" source file(s) below were not shown as full text. Java files may still be represented in the API digest. Do not assume omitted file bodies; only reference or modify files shown above, and keep every change consistent with the APIs you can actually see. Files not shown in full text:\n");
-        for (int i = 0; i < shown; i++) {
-            note.append("- ").append(omitted.get(i)).append('\n');
+        note.append("This inventory is COMPLETE. Every existing project file appears above in exactly one category (full text, truncated, API digest, or not-shown), and every existing XML resource name appears in the resource index. A file path that appears in NONE of these lists does not exist in the project yet - if your task requires it, CREATE it; that is expected work, not invention.\n");
+        if (partial != null) {
+            note.append("\nTruncated mid-file:\n");
+            note.append("- ").append(partial).append(" (treat the unseen remainder as unknown)\n");
         }
-        if (omitted.size() > shown) {
-            note.append("- ...and ").append(omitted.size() - shown).append(" more\n");
-        }
+        appendPathList(note, "Shown only in the Java API digest:", digestOnly);
+        appendPathList(note, "Not shown at all (budget):", notShown);
         return note.toString();
+    }
+
+    private static void appendPathList(StringBuilder note, String title, List<String> paths) {
+        if (paths.isEmpty()) {
+            return;
+        }
+        note.append('\n').append(title).append('\n');
+        int shown = Math.min(paths.size(), 40);
+        for (int i = 0; i < shown; i++) {
+            note.append("- ").append(paths.get(i)).append('\n');
+        }
+        if (paths.size() > shown) {
+            note.append("- +").append(paths.size() - shown).append(" more\n");
+        }
     }
 
     private static void appendFocusedSourceFiles(File root, String focusText, List<SourceSnapshotComposer.TextSection> sections, Set<String> seen) {

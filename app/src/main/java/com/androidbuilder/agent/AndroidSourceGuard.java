@@ -46,9 +46,21 @@ public class AndroidSourceGuard {
         collectValueResources(resDir, symbols);
         JavaApiSymbols javaSymbols = new JavaApiSymbols();
         collectJavaApiSymbols(sourceDir, javaSymbols);
+        String gradleText = readTextIfExists(new File(sourceDir, "app/build.gradle"));
         List<String> violations = new ArrayList<>();
-        validateFiles(sourceDir, symbols, javaSymbols, violations);
+        validateFiles(sourceDir, symbols, javaSymbols, gradleText, violations);
         throwIfViolations(violations);
+    }
+
+    private String readTextIfExists(File file) {
+        try {
+            if (file != null && file.exists()) {
+                return FileUtils.readText(file);
+            }
+        } catch (Exception ignored) {
+            // Missing build context is handled as missing dependency declarations.
+        }
+        return "";
     }
 
     private void collectXmlIds(File file, Set<String> ids) throws Exception {
@@ -195,7 +207,7 @@ public class AndroidSourceGuard {
         }
     }
 
-    private void validateFiles(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols, List<String> violations) throws Exception {
+    private void validateFiles(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols, String gradleText, List<String> violations) throws Exception {
         if (file == null || !file.exists()) {
             return;
         }
@@ -207,7 +219,7 @@ public class AndroidSourceGuard {
             if (name.endsWith(".java")) {
                 validateSourceFile(file, symbols, javaSymbols, violations);
             } else if (name.endsWith(".xml")) {
-                validateXmlFile(file, symbols, violations);
+                validateXmlFile(file, symbols, gradleText, violations);
             }
             return;
         }
@@ -216,36 +228,37 @@ public class AndroidSourceGuard {
             return;
         }
         for (File child : children) {
-            validateFiles(child, symbols, javaSymbols, violations);
+            validateFiles(child, symbols, javaSymbols, gradleText, violations);
         }
     }
 
     private void validateSourceFile(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols, List<String> violations) throws Exception {
         String content = FileUtils.readText(file);
-        if (content.contains("kotlinx.android.synthetic")) {
+        String scannable = JavaApiDigest.stripJavaCommentsAndStrings(content);
+        if (scannable.contains("kotlinx.android.synthetic")) {
             addViolation(violations, "Generated source policy blocked Kotlin synthetic view imports in " + file.getName() + ". Use findViewById on the inflated root/dialog view.");
         }
-        if (content.matches("(?s).*import\\s+.*\\.databinding\\..*Binding.*")) {
+        if (scannable.matches("(?s).*import\\s+.*\\.databinding\\..*Binding.*")) {
             addViolation(violations, "Generated source policy blocked DataBinding/ViewBinding imports in " + file.getName() + ". Use findViewById with plain XML ids.");
         }
-        if (FRAGMENT_CLASS.matcher(content).find() && NAKED_FIND_VIEW.matcher(content).find()) {
+        if (FRAGMENT_CLASS.matcher(scannable).find() && NAKED_FIND_VIEW.matcher(scannable).find()) {
             addViolation(violations, "Generated source policy blocked Fragment findViewById usage in " + file.getName() + ". Use rootView.findViewById or requireView().findViewById.");
         }
-        rejectMissingResource(R_ID, symbols.ids, "Generated source policy blocked missing XML id: R.id.%s in %s.", content, file, violations);
-        rejectMissingResource(R_LAYOUT, symbols.layouts, "Generated source policy blocked missing layout resource: R.layout.%s in %s.", content, file, violations);
-        rejectMissingResource(R_STRING, symbols.strings, "Generated source policy blocked missing string resource: R.string.%s in %s.", content, file, violations);
-        rejectMissingResource(R_COLOR, symbols.colors, "Generated source policy blocked missing color resource: R.color.%s in %s.", content, file, violations);
-        rejectMissingResource(R_DRAWABLE, symbols.drawables, "Generated source policy blocked missing drawable resource: R.drawable.%s in %s.", content, file, violations);
-        rejectMissingResource(R_MIPMAP, symbols.mipmaps, "Generated source policy blocked missing mipmap resource: R.mipmap.%s in %s.", content, file, violations);
-        rejectMissingResource(R_STYLE, symbols.styles, "Generated source policy blocked missing style resource: R.style.%s in %s.", content, file, violations);
+        rejectMissingResource(R_ID, symbols.ids, "Generated source policy blocked missing XML id: R.id.%s in %s.", scannable, file, violations);
+        rejectMissingResource(R_LAYOUT, symbols.layouts, "Generated source policy blocked missing layout resource: R.layout.%s in %s.", scannable, file, violations);
+        rejectMissingResource(R_STRING, symbols.strings, "Generated source policy blocked missing string resource: R.string.%s in %s.", scannable, file, violations);
+        rejectMissingResource(R_COLOR, symbols.colors, "Generated source policy blocked missing color resource: R.color.%s in %s.", scannable, file, violations);
+        rejectMissingResource(R_DRAWABLE, symbols.drawables, "Generated source policy blocked missing drawable resource: R.drawable.%s in %s.", scannable, file, violations);
+        rejectMissingResource(R_MIPMAP, symbols.mipmaps, "Generated source policy blocked missing mipmap resource: R.mipmap.%s in %s.", scannable, file, violations);
+        rejectMissingResource(R_STYLE, symbols.styles, "Generated source policy blocked missing style resource: R.style.%s in %s.", scannable, file, violations);
         boolean syntheticViewViolation = false;
         for (String id : symbols.ids) {
-            if (isLikelySyntheticViewId(id) && usesLikelySyntheticView(content, id) && !declaresVariable(content, id)) {
+            if (isLikelySyntheticViewId(id) && usesLikelySyntheticView(scannable, id) && !declaresVariable(scannable, id)) {
                 addViolation(violations, "Generated source policy blocked synthetic view access: " + id + " in " + file.getName() + ". Declare it with findViewById from the inflated root/dialog view.");
                 syntheticViewViolation = true;
             }
         }
-        if (!syntheticViewViolation && content.contains("->")) {
+        if (!syntheticViewViolation && scannable.contains("->")) {
             addViolation(violations, "Generated source policy blocked Java lambda syntax in " + file.getName() + ". Use anonymous listener classes instead of ->.");
         }
         String sanitized = stripJavaCommentsAndStrings(content);
@@ -867,7 +880,7 @@ public class AndroidSourceGuard {
         return builder.toString();
     }
 
-    private void validateXmlFile(File file, ResourceSymbols symbols, List<String> violations) throws Exception {
+    private void validateXmlFile(File file, ResourceSymbols symbols, String gradleText, List<String> violations) throws Exception {
         String content = FileUtils.readText(file);
         Matcher matcher = XML_RESOURCE_REFERENCE.matcher(content);
         while (matcher.find()) {
@@ -876,6 +889,10 @@ public class AndroidSourceGuard {
             if (!knownXmlResources(symbols, type).contains(name)) {
                 addViolation(violations, "Generated source policy blocked missing XML resource reference: @" + type + "/" + name + " in " + file.getName() + ".");
             }
+        }
+        for (String widget : WidgetDependencyPolicy.missingWidgetDependencies(content, gradleText)) {
+            String coordinate = WidgetDependencyPolicy.requiredCoordinate(widget);
+            addViolation(violations, "Generated source policy blocked layout widget " + widget + " in " + file.getName() + ": dependency " + coordinate + " is not declared in app/build.gradle. Add the dependency, or use a built-in widget. If this task cannot edit app/build.gradle, return blocked with prerequisiteWork naming the dependency.");
         }
     }
 

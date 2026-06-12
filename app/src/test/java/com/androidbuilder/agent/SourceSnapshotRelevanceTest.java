@@ -65,7 +65,63 @@ public class SourceSnapshotRelevanceTest {
         assertTrue(snapshot.contains("R.id: title"));
     }
 
+    @Test
+    public void sourceSnapshotCoverageNoteListsXmlDroppedByFullTextBudget() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/Other.java",
+                "package com.example;\nclass Other { public void apiOnly() {} }\n");
+        for (int i = 0; i < 16; i++) {
+            write(root, "app/src/main/res/layout/screen_" + i + ".xml",
+                    "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" android:id=\"@+id/screen_" + i + "\">"
+                            + repeat("x", 1800)
+                            + "</LinearLayout>");
+        }
+
+        String snapshot = AgentService.sourceSnapshotForTest(root, "");
+
+        assertTrue(snapshot.length() <= 24000);
+        assertTrue(snapshot.contains("This inventory is COMPLETE."));
+        assertTrue(snapshot.contains("Not shown at all (budget):"));
+        assertTrue(snapshot.contains("app/src/main/res/layout/screen_15.xml"));
+    }
+
+    @Test
+    public void sourceSnapshotPinsManifestAndAppGradleInFullTextLayer() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/build.gradle",
+                "plugins { id 'com.android.application' }\nandroid { namespace 'com.example.pinned' }\n");
+        write(root, "app/src/main/AndroidManifest.xml",
+                "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"><application android:theme=\"@style/AppTheme\" /></manifest>\n");
+        write(root, "app/src/main/res/values/styles.xml",
+                "<resources><style name=\"AppTheme\" /></resources>");
+        for (int i = 0; i < 18; i++) {
+            write(root, "app/src/main/res/layout/screen_" + i + ".xml",
+                    "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" android:id=\"@+id/pinned_screen_" + i + "\">"
+                            + repeat("x", 1800)
+                            + "</LinearLayout>");
+        }
+
+        String snapshot = AgentService.sourceSnapshotForTest(root, "");
+
+        assertTrue(snapshot.contains("--- app/src/main/AndroidManifest.xml ---"));
+        assertTrue(snapshot.contains("android:theme=\"@style/AppTheme\""));
+        assertTrue(snapshot.contains("--- app/build.gradle ---"));
+        assertTrue(snapshot.contains("namespace 'com.example.pinned'"));
+        assertTrue(snapshot.indexOf("--- app/src/main/AndroidManifest.xml ---")
+                < snapshot.indexOf("--- app/src/main/res/layout/screen_0.xml ---"));
+        assertTrue(snapshot.indexOf("--- app/build.gradle ---")
+                < snapshot.indexOf("--- app/src/main/res/layout/screen_0.xml ---"));
+    }
+
     private static void write(File root, String path, String content) throws Exception {
         FileUtils.writeText(new File(root, path), content);
+    }
+
+    private static String repeat(String value, int count) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            builder.append(value);
+        }
+        return builder.toString();
     }
 }

@@ -9,6 +9,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class ResourceIndexDigestTest {
@@ -39,7 +40,7 @@ public class ResourceIndexDigestTest {
 
         String digest = ResourceIndexDigest.digest(root);
 
-        assertEquals("R.id: action_settings, root, save_button, title | R.layout: activity_main | R.menu: menu_main | R.drawable: ic_add | R.color: chip_tint, primary | R.dimen: space_m | R.string: app_name, save | R.style: Theme_Demo", digest);
+        assertEquals("R.id: action_settings, root, save_button, title | R.layout: activity_main | R.string: app_name, save | R.id by layout: activity_main[root, save_button, title] | R.menu: menu_main | R.drawable: ic_add | R.color: chip_tint, primary | R.dimen: space_m | R.style: Theme_Demo", digest);
     }
 
     @Test
@@ -59,7 +60,32 @@ public class ResourceIndexDigestTest {
         assertTrue(digest.contains("R.id: critical_title"));
         assertTrue(digest.contains("R.layout: activity_main"));
         assertTrue(digest.contains("R.string: critical_label"));
+        assertFalse(digest.contains("R.id by layout"));
         assertTrue(digest.contains("...[truncated]"));
+    }
+
+    @Test
+    public void digestGroupsIdsByLayout() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/layout/activity_main.xml",
+                "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\"><TextView android:id=\"@+id/toolbar\" /><FrameLayout android:id=\"@+id/content\" /></LinearLayout>");
+        write(root, "app/src/main/res/layout/item_record.xml",
+                "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\"><TextView android:id=\"@+id/text_amount\" /><ImageView android:id=\"@+id/icon_category\" /></LinearLayout>");
+
+        String digest = ResourceIndexDigest.digest(root);
+
+        assertTrue(digest.contains("R.id by layout: activity_main[content, toolbar] | item_record[icon_category, text_amount]"));
+    }
+
+    @Test
+    public void emptyLayoutsDoNotEmitLayoutIdGrouping() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/layout/activity_empty.xml",
+                "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" />");
+
+        String digest = ResourceIndexDigest.digest(root);
+
+        assertFalse(digest.contains("R.id by layout"));
     }
 
     private static void write(File root, String path, String content) throws Exception {

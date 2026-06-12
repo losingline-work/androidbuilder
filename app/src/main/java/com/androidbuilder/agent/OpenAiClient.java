@@ -800,7 +800,8 @@ public class OpenAiClient {
                 "For aggregate/statistics DTOs used by adapters, do not access item.categoryName, item.percent, or similar display fields unless that exact field exists in the DTO; otherwise add fields/getters or update adapter binding to existing fields. For DAO/helper wiring, pass the exact constructor type, e.g. do not call new CategoryDAO(dbHelper) when CategoryDAO(Context) is declared; use context or change the constructor and all callers consistently. " +
                 "Declare every view variable with findViewById from the Activity, inflated root view, or dialog view before using it; never use bare view ids such as fabAdd.setOnClickListener or textIncomeAmount.setText. " +
                 "Every R.id.* referenced by Java must exist as android:id=\"@+id/...\" in XML, every R.* resource used in code must exist, and every XML reference such as @mipmap/ic_launcher, @style/AppTheme, @drawable/name, @string/name, @color/name, or @layout/name must have a matching resource file or values entry. " +
-                "When the current source tree includes a resource index, treat it as the only authoritative resource truth table. Every R.id/R.layout/R.string/R.color/R.drawable/R.mipmap/R.style reference in Java must appear verbatim in that resource index; if a needed resource is missing there, return blocked instead of inventing it. " + language;
+                "When the current source tree includes a resource index, treat it as the only authoritative resource truth table. Every R.id/R.layout/R.string/R.color/R.drawable/R.mipmap/R.style reference in Java must appear verbatim in that resource index; if a needed resource is missing there, return blocked instead of inventing it. Conversely, every name listed here EXISTS - you may reference it from Java without seeing the XML body. " +
+                "The snapshot inventory (full text + API digest + coverage note) is complete: a Java file absent from all of them does not exist yet, and creating it is part of your task when needed. " + language;
     }
 
     private String contextNegotiationSystemPrompt(boolean chinese) {
@@ -818,6 +819,7 @@ public class OpenAiClient {
                 + "Decide whether the supplied source snapshot is enough for the next small patch. "
                 + "Return only compact JSON with keys ready, neededFiles, focusTerms, riskNotes, and patchIntent. "
                 + "neededFiles must contain relative POSIX paths only. patchIntent must be concise and must tell the coding model to modify existing files, not recreate the project. "
+                + "Request a file in neededFiles only if it plausibly already exists. The snapshot inventory is complete - a Java file absent from full text and the API digest does not exist. Never set ready=false solely because files that do not exist yet are missing; state in patchIntent that you will create them. "
                 + language;
     }
 

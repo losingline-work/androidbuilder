@@ -52,6 +52,43 @@ public class ContextNegotiationPolicyTest {
         assertTrue(context.contains("missing method RecordDao.update"));
         assertTrue(context.contains("Modify existing DBHelper"));
         assertTrue(context.contains("Keep DBHelper constants synchronized"));
+        assertTrue(context.contains("If a file appears in NO part of the snapshot inventory, it does not exist yet"));
+        assertTrue(context.contains("never return blocked because a nonexistent file is \"missing\""));
+        assertTrue(context.contains("Previous failure summary (the snapshot has changed since this failure"));
+        assertTrue(context.contains("Negotiated patch intent (advisory; it cannot forbid creating files"));
+    }
+
+    @Test
+    public void retryContextIncludesMissingNeededFileVerdicts() {
+        ContextNegotiation result = new ContextNegotiation(
+                false,
+                Collections.singletonList("app/src/main/java/com/example/DBContract.java"),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                "Create missing data contracts.");
+
+        String context = ContextNegotiationPolicy.retryContext(
+                "previous failure",
+                result,
+                Collections.singletonList("app/src/main/java/com/example/DBContract.java"));
+
+        assertTrue(context.contains("File existence verdict for the files you requested"));
+        assertTrue(context.contains("app/src/main/java/com/example/DBContract.java: does NOT exist in the project"));
+        assertTrue(context.contains("create it yourself if the task requires it"));
+    }
+
+    @Test
+    public void retryContextOmitsMissingNeededFileVerdictsWhenEmpty() {
+        ContextNegotiation result = new ContextNegotiation(
+                false,
+                Collections.singletonList("app/src/main/java/com/example/DBHelper.java"),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                "Patch existing DBHelper.");
+
+        String context = ContextNegotiationPolicy.retryContext("previous failure", result, Collections.emptyList());
+
+        assertFalse(context.contains("File existence verdict"));
     }
 
     @Test

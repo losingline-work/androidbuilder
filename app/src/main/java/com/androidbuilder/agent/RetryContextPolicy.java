@@ -52,7 +52,7 @@ final class RetryContextPolicy {
         String[] lines = text.split("\n", -1);
         for (String line : lines) {
             String trimmed = line.trim();
-            if ("Negotiated patch intent:".equals(trimmed) || "Negotiated risk notes:".equals(trimmed)) {
+            if (trimmed.startsWith("Negotiated patch intent") || trimmed.startsWith("Negotiated risk notes")) {
                 skipping = true;
                 continue;
             }

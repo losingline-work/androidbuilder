@@ -65,6 +65,37 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void ignoresArrowAndResourceReferencesInsideCommentsAndStrings() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/MainActivity.java",
+                "package com.example;\n"
+                        + "class MainActivity {\n"
+                        + "  /** R.id.not_exist and value -> next are documentation only. */\n"
+                        + "  void bind() {\n"
+                        + "    // R.id.comment_only -> should not be scanned\n"
+                        + "    String text = \"R.id.string_only -> still just text\";\n"
+                        + "  }\n"
+                        + "}\n");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void blocksRealMissingIdAfterIgnoringCommentReferences() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/MainActivity.java",
+                "package com.example;\n"
+                        + "class MainActivity {\n"
+                        + "  // R.id.comment_only should not be the reported missing id\n"
+                        + "  void bind() { findViewById(R.id.not_exist); }\n"
+                        + "}\n");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertEquals("Generated source policy blocked missing XML id: R.id.not_exist in MainActivity.java.", error.getMessage());
+    }
+
+    @Test
     public void blocksKotlinSourceFiles() throws Exception {
         File root = temporaryFolder.newFolder("source");
         write(root, "app/src/main/res/layout/activity_main.xml",
@@ -216,6 +247,32 @@ public class AndroidSourceGuardTest {
                 "package com.example;\nclass MainActivity { void bind() { setContentView(R.layout.activity_main); int a = R.string.app_name; int b = R.color.primary; int c = R.style.AppTheme; int d = R.drawable.ic_add; int e = R.mipmap.ic_launcher; } }");
         write(root, "app/src/main/AndroidManifest.xml",
                 "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"><application android:theme=\"@style/AppTheme\" android:icon=\"@mipmap/ic_launcher\" /></manifest>");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void blocksLayoutWidgetWhenRequiredDependencyIsMissing() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/build.gradle",
+                "plugins { id 'com.android.application' }\ndependencies { implementation 'androidx.appcompat:appcompat:1.7.0' }\n");
+        write(root, "app/src/main/res/layout/activity_grid.xml",
+                "<androidx.gridlayout.widget.GridLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" />");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+
+        assertTrue(error.getMessage().contains("Generated source policy blocked layout widget androidx.gridlayout.widget.GridLayout in activity_grid.xml"));
+        assertTrue(error.getMessage().contains("dependency androidx.gridlayout:gridlayout is not declared in app/build.gradle"));
+        assertTrue(error.getMessage().contains("return blocked with prerequisiteWork naming the dependency"));
+    }
+
+    @Test
+    public void allowsLayoutWidgetWhenRequiredDependencyIsDeclared() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/build.gradle",
+                "plugins { id 'com.android.application' }\ndependencies { implementation 'androidx.gridlayout:gridlayout:1.0.0' }\n");
+        write(root, "app/src/main/res/layout/activity_grid.xml",
+                "<androidx.gridlayout.widget.GridLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" />");
 
         new AndroidSourceGuard().validate(root);
     }

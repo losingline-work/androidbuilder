@@ -1,5 +1,6 @@
 package com.androidbuilder.agent;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -7,7 +8,7 @@ import java.util.Set;
 final class SourceSnapshotComposer {
     static final String JAVA_API_DIGEST_HEADER = "--- Java API digest (non-focused source files) ---";
     static final String RESOURCE_INDEX_HEADER = "--- resource index (complete, authoritative) ---";
-    static final String RESOURCE_INDEX_RULE = "Every R.id/R.layout/R.string/R.color/R.drawable/R.mipmap/R.style in Java MUST appear verbatim in this index. If a needed id is missing here, it does not exist - return blocked instead of inventing it.";
+    static final String RESOURCE_INDEX_RULE = "Every R.id/R.layout/R.string/R.color/R.drawable/R.mipmap/R.style in Java MUST appear verbatim in this index. If a needed id is missing here, it does not exist - return blocked instead of inventing it. Conversely, every name listed here EXISTS - you may reference it from Java without seeing the XML body.";
     private static final String TRUNCATED = "\n...[truncated]";
 
     private SourceSnapshotComposer() {
@@ -24,32 +25,66 @@ final class SourceSnapshotComposer {
             String contextNote,
             int fullTextLimit,
             int totalLimit) {
-        // The resource index may legitimately exceed its own layer budget (id/layout/string are
-        // never cut), so the trailing layers are sized first and the full-text layer absorbs the
-        // overflow. A final tail trim would otherwise eat the resource index.
-        StringBuilder tail = new StringBuilder();
-        appendNamedLayer(tail, JAVA_API_DIGEST_HEADER, javaApiDigest);
-        appendResourceIndex(tail, resourceIndex);
-        appendContextNote(tail, contextNote);
+        int compositionBudget = totalLimit;
+        if (totalLimit > 0 && contextNote != null && !contextNote.trim().isEmpty()) {
+            compositionBudget = Math.max(0, totalLimit - "\n--- context note ---\n".length() - contextNote.trim().length());
+        }
+        Composition composition = compose(fullTextSections, javaApiDigest, resourceIndex, fullTextLimit, compositionBudget);
+        return appendContextNote(composition.text, contextNote, totalLimit);
+    }
+
+    static Composition compose(
+            List<TextSection> fullTextSections,
+            String javaApiDigest,
+            String resourceIndex,
+            int fullTextLimit,
+            int budget) {
+        String tail = tailLayers(javaApiDigest, resourceIndex);
         int fullTextBudget = fullTextLimit;
-        if (totalLimit > 0) {
-            int remaining = totalLimit - tail.length();
+        if (budget > 0) {
+            int remaining = budget - tail.length();
             fullTextBudget = fullTextLimit < 0 ? Math.max(0, remaining)
                     : Math.max(0, Math.min(fullTextLimit, remaining));
         }
         StringBuilder snapshot = new StringBuilder();
-        appendFullTextSections(snapshot, fullTextSections, fullTextBudget);
+        List<String> fullyIncludedPaths = new ArrayList<>();
+        String partialPath = appendFullTextSections(snapshot, fullTextSections, fullTextBudget, fullyIncludedPaths);
         snapshot.append(tail);
         String value = snapshot.toString().trim();
         if (value.isEmpty()) {
-            return "(empty)";
+            value = "(empty)";
         }
-        return trimToLimit(value, totalLimit);
+        return new Composition(value, fullyIncludedPaths, partialPath);
     }
 
-    private static void appendFullTextSections(StringBuilder snapshot, List<TextSection> sections, int limit) {
+    static String appendContextNote(String composedText, String contextNote, int totalLimit) {
+        String base = composedText == null ? "" : composedText.trim();
+        if (contextNote == null || contextNote.trim().isEmpty()) {
+            return base.isEmpty() ? "(empty)" : base;
+        }
+        String header = "\n--- context note ---\n";
+        String note = contextNote.trim();
+        if (totalLimit > 0) {
+            int remaining = totalLimit - base.length() - header.length();
+            if (remaining <= 0) {
+                return base.isEmpty() ? "(empty)" : base;
+            }
+            note = trimToLimit(note, remaining);
+        }
+        String result = base + header + note;
+        return result.trim().isEmpty() ? "(empty)" : result.trim();
+    }
+
+    private static String tailLayers(String javaApiDigest, String resourceIndex) {
+        StringBuilder tail = new StringBuilder();
+        appendNamedLayer(tail, JAVA_API_DIGEST_HEADER, javaApiDigest);
+        appendResourceIndex(tail, resourceIndex);
+        return tail.toString();
+    }
+
+    private static String appendFullTextSections(StringBuilder snapshot, List<TextSection> sections, int limit, List<String> fullyIncludedPaths) {
         if (sections == null || sections.isEmpty() || limit == 0) {
-            return;
+            return null;
         }
         int max = limit < 0 ? Integer.MAX_VALUE : limit;
         Set<String> seen = new HashSet<>();
@@ -64,15 +99,19 @@ final class SourceSnapshotComposer {
                 break;
             }
             snapshot.append(header);
-            if (text.length() > remaining) {
-                snapshot.append(trimToLimit(text, remaining));
-                break;
+            String normalized = endsWithNewline(text) ? text : text + "\n";
+            if (normalized.length() > remaining) {
+                snapshot.append(trimToLimit(normalized, remaining));
+                return section.path;
             }
-            snapshot.append(text);
-            if (snapshot.length() == 0 || snapshot.charAt(snapshot.length() - 1) != '\n') {
-                snapshot.append('\n');
-            }
+            snapshot.append(normalized);
+            fullyIncludedPaths.add(section.path);
         }
+        return null;
+    }
+
+    private static boolean endsWithNewline(String text) {
+        return text.endsWith("\n") || text.endsWith("\r");
     }
 
     private static void appendNamedLayer(StringBuilder snapshot, String header, String text) {
@@ -92,14 +131,6 @@ final class SourceSnapshotComposer {
         snapshot.append(resourceIndex.trim()).append('\n');
     }
 
-    private static void appendContextNote(StringBuilder snapshot, String contextNote) {
-        if (contextNote == null || contextNote.trim().isEmpty()) {
-            return;
-        }
-        snapshot.append("\n--- context note ---\n");
-        snapshot.append(contextNote.trim()).append('\n');
-    }
-
     private static String trimToLimit(String text, int limit) {
         if (limit <= 0 || text.length() <= limit) {
             return text;
@@ -117,6 +148,18 @@ final class SourceSnapshotComposer {
         TextSection(String path, String text) {
             this.path = path;
             this.text = text;
+        }
+    }
+
+    static final class Composition {
+        final String text;
+        final List<String> fullyIncludedPaths;
+        final String partiallyIncludedPath;
+
+        Composition(String text, List<String> fullyIncludedPaths, String partiallyIncludedPath) {
+            this.text = text;
+            this.fullyIncludedPaths = fullyIncludedPaths;
+            this.partiallyIncludedPath = partiallyIncludedPath;
         }
     }
 }
