@@ -386,18 +386,22 @@ public class AndroidSourceGuard {
 
     private void validateCustomFieldAccess(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
         Map<String, String> variableTypes = collectVariableTypes(content);
-        String currentClass = firstClassName(content);
-        if (!currentClass.isEmpty()) {
-            variableTypes.put("this", currentClass);
-        }
+        List<ClassSpan> spans = classSpans(content);
         Matcher matcher = JAVA_FIELD_ACCESS.matcher(content);
         while (matcher.find()) {
-            if (isMethodCall(content, matcher.end())) {
+            if (isQualifiedNameSegment(content, matcher.start()) || isMethodCall(content, matcher.end())) {
                 continue;
             }
             String variableName = matcher.group(1);
             String fieldName = matcher.group(2);
-            String type = variableTypes.get(variableName);
+            if (isLikelyNestedTypeReference(fieldName)) {
+                continue;
+            }
+            // "this" must resolve to the smallest enclosing class: inner-class constructors
+            // assigning this.x were misattributed to the outer class and rejected.
+            String type = "this".equals(variableName)
+                    ? enclosingClass(spans, matcher.start())
+                    : variableTypes.get(variableName);
             if (type == null || !javaSymbols.hasClass(type) || !isLikelyModelType(type)) {
                 continue;
             }
@@ -410,12 +414,15 @@ public class AndroidSourceGuard {
     private void validateClassFieldAccess(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
         Matcher matcher = JAVA_FIELD_ACCESS.matcher(content);
         while (matcher.find()) {
-            if (isMethodCall(content, matcher.end())) {
+            if (isQualifiedNameSegment(content, matcher.start()) || isMethodCall(content, matcher.end())) {
                 continue;
             }
             String className = matcher.group(1);
             String fieldName = matcher.group(2);
             if ("class".equals(fieldName)) {
+                continue;
+            }
+            if (isLikelyNestedTypeReference(fieldName)) {
                 continue;
             }
             if (!javaSymbols.hasClass(className) || !isLikelyGeneratedApiClass(className)) {
@@ -425,6 +432,43 @@ public class AndroidSourceGuard {
                 addViolation(violations, "Generated source policy blocked missing class field: " + className + "." + fieldName + " in " + file.getName() + ". Add the constant/field to " + className + " or update the caller to use an existing API.");
             }
         }
+    }
+
+    /**
+     * A match whose previous character is '.' is the middle of a qualified name
+     * (package/import lines, fully qualified types): the "app.ui" inside
+     * "package com.generated.app.ui.common;" must not collide with a field named "app".
+     */
+    private boolean isQualifiedNameSegment(String content, int start) {
+        return start > 0 && content.charAt(start - 1) == '.';
+    }
+
+    /**
+     * PascalCase member access is a nested-type reference by Java convention
+     * (e.g. BillAdapter.Row, RecyclerView.ViewHolder); real fields are camelCase
+     * and constants are ALL_CAPS, both of which stay checked.
+     */
+    private boolean isLikelyNestedTypeReference(String fieldName) {
+        if (fieldName.isEmpty() || !Character.isUpperCase(fieldName.charAt(0))) {
+            return false;
+        }
+        for (int i = 0; i < fieldName.length(); i++) {
+            if (Character.isLowerCase(fieldName.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<ClassSpan> classSpans(String content) {
+        List<ClassSpan> spans = new ArrayList<>();
+        Matcher classMatcher = JAVA_CLASS.matcher(content);
+        while (classMatcher.find()) {
+            int bodyStart = content.indexOf('{', classMatcher.end());
+            int bodyEnd = bodyStart < 0 ? content.length() : matchingBrace(content, bodyStart);
+            spans.add(new ClassSpan(classMatcher.group(1), bodyStart, bodyEnd));
+        }
+        return spans;
     }
 
     private boolean isMethodCall(String content, int end) {

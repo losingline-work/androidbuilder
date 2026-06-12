@@ -287,6 +287,60 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void packageAndImportSegmentsAreNotFieldAccess() throws Exception {
+        // Real false positive from project-51: BaseActivity has a field "app" of type App;
+        // "package com.generated.app.ui.common;" and the imports were read as app.ui / app.App
+        // / app.AppCompatActivity field accesses on class App.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/generated/app/App.java",
+                "package com.generated.app;\npublic class App { private static App instance; public static App get() { return instance; } }");
+        write(root, "app/src/main/java/com/generated/app/ui/common/BaseActivity.java",
+                "package com.generated.app.ui.common;\n"
+                        + "import com.generated.app.App;\n"
+                        + "public class BaseActivity {\n"
+                        + "    public App app;\n"
+                        + "    void init() { app = App.get(); }\n"
+                        + "}");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void nestedTypeReferenceIsNotFieldAccess() throws Exception {
+        // Real false positive from project-51: BillAdapter.Row used as a type was read as a
+        // missing field "Row" on class BillAdapter. ALL_CAPS constants stay checked.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/BillAdapter.java",
+                "package com.example;\nclass BillAdapter { public static class Row { public long id; } }");
+        write(root, "app/src/main/java/com/example/BillListFragment.java",
+                "package com.example;\nclass BillListFragment { void bind() { BillAdapter.Row row = new BillAdapter.Row(); long id = row.id; } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void innerClassThisFieldsResolveToTheInnerClass() throws Exception {
+        // Real false positive from project-51: this.date inside an inner class constructor was
+        // attributed to the outer SectionHeaderDecoration class and rejected.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/SectionHeaderDecoration.java",
+                "package com.example;\n"
+                        + "public class SectionHeaderDecoration {\n"
+                        + "    public int headerHeightPx;\n"
+                        + "    public static class Header {\n"
+                        + "        public CharSequence date;\n"
+                        + "        public CharSequence income;\n"
+                        + "        Header(CharSequence dateText, CharSequence incomeText) {\n"
+                        + "            this.date = dateText;\n"
+                        + "            this.income = incomeText;\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
     public void blocksMissingCustomModelFieldAccess() throws Exception {
         File root = temporaryFolder.newFolder("source");
         write(root, "app/src/main/java/com/example/CategorySum.java",
