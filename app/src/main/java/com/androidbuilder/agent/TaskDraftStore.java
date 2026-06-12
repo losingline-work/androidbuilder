@@ -11,7 +11,10 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 
 final class TaskDraftStore {
-    static final int MAX_BYTES = 300 * 1024;
+    // Draft JSON measures ~6.7KB per file in practice; a legitimate manifest can plan up to
+    // TaskManifest.MAX_FILES (120) files (~800KB). The previous 300KB cap silently destroyed
+    // exactly the largest partial results.
+    static final int MAX_BYTES = 2 * 1024 * 1024;
 
     private final File directory;
 
@@ -27,12 +30,14 @@ final class TaskDraftStore {
         try {
             String json = toJson(draft).toString();
             if (json.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) {
-                delete(taskId);
+                // Keep whatever draft is already on disk: an oversized new draft must not
+                // destroy the previously saved (smaller) progress.
                 return;
             }
             FileUtils.writeText(file, json);
         } catch (Exception ignored) {
-            delete(taskId);
+            // Serialization failure: leave any existing draft untouched; a stale draft is
+            // strictly better than no draft for the next dispatch.
         }
     }
 

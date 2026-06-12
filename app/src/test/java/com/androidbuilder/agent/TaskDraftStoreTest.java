@@ -50,7 +50,7 @@ public class TaskDraftStoreTest {
     public void oversizedDraftIsNotPersisted() throws Exception {
         TaskDraftStore store = new TaskDraftStore(temporaryFolder.newFolder("project"));
         StringBuilder content = new StringBuilder();
-        for (int i = 0; i < 310 * 1024; i++) {
+        for (int i = 0; i < TaskDraftStore.MAX_BYTES + 10 * 1024; i++) {
             content.append('x');
         }
         TaskOperations draft = new TaskOperations("large", Arrays.asList(
@@ -60,5 +60,44 @@ public class TaskDraftStoreTest {
 
         assertNull(store.load(9));
         assertFalse(store.fileForTest(9).exists());
+    }
+
+    @Test
+    public void oversizedDraftDoesNotDestroyPreviousDraft() throws Exception {
+        TaskDraftStore store = new TaskDraftStore(temporaryFolder.newFolder("project"));
+        TaskOperations small = new TaskOperations("small", Arrays.asList(
+                new FileOperation("write", "app/src/main/java/Small.java", "class Small {}")));
+        store.save(11, small);
+        StringBuilder content = new StringBuilder();
+        for (int i = 0; i < TaskDraftStore.MAX_BYTES + 10 * 1024; i++) {
+            content.append('x');
+        }
+        TaskOperations oversized = new TaskOperations("large", Arrays.asList(
+                new FileOperation("write", "app/src/main/java/Large.java", content.toString())));
+
+        store.save(11, oversized);
+
+        TaskOperations loaded = store.load(11);
+        assertEquals(1, loaded.operations.size());
+        assertEquals("app/src/main/java/Small.java", loaded.operations.get(0).path);
+    }
+
+    @Test
+    public void largeDraftWithinNewCapPersists() throws Exception {
+        TaskDraftStore store = new TaskDraftStore(temporaryFolder.newFolder("project"));
+        // ~90 files x ~7KB each ~= 630KB: a realistic large-manifest draft that the previous
+        // 300KB cap silently destroyed.
+        StringBuilder content = new StringBuilder();
+        for (int i = 0; i < 7 * 1024; i++) {
+            content.append('y');
+        }
+        java.util.List<FileOperation> operations = new java.util.ArrayList<>();
+        for (int i = 0; i < 90; i++) {
+            operations.add(new FileOperation("write", "app/src/main/res/drawable/ic_" + i + ".xml", content.toString()));
+        }
+
+        store.save(12, new TaskOperations("large manifest draft", operations));
+
+        assertEquals(90, store.load(12).operations.size());
     }
 }
