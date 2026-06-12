@@ -12,8 +12,10 @@ project-51 日志记录了任务 667(drawable and layout XML)与 668(Java source
 - **种子**:667 的云端审查员(AI #508)指示模型"用内联字面量代替创建 strings.xml"→ strings.xml 从未诞生 → 668 的 Java 批引用 `R.string.bill_summary_title` 必然失败,之后所有失败都是这一颗种子的变体。
 - **放大器 1**:批次 1 失败两次且无已接受批次时,`previousDraft=null` → 下一 attempt 重新生成**全新清单**(模型掷骰子,5 份清单互不相同)。
 - **放大器 2**:跨 dispatch 草稿只作为 14000 字的"advisory 文本"注入提示词(`HermesAgentWorker.initialFailureContext`,L99 调 `TaskDraftStore.load`),`previousDraft` 从不复水 → 每个 dispatch 的修正/合并机制都从零开始。
-- **终结者**:`AndroidSourceGuard` 误报 "Generated source policy blocked missing model field: **App.ui** in BaseActivity.java"(还有 App.AppCompatActivity、App.Fragment、BillAdapter.Row 等)——把限定名/继承误解析为对 `App` 类的字段访问,烧光 668 的 2 dispatch × 5 attempts。
-- **陪葬**:最后一轮(22:09)云端审查员复读了一个**已经修好**的发现(确定性预检 #5 在 22:08 已返回 ok,审查员却再次要求加 R import,因为旧失败文本嵌在它收到的指令里),而且 `HermesReviewerPolicy.shouldRetry` 要求 `attempt < maxAttempts`——**最后一轮的审查结构上不可能产生任何效果**,32 秒纯浪费。
+- **dispatch 2 终结者**:`AndroidSourceGuard` 误报 "Generated source policy blocked missing model field: **App.ui** in BaseActivity.java"(还有 App.AppCompatActivity、App.Fragment、BillAdapter.Row 等)——把限定名/嵌套类型/内部类 this 误解析为字段访问,烧光该 dispatch 的尝试预算并污染后续重试上下文。(已在提交 9755b5b 修复,本计划阶段 1 记录其测试要求。)
+- **dispatch 3 终结者(任务最终死因)**:终轮云端审查。确定性预检 #5 在 22:08 已对最终操作返回 ok,22:09 的审查员 #5 却返回 rewrite——其中混合了真问题(App.java 引用不存在的 NotificationChannels 类、未索引的 R.string.*)与**陈旧的 R-import 复读**(它鹦鹉学舌了请求里嵌的旧失败文本,而非实际操作内容;该操作早已包含 `import com.generated.app.R;`)。而 `HermesReviewerPolicy.shouldRetry` 要求 `attempt < maxAttempts`——**终轮审查结构上不可能产生任何效果**,这 32 秒调用直接导致重试耗尽。
+- **R-import 的真实代价**(对抗验证修正):该确定性发现只触发了一次(22:04 预检 #4),消耗了一轮 274.7 秒的云端重写,模型随后自行修复。它不是终结原因,但 274 秒 vs 零成本的差距使自动修复(阶段 4.1)仍然成立。
+- **回声放大**(对抗验证修正):`R.string.bill_summary_title` 批校验失败实际只发生**一次**(约 21:34,批次 3/19 之后),日志中的 5 次出现是同一事件在后续请求载荷里的引用回声——但这一次失败引发了整条修复螺旋(中途修复侦察 + 4 轮单发重写),阶段 3.2 确定性升级的依据不变。
 
 ## 已被对抗验证修正的两个旧结论(执行者勿按旧框架理解)
 
@@ -106,7 +108,7 @@ project-51 日志记录了任务 667(drawable and layout XML)与 668(Java source
 
 **文件**:新 `BatchEscalationPolicy.java` + 测试;`AgentService.java` 批循环接线。
 
-**问题**:批校验报 "missing string resource R.string.X in Y.java" 时,系统**确定性地知道**:该资源不在现有树、不在 overlay、也不在本任务清单的任何文件计划里——模型重试这一批是纯粹的赌博(日志中同错 5 连)。
+**问题**:批校验报 "missing string resource R.string.X in Y.java" 时,系统**确定性地知道**:该资源不在现有树、不在 overlay、也不在本任务清单的任何文件计划里——模型重试这一批是纯粹的赌博(日志实证:一次 bill_summary_title 批校验失败触发了中途修复侦察 + 4 轮单发重写的整条螺旋,失败文本在 5 个后续请求里回声)。
 
 **改动**:`BatchEscalationPolicy.escalate(validationError, manifest, contract)`:当批校验错误属于"缺失资源"类(解析 `Batch validation: missing <label> R.<type>.<name>` 消息),且该资源名不可能由本清单产出(清单中没有任何 values/对应资源文件计划)→ 返回合成的 blocked `TaskOperations`:`blockedReason` = 校验错误原文,`prerequisiteWork` = "Create <res-kind> entry <name> (e.g. in app/src/main/res/values/strings.xml) before this task can proceed."。批循环在**第一次**命中此类错误时直接走 blocked 路径(不消耗第二次批尝试)→ 现有扩域机制接管。注意:本日志中任务 668 **没有 Hermes 契约**(契约缺失时 `allowsPath` 恒真)——判定依据用清单文件集而非契约,契约存在时再叠加契约判断。
 
