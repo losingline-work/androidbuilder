@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 
 import com.androidbuilder.backend.BuildBackendSettings;
 import com.androidbuilder.model.ChatMessage;
+import com.androidbuilder.model.TaskManifest;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -34,12 +35,24 @@ public class OpenAiClient {
         void onProgress(String callTag, int answerChars, int reasoningChars);
     }
 
+    /** Inspects accumulated streamed answer content and may abort runaway or unsafe output. */
+    public interface StreamInspector {
+        void onContent(String answerSoFar) throws StreamAbortException;
+    }
+
+    public static final class StreamAbortException extends Exception {
+        public StreamAbortException(String message) {
+            super(message);
+        }
+    }
+
     public static final String PREFS = "cloud_api";
     public static final String KEY_API_KEY = "api_key";
     public static final String KEY_ENDPOINT = "endpoint";
     public static final String KEY_MODEL = "model";
     public static final String KEY_PROVIDER = "provider";
     public static final String KEY_THINKING = "thinking_enabled";
+    public static final String KEY_BATCHED_GENERATION = "batched_generation";
     public static final String PROVIDER_OPENAI = "openai";
     public static final String PROVIDER_DEEPSEEK = "deepseek";
     public static final String PROVIDER_MINIMAX = "minimax";
@@ -119,6 +132,18 @@ public class OpenAiClient {
         return completeChat(tasksSystemPrompt(chinese), java.util.Collections.emptyList(), "Approved engineering plan:\n\n" + plan, 0.2, chinese, TASKS_READ_TIMEOUT_MS, true);
     }
 
+    public String createTaskManifest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, boolean chinese, String callTag) throws Exception {
+        return completeChat(
+                taskManifestSystemPrompt(chinese),
+                java.util.Collections.emptyList(),
+                taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, ""),
+                0.1,
+                chinese,
+                CODING_READ_TIMEOUT_MS,
+                true,
+                callTag);
+    }
+
     public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, boolean chinese) throws Exception {
         return createTaskOperations(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, "", chinese);
     }
@@ -132,6 +157,10 @@ public class OpenAiClient {
     }
 
     public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection, boolean chinese, String callTag) throws Exception {
+        return createTaskOperations(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, previousDraftSection, chinese, callTag, null);
+    }
+
+    public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection, boolean chinese, String callTag, StreamInspector streamInspector) throws Exception {
         return completeChat(
                 taskOperationsSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
@@ -140,7 +169,21 @@ public class OpenAiClient {
                 chinese,
                 CODING_READ_TIMEOUT_MS,
                 true,
-                callTag);
+                callTag,
+                streamInspector);
+    }
+
+    public String createTaskOperationsBatch(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, List<TaskManifest.Entry> batchFiles, String completedFilesContext, boolean chinese, String callTag, StreamInspector streamInspector) throws Exception {
+        return completeChat(
+                taskOperationsSystemPrompt(chinese),
+                java.util.Collections.emptyList(),
+                taskOperationsBatchUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, batchFiles, completedFilesContext),
+                0.2,
+                chinese,
+                CODING_READ_TIMEOUT_MS,
+                true,
+                callTag,
+                streamInspector);
     }
 
     public String negotiateTaskContext(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String previousFailure, boolean chinese) throws Exception {
@@ -204,6 +247,10 @@ public class OpenAiClient {
     }
 
     private String completeChat(String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean chinese, int readTimeoutMs, boolean structuredOutput, String callTag) throws Exception {
+        return completeChat(systemPrompt, messages, latestUserMessage, temperature, chinese, readTimeoutMs, structuredOutput, callTag, null);
+    }
+
+    private String completeChat(String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean chinese, int readTimeoutMs, boolean structuredOutput, String callTag, StreamInspector streamInspector) throws Exception {
         if (!isConfigured()) {
             throw new IllegalStateException(chinese ? "请先在设置里填写模型 API Key。" : "Configure a model API key in Settings first.");
         }
@@ -225,7 +272,7 @@ public class OpenAiClient {
 
         for (int attempt = 0; attempt <= SOCKET_ABORT_RETRIES; attempt++) {
             try {
-                return executeChatRequest(endpoint, apiKey, body, readTimeoutMs, provider, chinese, callTag);
+                return executeChatRequest(endpoint, apiKey, body, readTimeoutMs, provider, chinese, callTag, streamInspector);
             } catch (SocketTimeoutException error) {
                 throw new IllegalStateException(chinese ? "模型响应超时。已等待 " + (readTimeoutMs / 1000) + " 秒，请重试或把任务拆得更小。" : "Model response timed out after " + (readTimeoutMs / 1000) + " seconds. Retry or split the task smaller.", error);
             } catch (SocketException error) {
@@ -272,6 +319,10 @@ public class OpenAiClient {
     }
 
     private String executeChatRequest(String endpoint, String apiKey, JSONObject body, int readTimeoutMs, String provider, boolean chinese, String callTag) throws Exception {
+        return executeChatRequest(endpoint, apiKey, body, readTimeoutMs, provider, chinese, callTag, null);
+    }
+
+    private String executeChatRequest(String endpoint, String apiKey, JSONObject body, int readTimeoutMs, String provider, boolean chinese, String callTag, StreamInspector streamInspector) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -295,7 +346,7 @@ public class OpenAiClient {
                 }
                 throw new IllegalStateException(httpErrorMessage(provider, code, error.toString(), chinese));
             }
-            return readChatContent(reader, progressListener, callTag);
+            return readChatContent(reader, progressListener, callTag, streamInspector);
         }
     }
 
@@ -309,6 +360,10 @@ public class OpenAiClient {
     }
 
     static String readChatContent(BufferedReader reader, ProgressListener listener, String callTag) throws Exception {
+        return readChatContent(reader, listener, callTag, null);
+    }
+
+    static String readChatContent(BufferedReader reader, ProgressListener listener, String callTag, StreamInspector streamInspector) throws Exception {
         StringBuilder answer = new StringBuilder();
         StringBuilder raw = new StringBuilder();
         boolean sawStreamEvent = false;
@@ -346,11 +401,16 @@ public class OpenAiClient {
                 } catch (Exception ignored) {
                     // Tolerate keep-alive comments and non-JSON data frames.
                 }
-                if (listener != null) {
+                if (listener != null || streamInspector != null) {
                     int total = answer.length() + reasoningChars;
                     if (total - lastEmitted >= PROGRESS_EMIT_CHARS) {
                         lastEmitted = total;
-                        listener.onProgress(cleanCallTag(callTag), answer.length(), reasoningChars);
+                        if (listener != null) {
+                            listener.onProgress(cleanCallTag(callTag), answer.length(), reasoningChars);
+                        }
+                        if (streamInspector != null) {
+                            streamInspector.onContent(answer.toString());
+                        }
                     }
                 }
             } else {
@@ -364,6 +424,9 @@ public class OpenAiClient {
         if (listener != null) {
             listener.onProgress(cleanCallTag(callTag), answer.length(), reasoningChars);
         }
+        if (streamInspector != null) {
+            streamInspector.onContent(answer.toString());
+        }
         return answer.toString();
     }
 
@@ -373,6 +436,10 @@ public class OpenAiClient {
 
     static String readChatContentForTest(String sse) throws Exception {
         return readChatContent(new BufferedReader(new java.io.StringReader(sse)), null);
+    }
+
+    static String readChatContentForTest(String sse, StreamInspector streamInspector) throws Exception {
+        return readChatContent(new BufferedReader(new java.io.StringReader(sse)), null, "", streamInspector);
     }
 
     private static String httpErrorMessage(String provider, int code, String response, boolean chinese) {
@@ -523,6 +590,10 @@ public class OpenAiClient {
             return true;
         }
         return !"false".equals(scopedValue(prefs, provider, KEY_THINKING, "true"));
+    }
+
+    public static boolean batchedGenerationEnabled(SharedPreferences prefs) {
+        return prefs == null || !"false".equals(prefs.getString(KEY_BATCHED_GENERATION, "true"));
     }
 
     static boolean effectiveThinkingForTest(boolean userEnabled, boolean structuredOutput) {
@@ -733,7 +804,9 @@ public class OpenAiClient {
                 "Use dependsOn and produces to expose a safe execution graph. Use allowedPaths and forbiddenPaths precisely so Hermes can decide safe parallel batches. Tasks may run in safe parallel only when dependencies are satisfied and allowed paths do not overlap; do not claim broad tasks are parallel-safe. " +
                 "Use 3 to 6 tasks. Keep each task as a cohesive coarse phase rather than many tiny file-write tasks. " +
                 "The first task should create or update the Gradle project skeleton when needed, and later tasks should add data, screens, interactions, and polish. " +
+                "When a new project skeleton is needed, the first task must create Gradle files, app/src/main/AndroidManifest.xml, and base values/themes resources before Java wiring. " +
                 "Keep Gradle/build configuration in its own task when it changes. Group related values, themes, drawables, menu XML, and layout XML when they support the same screen or navigation shell. " +
+                "A later layout/drawable task may also add missing app/src/main/res/values entries it references, such as strings, colors, dimens, or styles. " +
                 "Do not split values, themes, drawables, menu, layout, and Java wiring into separate tasks unless the plan is unusually large or a previous validation failure requires a narrower retry. " +
                 "Do not combine Gradle configuration with Java source wiring in the same task. " +
                 "If the approved plan requires a version upgrade, include an implementation task that updates app/build.gradle versionCode and versionName according to that plan. " +
@@ -742,6 +815,14 @@ public class OpenAiClient {
 
     private String taskOperationsSystemPrompt(boolean chinese) {
         return taskOperationsSystemPromptText(chinese, dependencyPolicyPrompt());
+    }
+
+    private String taskManifestSystemPrompt(boolean chinese) {
+        return taskManifestSystemPromptText(chinese);
+    }
+
+    static String taskManifestSystemPromptForTest(boolean chinese) {
+        return taskManifestSystemPromptText(chinese);
     }
 
     static String taskOperationsSystemPromptForTest(boolean chinese) {
@@ -754,6 +835,10 @@ public class OpenAiClient {
 
     static String taskOperationsUserPromptForTest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection) {
         return taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, previousDraftSection);
+    }
+
+    static String taskOperationsBatchUserPromptForTest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, List<TaskManifest.Entry> batchFiles, String completedFilesContext) {
+        return taskOperationsBatchUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, batchFiles, completedFilesContext);
     }
 
     private static String taskOperationsUserPrompt(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection) {
@@ -782,6 +867,40 @@ public class OpenAiClient {
                 + contractSection;
     }
 
+    private static String taskOperationsBatchUserPrompt(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, List<TaskManifest.Entry> batchFiles, String completedFilesContext) {
+        String base = taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, "");
+        String completed = completedFilesContext == null || completedFilesContext.trim().isEmpty()
+                ? "(none)"
+                : completedFilesContext.trim();
+        return base
+                + "\n\nGenerate complete file operations for exactly these files:\n"
+                + batchFileList(batchFiles)
+                + "\n\nFiles already accepted earlier in this task (authoritative; keep new code consistent with them):\n"
+                + completed
+                + "\n\nDo not include any unrequested file. Return only summary and operations JSON for this batch.";
+    }
+
+    private static String batchFileList(List<TaskManifest.Entry> files) {
+        if (files == null || files.isEmpty()) {
+            return "(empty)";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (TaskManifest.Entry file : files) {
+            if (file == null) {
+                continue;
+            }
+            builder.append("- ")
+                    .append(file.action == null ? "" : file.action)
+                    .append(' ')
+                    .append(file.path == null ? "" : file.path);
+            if (file.intent != null && !file.intent.trim().isEmpty()) {
+                builder.append(": ").append(file.intent.trim());
+            }
+            builder.append('\n');
+        }
+        return builder.toString().trim();
+    }
+
     private static String taskOperationsSystemPromptText(boolean chinese, String dependencyPolicyPrompt) {
         String language = chinese ? "Use Simplified Chinese for user-facing app text when appropriate." : "Use English for user-facing app text.";
         return "You execute one small Android coding task by returning file operations only. " +
@@ -802,6 +921,17 @@ public class OpenAiClient {
                 "Every R.id.* referenced by Java must exist as android:id=\"@+id/...\" in XML, every R.* resource used in code must exist, and every XML reference such as @mipmap/ic_launcher, @style/AppTheme, @drawable/name, @string/name, @color/name, or @layout/name must have a matching resource file or values entry. " +
                 "When the current source tree includes a resource index, treat it as the only authoritative resource truth table. Every R.id/R.layout/R.string/R.color/R.drawable/R.mipmap/R.style reference in Java must appear verbatim in that resource index; if a needed resource is missing there, return blocked instead of inventing it. Conversely, every name listed here EXISTS - you may reference it from Java without seeing the XML body. " +
                 "The snapshot inventory (full text + API digest + coverage note) is complete: a Java file absent from all of them does not exist yet, and creating it is part of your task when needed. " + language;
+    }
+
+    private static String taskManifestSystemPromptText(boolean chinese) {
+        String language = chinese ? "Use Simplified Chinese for summary and intent." : "Use English for summary and intent.";
+        return "You plan one Android coding task by returning a file manifest only. "
+                + "Return only compact JSON with summary, blocked, blockedReason, prerequisiteWork, and files. "
+                + "files is an array of objects with path, action, and intent. action must be write or delete. "
+                + "List every file this task will write or delete, using canonical relative POSIX paths such as app/src/main/res/values/strings.xml, app/src/main/java/..., app/src/main/AndroidManifest.xml, and app/build.gradle. "
+                + "Do not include file content in the manifest. intent must be one concise sentence describing the purpose and key API choice for that file. "
+                + "If a missing prerequisite makes the task unsafe within its current boundary, return blocked=true with blockedReason and prerequisiteWork instead of guessing. "
+                + "Keep the manifest focused and within " + com.androidbuilder.model.TaskManifest.MAX_FILES + " files. " + language;
     }
 
     private String contextNegotiationSystemPrompt(boolean chinese) {

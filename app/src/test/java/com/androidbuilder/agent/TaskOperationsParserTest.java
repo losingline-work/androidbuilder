@@ -1,8 +1,11 @@
 package com.androidbuilder.agent;
 
 import com.androidbuilder.model.TaskOperations;
+import com.androidbuilder.model.FileOperation;
 
 import org.junit.Test;
+
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -32,6 +35,19 @@ public class TaskOperationsParserTest {
         assertEquals(1, operations.operations.size());
         assertEquals("drop", operations.operations.get(0).action);
         assertEquals("app/src/main/res/values/extra.xml", operations.operations.get(0).path);
+        assertEquals("", operations.operations.get(0).content);
+    }
+
+    @Test
+    public void fromJson_acceptsEditOperationsForDraftCorrection() throws Exception {
+        TaskOperations operations = TaskOperationsParser.fromJson("{\"summary\":\"Edit file\",\"operations\":["
+                + "{\"action\":\"edit\",\"path\":\"app/src/main/java/A.java\",\"find\":\"old\",\"replace\":\"new\"}"
+                + "]}");
+
+        assertEquals(1, operations.operations.size());
+        assertEquals("edit", operations.operations.get(0).action);
+        assertEquals("old", operations.operations.get(0).find);
+        assertEquals("new", operations.operations.get(0).replace);
         assertEquals("", operations.operations.get(0).content);
     }
 
@@ -91,5 +107,25 @@ public class TaskOperationsParserTest {
                 "]}"));
 
         assertEquals("Unsupported file operation action: append", error.getMessage());
+    }
+
+    @Test
+    public void completedOperationsReturnsOnlyFullyClosedOperationObjects() {
+        String partial = "{\"summary\":\"x\",\"operations\":["
+                + "{\"action\":\"write\",\"path\":\"app/src/main/java/A.java\",\"content\":\"class A { String json() { return \\\"{done}\\\"; } }\"},"
+                + "{\"action\":\"write\",\"path\":\"app/src/main/java/B.java\",\"content\":\"class B {\"";
+
+        List<FileOperation> operations = TaskOperationsParser.completedOperations(partial);
+
+        assertEquals(1, operations.size());
+        assertEquals("app/src/main/java/A.java", operations.get(0).path);
+        assertTrue(operations.get(0).content.contains("{done}"));
+    }
+
+    @Test
+    public void completedOperationsNeverThrowsForMalformedPartialResponses() {
+        List<FileOperation> operations = TaskOperationsParser.completedOperations("not json {\"operations\":[{\"action\":\"write\"");
+
+        assertEquals(0, operations.size());
     }
 }

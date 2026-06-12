@@ -43,6 +43,22 @@ final class HermesTaskContractGuard {
         return ok();
     }
 
+    static boolean allowsPath(HermesTaskContract contract, String rawPath) {
+        if (contract == null || contract.allowedPaths == null || contract.allowedPaths.isEmpty()) {
+            return true;
+        }
+        String path = normalizePath(rawPath);
+        if (path.isEmpty()) {
+            return false;
+        }
+        for (String allowedPath : normalizedSet(contract.allowedPaths)) {
+            if (pathMatches(allowedPath, path)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isSeverelyUnderDelivered(int expectedCount, int missingCount) {
         if (expectedCount <= 0 || missingCount < 3) {
             return false;
@@ -84,10 +100,21 @@ final class HermesTaskContractGuard {
 
     private static String normalizePath(String path) {
         try {
-            return PathValidator.normalizeGeneratedPath(path);
+            return CanonicalPathPolicy.canonicalize(path);
         } catch (Exception ignored) {
             return path == null ? "" : path.trim();
         }
+    }
+
+    private static boolean pathMatches(String pattern, String path) {
+        if ("*".equals(pattern) || pattern.equals(path)) {
+            return true;
+        }
+        if (!pattern.endsWith("/*")) {
+            return false;
+        }
+        String prefix = pattern.substring(0, pattern.length() - 2);
+        return path.equals(prefix) || path.startsWith(prefix + "/") || path.startsWith(prefix + ".");
     }
 
     private static HermesReview ok() {

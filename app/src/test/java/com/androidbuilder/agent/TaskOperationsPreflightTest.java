@@ -34,7 +34,7 @@ public class TaskOperationsPreflightTest {
     @Test
     public void rewritesOnlyAbsurdlyLargeOperationLists() {
         List<FileOperation> operations = new ArrayList<>();
-        for (int i = 0; i < 61; i++) {
+        for (int i = 0; i < TaskOperationsPreflight.MAX_OPERATIONS_PER_TASK + 1; i++) {
             operations.add(new FileOperation("write", "app/src/main/res/drawable/item_" + i + ".xml",
                     "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" />"));
         }
@@ -43,7 +43,7 @@ public class TaskOperationsPreflightTest {
 
         assertEquals(HermesReview.Decision.REWRITE, review.decision);
         assertTrue(review.summary.contains("Unusually many file operations"));
-        assertTrue(review.rewriteInstruction.contains("cap 60"));
+        assertTrue(review.rewriteInstruction.contains("cap " + TaskOperationsPreflight.MAX_OPERATIONS_PER_TASK));
         assertTrue(review.rewriteInstruction.contains("Trim"));
         assertTrue(review.rewriteInstruction.contains("defer"));
         assertTrue(!review.rewriteInstruction.contains("Split this into smaller tasks"));

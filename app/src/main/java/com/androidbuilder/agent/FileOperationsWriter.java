@@ -62,7 +62,11 @@ public class FileOperationsWriter {
     private void applyToDirectory(File sourceDir, TaskOperations taskOperations) throws IOException {
         String rootPath = sourceDir.getCanonicalPath();
         for (FileOperation operation : taskOperations.operations) {
-            File target = new File(sourceDir, operation.path);
+            String canonicalPath = CanonicalPathPolicy.canonicalize(operation.path);
+            if (!canonicalPath.equals(operation.path)) {
+                throw new IOException("Operation path is not in canonical Android layout: " + operation.path + "; use app/src/main/...");
+            }
+            File target = new File(sourceDir, canonicalPath);
             String targetPath = target.getCanonicalPath();
             if (!targetPath.equals(rootPath) && !targetPath.startsWith(rootPath + File.separator)) {
                 throw new IOException("Generated file escapes project source directory: " + operation.path);

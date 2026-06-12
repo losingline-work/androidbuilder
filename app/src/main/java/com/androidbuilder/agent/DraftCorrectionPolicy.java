@@ -34,6 +34,9 @@ final class DraftCorrectionPolicy {
                 || signature.startsWith("unsupported file operation action")
                 || signature.startsWith("unsafe generated file path")
                 || signature.startsWith("unterminated object")
+                || signature.startsWith("streaming response exceeded")
+                || signature.startsWith("edit target")
+                || signature.startsWith("edit operation")
                 || signature.startsWith("unusually many file operations");
     }
 }

@@ -14,16 +14,16 @@ import java.util.regex.Pattern;
 
 public class AndroidSourceGuard {
     private static final int MAX_REPORTED_VIOLATIONS = 10;
-    private static final Pattern XML_ID = Pattern.compile("android:id\\s*=\\s*[\"']@\\+?id/([A-Za-z_][A-Za-z0-9_]*)[\"']");
+    static final Pattern XML_ID = Pattern.compile("android:id\\s*=\\s*[\"']@\\+?id/([A-Za-z_][A-Za-z0-9_]*)[\"']");
     private static final String APP_R_PREFIX = "(?<![A-Za-z0-9_.])R\\.";
-    private static final Pattern R_ID = Pattern.compile(APP_R_PREFIX + "id\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
-    private static final Pattern R_LAYOUT = Pattern.compile(APP_R_PREFIX + "layout\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
-    private static final Pattern R_STRING = Pattern.compile(APP_R_PREFIX + "string\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
-    private static final Pattern R_COLOR = Pattern.compile(APP_R_PREFIX + "color\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
-    private static final Pattern R_DRAWABLE = Pattern.compile(APP_R_PREFIX + "drawable\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
-    private static final Pattern R_MIPMAP = Pattern.compile(APP_R_PREFIX + "mipmap\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
-    private static final Pattern R_STYLE = Pattern.compile(APP_R_PREFIX + "style\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
-    private static final Pattern NAMED_VALUE_RESOURCE = Pattern.compile("<\\s*(string|color|style)\\b[^>]*\\bname\\s*=\\s*[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
+    static final Pattern R_ID = Pattern.compile(APP_R_PREFIX + "id\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    static final Pattern R_LAYOUT = Pattern.compile(APP_R_PREFIX + "layout\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    static final Pattern R_STRING = Pattern.compile(APP_R_PREFIX + "string\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    static final Pattern R_COLOR = Pattern.compile(APP_R_PREFIX + "color\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    static final Pattern R_DRAWABLE = Pattern.compile(APP_R_PREFIX + "drawable\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    static final Pattern R_MIPMAP = Pattern.compile(APP_R_PREFIX + "mipmap\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    static final Pattern R_STYLE = Pattern.compile(APP_R_PREFIX + "style\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
+    static final Pattern NAMED_VALUE_RESOURCE = Pattern.compile("<\\s*(string|color|style)\\b[^>]*\\bname\\s*=\\s*[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
     private static final Pattern XML_RESOURCE_REFERENCE = Pattern.compile("@(layout|string|color|drawable|mipmap|style)/([A-Za-z_][A-Za-z0-9_.]*)");
     private static final Pattern FRAGMENT_CLASS = Pattern.compile("\\bclass\\s+\\w+[^\\n{]*(?:Fragment\\(|:\\s*Fragment\\b)");
     private static final Pattern NAKED_FIND_VIEW = Pattern.compile("(?<![A-Za-z0-9_.])findViewById\\s*(?:<|\\()");

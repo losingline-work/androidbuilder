@@ -36,6 +36,26 @@ public class DraftCorrectionPolicyTest {
     }
 
     @Test
+    public void streamingRunawayUsesFullGeneration() {
+        assertFalse(DraftCorrectionPolicy.shouldCorrect(
+                true,
+                "Streaming response exceeded 200000 chars; generation aborted as runaway.",
+                1));
+    }
+
+    @Test
+    public void editStructuralErrorsUseFullGeneration() {
+        assertFalse(DraftCorrectionPolicy.shouldCorrect(
+                true,
+                "edit target not found in app/src/main/java/A.java (the file may have changed); resend the full file with action write",
+                1));
+        assertFalse(DraftCorrectionPolicy.shouldCorrect(
+                true,
+                "edit operation has empty find text in app/src/main/java/A.java; resend the full file with action write",
+                1));
+    }
+
+    @Test
     public void normalGuardErrorWithDraftUsesCorrection() {
         assertTrue(DraftCorrectionPolicy.shouldCorrect(
                 true,

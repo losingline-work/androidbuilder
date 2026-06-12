@@ -9,6 +9,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 
@@ -112,6 +113,24 @@ public class FileOperationsWriterTest {
 
         assertEquals("Unsupported file operation action: drop", error.getMessage());
         assertFalse(new File(root, "app/src/main/res/values/extra.xml").exists());
+    }
+
+    @Test
+    public void rejectedOperationsCannotApplyUncanonicalAndroidPaths() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+
+        TaskOperations operations = new TaskOperations("bad", Collections.singletonList(
+                new FileOperation("write", "res/values/colors.xml", "<resources />")
+        ));
+
+        IOException error = assertThrows(IOException.class, () ->
+                new FileOperationsWriter().apply(root, operations));
+
+        assertEquals("Operation path is not in canonical Android layout: res/values/colors.xml; use app/src/main/...",
+                error.getMessage());
+        assertFalse(new File(root, "res/values/colors.xml").exists());
+        assertFalse(new File(root, "app/src/main/res/values/colors.xml").exists());
     }
 
     @Test

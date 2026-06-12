@@ -242,6 +242,8 @@ public class OpenAiClientTest {
         assertTrue(prompt.contains("Use 3 to 6 tasks"));
         assertTrue(prompt.contains("Group related values, themes, drawables, menu XML, and layout XML"));
         assertTrue(prompt.contains("Do not split values, themes, drawables, menu, layout, and Java wiring into separate tasks unless"));
+        assertTrue(prompt.contains("When a new project skeleton is needed, the first task must create Gradle files, app/src/main/AndroidManifest.xml, and base values/themes resources before Java wiring"));
+        assertTrue(prompt.contains("A later layout/drawable task may also add missing app/src/main/res/values entries it references"));
         assertTrue(prompt.contains("Escape double quotes inside JSON string values"));
         assertTrue(prompt.contains("allowedPaths"));
         assertTrue(prompt.contains("expectedFiles"));
@@ -257,6 +259,47 @@ public class OpenAiClientTest {
         assertTrue(prompt.contains("produces"));
         assertTrue(prompt.contains("allowedPaths"));
         assertTrue(prompt.contains("safe parallel"));
+    }
+
+    @Test
+    public void taskManifestPromptRequestsFileListWithoutContent() {
+        String prompt = OpenAiClient.taskManifestSystemPromptForTest(false);
+
+        assertTrue(prompt.contains("summary"));
+        assertTrue(prompt.contains("files"));
+        assertTrue(prompt.contains("path"));
+        assertTrue(prompt.contains("intent"));
+        assertTrue(prompt.contains("Do not include file content"));
+        assertTrue(prompt.contains("blockedReason"));
+    }
+
+    @Test
+    public void taskOperationsBatchPromptScopesGenerationToRequestedFiles() {
+        String prompt = OpenAiClient.taskOperationsBatchUserPromptForTest(
+                "# Plan",
+                "Resources",
+                "Write resources.",
+                "(empty)",
+                "",
+                "",
+                java.util.Collections.singletonList(new com.androidbuilder.model.TaskManifest.Entry(
+                        "app/src/main/res/values/strings.xml",
+                        "write",
+                        "base strings")),
+                "--- app/src/main/res/values/colors.xml ---\n<resources />");
+
+        assertTrue(prompt.contains("Generate complete file operations for exactly these files"));
+        assertTrue(prompt.contains("app/src/main/res/values/strings.xml"));
+        assertTrue(prompt.contains("base strings"));
+        assertTrue(prompt.contains("Files already accepted earlier in this task"));
+        assertTrue(prompt.contains("Do not include any unrequested file"));
+    }
+
+    @Test
+    public void batchedGenerationIsEnabledByDefaultAndCanBeDisabled() {
+        assertTrue(OpenAiClient.batchedGenerationEnabled(new FakeSharedPreferences()));
+        assertFalse(OpenAiClient.batchedGenerationEnabled(new FakeSharedPreferences()
+                .put(OpenAiClient.KEY_BATCHED_GENERATION, "false")));
     }
 
     @Test
@@ -472,6 +515,23 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void streamInspectorCanAbortStreamingResponseWithOriginalMessage() throws Exception {
+        String content = repeat("x", 130);
+        String sse = "data: {\"choices\":[{\"delta\":{\"content\":\"" + content + "\"}}]}\n"
+                + "data: [DONE]\n";
+
+        OpenAiClient.StreamAbortException error = org.junit.Assert.assertThrows(
+                OpenAiClient.StreamAbortException.class,
+                () -> OpenAiClient.readChatContentForTest(sse, answerSoFar -> {
+                    if (answerSoFar.length() >= 130) {
+                        throw new OpenAiClient.StreamAbortException("stop now");
+                    }
+                }));
+
+        assertEquals("stop now", error.getMessage());
+    }
+
+    @Test
     public void fallsBackToPlainJsonWhenServerIgnoresStream() throws Exception {
         String body = "{\"choices\":[{\"message\":{\"content\":\"plain\"}}]}";
 
@@ -505,6 +565,14 @@ public class OpenAiClientTest {
         assertTrue(message.contains("Token Plan"));
         assertTrue(message.contains("sk-cp"));
         assertTrue(message.contains("https://api.minimaxi.com/v1"));
+    }
+
+    private static String repeat(String value, int count) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            builder.append(value);
+        }
+        return builder.toString();
     }
 
     private static final class FakeSharedPreferences implements SharedPreferences {

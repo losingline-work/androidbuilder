@@ -24,6 +24,8 @@ final class TaskOperationsMergePolicy {
             FileOperation normalized = normalized(operation);
             if ("drop".equals(normalized.action)) {
                 byPath.remove(normalized.path);
+            } else if ("edit".equals(normalized.action)) {
+                throw new IllegalArgumentException("edit target not found in " + normalized.path + " (the file may have changed); resend the full file with action write");
             } else {
                 byPath.put(normalized.path, normalized);
             }
@@ -32,6 +34,11 @@ final class TaskOperationsMergePolicy {
             FileOperation normalized = normalized(operation);
             if ("drop".equals(normalized.action)) {
                 byPath.remove(normalized.path);
+            } else if ("edit".equals(normalized.action)) {
+                FileOperation previous = byPath.get(normalized.path);
+                String existingContent = previous == null || !"write".equals(previous.action) ? "" : previous.content;
+                String updated = EditOperationPolicy.apply(existingContent, normalized.find, normalized.replace, normalized.path);
+                byPath.put(normalized.path, new FileOperation("write", normalized.path, updated));
             } else {
                 byPath.put(normalized.path, normalized);
             }
@@ -68,6 +75,9 @@ final class TaskOperationsMergePolicy {
         for (FileOperation operation : operations.operations) {
             FileOperation item = normalized(operation);
             if (!"drop".equals(item.action)) {
+                if ("edit".equals(item.action)) {
+                    throw new IllegalArgumentException("edit target not found in " + item.path + " (the file may have changed); resend the full file with action write");
+                }
                 normalized.add(item);
             }
         }
@@ -75,15 +85,6 @@ final class TaskOperationsMergePolicy {
     }
 
     private static FileOperation normalized(FileOperation operation) {
-        if (operation == null) {
-            throw new IllegalArgumentException("Task operation is missing.");
-        }
-        String action = operation.action == null ? "" : operation.action.trim();
-        if (!"write".equals(action) && !"delete".equals(action) && !"drop".equals(action)) {
-            throw new IllegalArgumentException("Unsupported file operation action: " + action);
-        }
-        String path = PathValidator.normalizeGeneratedPath(operation.path);
-        String content = "delete".equals(action) || "drop".equals(action) ? "" : (operation.content == null ? "" : operation.content);
-        return new FileOperation(action, path, content);
+        return CanonicalPathPolicy.canonicalOperation(operation);
     }
 }

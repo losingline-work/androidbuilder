@@ -19,12 +19,16 @@ final class TaskDraftContextPolicy {
     }
 
     static String correctionSection(TaskOperations previousDraft, String error, int maxChars) {
-        return section(
+        String base = section(
                 "Previous draft available for correction.",
                 "Previous draft selected operations (full content for files/types named by the latest error):",
                 previousDraft,
                 error,
                 maxChars);
+        if (base.isEmpty()) {
+            return "";
+        }
+        return trimToLimit(base + "\n\n" + editInstruction(), normalizedLimit(maxChars));
     }
 
     static String advisorySection(TaskOperations previousDraft, String error, int maxChars) {
@@ -89,9 +93,13 @@ final class TaskDraftContextPolicy {
         for (FileOperation operation : draft.operations) {
             String action = operation.action == null ? "" : operation.action.trim();
             String path = PathValidator.normalizeGeneratedPath(operation.path);
-            operations.add(new FileOperation(action, path, operation.content == null ? "" : operation.content));
+            operations.add(new FileOperation(action, path, operation.content == null ? "" : operation.content, operation.find, operation.replace));
         }
         return operations;
+    }
+
+    private static String editInstruction() {
+        return "Prefer minimal edits: for small fixes return {\"action\":\"edit\",\"path\":\"...\",\"find\":\"<exact existing snippet>\",\"replace\":\"<new snippet>\"} instead of rewriting the whole file. The find text must match exactly once; include enough surrounding lines to be unique. Rewrite the full file with action write only when changes are extensive.";
     }
 
     private static List<FileOperation> selectedOperations(List<FileOperation> operations, String error) {

@@ -79,7 +79,7 @@ public final class HermesMergeCoordinator {
             }
             String normalized;
             try {
-                normalized = PathValidator.normalizeGeneratedPath(path);
+                normalized = CanonicalPathPolicy.canonicalize(path);
             } catch (IllegalArgumentException error) {
                 return "Task " + taskLabel(result) + " declared unsafe touched path: " + path;
             }

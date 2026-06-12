@@ -36,6 +36,43 @@ public final class TaskOperationsParser {
         }
     }
 
+    public static List<FileOperation> completedOperations(String partialRaw) {
+        List<FileOperation> operations = new ArrayList<>();
+        String text = partialRaw == null ? "" : partialRaw;
+        int jsonStart = text.indexOf('{');
+        if (jsonStart >= 0) {
+            text = text.substring(jsonStart);
+        }
+        int key = text.indexOf("\"operations\"");
+        if (key < 0) {
+            return operations;
+        }
+        int start = text.indexOf('[', key);
+        if (start < 0) {
+            return operations;
+        }
+        String arrayText = text.substring(start + 1);
+        int index = 0;
+        while (index < arrayText.length()) {
+            int objectStart = arrayText.indexOf('{', index);
+            if (objectStart < 0) {
+                break;
+            }
+            int objectEnd = objectEnd(arrayText, objectStart);
+            if (objectEnd < 0) {
+                break;
+            }
+            try {
+                operations.add(operationFromJson(new JSONObject(arrayText.substring(objectStart, objectEnd + 1))));
+            } catch (Exception ignored) {
+                // Partial stream inspection is best-effort: malformed complete objects are handled by
+                // the final parser once the full response arrives.
+            }
+            index = objectEnd + 1;
+        }
+        return operations;
+    }
+
     private static TaskOperations fromJsonObject(JSONObject json) throws Exception {
         JSONArray operationsJson = json.optJSONArray("operations");
         if (operationsJson == null || operationsJson.length() == 0) {
@@ -95,10 +132,13 @@ public final class TaskOperationsParser {
 
     private static FileOperation operationFromJson(JSONObject operationJson) {
         String action = operationJson.optString("action", "").trim();
-        if (!"write".equals(action) && !"delete".equals(action) && !"drop".equals(action)) {
+        if (!"write".equals(action) && !"delete".equals(action) && !"drop".equals(action) && !"edit".equals(action)) {
             throw new IllegalArgumentException("Unsupported file operation action: " + action);
         }
         String path = PathValidator.normalizeGeneratedPath(operationJson.optString("path", ""));
+        if ("edit".equals(action)) {
+            return new FileOperation(action, path, "", operationJson.optString("find", ""), operationJson.optString("replace", ""));
+        }
         return new FileOperation(action, path, "drop".equals(action) ? "" : operationJson.optString("content", ""));
     }
 

@@ -20,8 +20,10 @@ import javax.xml.parsers.ParserConfigurationException;
  * written source. Checking them against a truncated snapshot only produces false rewrites.
  */
 final class TaskOperationsPreflight {
-    // Only flags an absurd batch; foundational tasks legitimately touch many files.
-    private static final int MAX_OPERATIONS_PER_TASK = 60;
+    // Only flags an absurd batch; foundational tasks legitimately touch many files. Must admit
+    // everything a valid task manifest can plan (TaskManifest.MAX_FILES), or batched generation
+    // succeeds per batch and then dies here after paying for every batch.
+    static final int MAX_OPERATIONS_PER_TASK = 120;
     private static final Pattern NAMESPACE_PATTERN = Pattern.compile("namespace\\s*(?:=\\s*)?[\"']([^\"']+)[\"']");
     private static final Pattern PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([a-zA-Z_][\\w]*(?:\\.[a-zA-Z_][\\w]*)*)\\s*;");
     private static final Pattern DOCTYPE_PATTERN = Pattern.compile("<!DOCTYPE\\b", Pattern.CASE_INSENSITIVE);
@@ -39,7 +41,7 @@ final class TaskOperationsPreflight {
         if (operations.operations.size() > MAX_OPERATIONS_PER_TASK) {
             return rewrite(
                     "Unusually many file operations for one task: " + operations.operations.size() + ".",
-                    "Too many file operations: " + operations.operations.size() + " (cap 60). Trim the batch instead of splitting tasks: keep only files this task strictly needs, merge values resources into fewer files, drop duplicate or decorative drawables, and defer non-essential assets to a later task.");
+                    "Too many file operations: " + operations.operations.size() + " (cap " + MAX_OPERATIONS_PER_TASK + "). Trim the batch instead of splitting tasks: keep only files this task strictly needs, merge values resources into fewer files, drop duplicate or decorative drawables, and defer non-essential assets to a later task.");
         }
         for (FileOperation operation : operations.operations) {
             if (isXmlWrite(operation)) {
@@ -95,7 +97,7 @@ final class TaskOperationsPreflight {
                 && operation.path != null && operation.path.endsWith(".java");
     }
 
-    private static String xmlError(String content) {
+    static String xmlError(String content) {
         try {
             String xml = content == null ? "" : content;
             if (DOCTYPE_PATTERN.matcher(xml).find()) {

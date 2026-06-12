@@ -63,6 +63,7 @@ public class SettingsActivity extends BaseActivity {
     private View minimaxModelLayout;
     private androidx.appcompat.widget.SwitchCompat thinkingModeSwitch;
     private View thinkingModeHint;
+    private androidx.appcompat.widget.SwitchCompat batchedGenerationSwitch;
     private View modelInputLayout;
     private View endpointPresetLayout;
     private EditText runtimeBootstrapUrlInput;
@@ -90,6 +91,7 @@ public class SettingsActivity extends BaseActivity {
         minimaxModelLayout = findViewById(R.id.minimaxModelLayout);
         thinkingModeSwitch = findViewById(R.id.thinkingModeSwitch);
         thinkingModeHint = findViewById(R.id.thinkingModeHint);
+        batchedGenerationSwitch = findViewById(R.id.batchedGenerationSwitch);
         modelInputLayout = findViewById(R.id.modelInputLayout);
         endpointPresetLayout = findViewById(R.id.endpointPresetLayout);
         providerSpinner = findViewById(R.id.providerSpinner);
@@ -110,6 +112,7 @@ public class SettingsActivity extends BaseActivity {
         select(backendSpinner, backendLabels, backendIndex(BuildBackendSettings.selected(this)));
         select(dependencyModeSpinner, dependencyModeLabels, dependencyModeIndex(BuildBackendSettings.dependencyMode(this)));
         select(parallelAgentSpinner, parallelAgentLabels, parallelAgentIndex(BuildBackendSettings.parallelAgentLimit(this)));
+        batchedGenerationSwitch.setChecked(OpenAiClient.batchedGenerationEnabled(cloudPrefs));
         runtimeBootstrapUrlInput.setText(BuildBackendSettings.prefs(this).getString(BuildBackendSettings.KEY_BOOTSTRAP_URL, ""));
         findViewById(R.id.saveSettingsButton).setOnClickListener(v -> save());
         findViewById(R.id.importOfflineMavenButton).setOnClickListener(v -> importOfflineMaven());
@@ -343,7 +346,8 @@ public class SettingsActivity extends BaseActivity {
                 .putString(OpenAiClient.KEY_PROVIDER, provider)
                 .putString(OpenAiClient.KEY_API_KEY, selectedDraft.apiKey)
                 .putString(OpenAiClient.KEY_ENDPOINT, selectedDraft.endpoint)
-                .putString(OpenAiClient.KEY_MODEL, selectedDraft.model);
+                .putString(OpenAiClient.KEY_MODEL, selectedDraft.model)
+                .putString(OpenAiClient.KEY_BATCHED_GENERATION, batchedGenerationSwitch.isChecked() ? "true" : "false");
         for (Map.Entry<String, ProviderDraft> entry : providerDrafts.entrySet()) {
             writeProviderDraft(editor, entry.getKey(), entry.getValue());
         }

@@ -87,6 +87,10 @@ final class TaskDraftStore {
             item.put("action", operation.action == null ? "" : operation.action.trim());
             item.put("path", PathValidator.normalizeGeneratedPath(operation.path));
             item.put("content", operation.content == null ? "" : operation.content);
+            if ("edit".equals(operation.action)) {
+                item.put("find", operation.find == null ? "" : operation.find);
+                item.put("replace", operation.replace == null ? "" : operation.replace);
+            }
             operations.put(item);
         }
         json.put("operations", operations);

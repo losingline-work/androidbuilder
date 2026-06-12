@@ -16,6 +16,7 @@ import com.androidbuilder.model.HermesTaskContract;
 import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
+import com.androidbuilder.model.TaskManifest;
 import com.androidbuilder.model.TaskOperations;
 import com.androidbuilder.util.FileUtils;
 import com.androidbuilder.util.AppSettings;
@@ -76,6 +77,20 @@ public class AgentService {
     private static class ParallelRepairMergeException extends Exception {
         ParallelRepairMergeException(String message) {
             super(message);
+        }
+    }
+
+    private static class BatchGenerationException extends IllegalArgumentException {
+        final TaskOperations partialDraft;
+
+        BatchGenerationException(String message, TaskOperations partialDraft) {
+            super(message);
+            this.partialDraft = partialDraft;
+        }
+
+        BatchGenerationException(String message, TaskOperations partialDraft, Throwable cause) {
+            super(message, cause);
+            this.partialDraft = partialDraft;
         }
     }
 
@@ -1199,17 +1214,71 @@ public class AgentService {
             final String attemptRetryContext = retryContext;
             final String attemptPreviousDraftSection = previousDraftSection;
             final boolean attemptCorrectionMode = correctionMode;
+            final HermesTaskContract taskContract = HermesTaskContractCodec.extractFromInstruction(instruction);
+            final TaskStreamInspectionPolicy[] singleStreamInspection = new TaskStreamInspectionPolicy[1];
             scopeExpandedRetryPending = false;
             updateStreamPhase(callTag, "coding", attempt);
-            String operationsJson = recordCloudAiCall(
-                    projectId,
-                    linkedBuildJobId,
-                    (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
-                    requestLog,
-                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, attemptPreviousDraftSection, chinese, callTag),
-                    taskId);
+            TaskOperations generatedOperations;
             try {
-                TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
+                if (shouldUseBatchedGeneration(previousDraft, attemptCorrectionMode)) {
+                    generatedOperations = createTaskOperationsInBatches(
+                            projectId,
+                            linkedBuildJobId,
+                            taskId,
+                            sourceDir,
+                            planContent,
+                            taskTitle,
+                            attemptInstruction,
+                            attemptSnapshot,
+                            recentRequirements,
+                            attemptRetryContext,
+                            requestLog,
+                            callTag,
+                            attempt,
+                            taskContract,
+                            logs,
+                            chinese);
+                } else {
+                    TaskStreamInspectionPolicy streamInspection = new TaskStreamInspectionPolicy(taskContract);
+                    singleStreamInspection[0] = streamInspection;
+                    String operationsJson = recordCloudAiCall(
+                            projectId,
+                            linkedBuildJobId,
+                            (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
+                            requestLog,
+                            () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, attemptPreviousDraftSection, chinese, callTag, streamInspection),
+                            taskId);
+                    generatedOperations = CanonicalPathPolicy.canonicalizeAll(TaskOperationsParser.fromJson(operationsJson));
+                }
+            } catch (BatchGenerationException batchError) {
+                previousFailure = batchError.getMessage() == null ? batchError.toString() : batchError.getMessage();
+                previousDraft = batchError.partialDraft == null || batchError.partialDraft.operations.isEmpty() ? null : batchError.partialDraft;
+                saveTaskDraftSafely(projectId, taskId, previousDraft);
+                draftFailureStreak.remember(previousFailure);
+                retryContext = mergeRetryContext(retryContext, previousFailure);
+                snapshot = sourceSnapshot(sourceDir, previousFailure);
+                if (attempt == POLICY_REWRITE_ATTEMPTS) {
+                    throw batchError;
+                }
+                continue;
+            } catch (OpenAiClient.StreamAbortException streamAbort) {
+                previousFailure = streamAbort.getMessage() == null ? streamAbort.toString() : streamAbort.getMessage();
+                TaskStreamInspectionPolicy streamInspection = singleStreamInspection[0];
+                TaskOperations salvaged = streamInspection == null
+                        ? new TaskOperations("partial draft salvaged from aborted stream", Collections.<FileOperation>emptyList())
+                        : streamInspection.partialDraft("partial draft salvaged from aborted stream");
+                previousDraft = salvaged.operations.isEmpty() ? null : salvaged;
+                saveTaskDraftSafely(projectId, taskId, previousDraft);
+                draftFailureStreak.remember(previousFailure);
+                retryContext = mergeRetryContext(retryContext, previousFailure);
+                snapshot = sourceSnapshot(sourceDir, previousFailure);
+                if (attempt == POLICY_REWRITE_ATTEMPTS) {
+                    throw new IllegalArgumentException(previousFailure, streamAbort);
+                }
+                continue;
+            }
+            try {
+                TaskOperations operations = generatedOperations;
                 if (operations.blocked) {
                     String blockedSummary = BlockedTaskPolicy.blockedSummary(operations);
                     if (BlockedTaskPolicy.shouldExpandScope(operations, scopeExpanded)) {
@@ -1235,7 +1304,6 @@ public class AgentService {
                 }
                 previousDraft = operations;
                 String reviewedOperationsJson = taskOperationsJson(operations);
-                HermesTaskContract taskContract = HermesTaskContractCodec.extractFromInstruction(instruction);
                 HermesReview contractReview = HermesTaskContractGuard.review(taskContract, operations);
                 String contractTitle = (chinese ? "Hermes · 任务契约预检" : "Hermes · task contract preflight") + " #" + attempt;
                 if (taskContract.hasSignals()) {
@@ -1362,6 +1430,158 @@ public class AgentService {
         }
         saveTaskDraftSafely(projectId, taskId, previousDraft);
         throw lastPolicyError == null ? new IllegalStateException("Task operation generation failed.") : lastPolicyError;
+    }
+
+    private boolean shouldUseBatchedGeneration(TaskOperations previousDraft, boolean correctionMode) {
+        return previousDraft == null
+                && !correctionMode
+                && OpenAiClient.batchedGenerationEnabled(context.getSharedPreferences(OpenAiClient.PREFS, Context.MODE_PRIVATE));
+    }
+
+    private TaskOperations createTaskOperationsInBatches(
+            long projectId,
+            Long linkedBuildJobId,
+            long taskId,
+            File sourceDir,
+            String planContent,
+            String taskTitle,
+            String taskInstruction,
+            String snapshot,
+            String recentRequirements,
+            String retryContext,
+            String requestLog,
+            String callTag,
+            int attempt,
+            HermesTaskContract taskContract,
+            File logs,
+            boolean chinese) throws Exception {
+        updateStreamPhase(callTag, "manifest", attempt);
+        String manifestJson = recordCloudAiCall(
+                projectId,
+                linkedBuildJobId,
+                (chinese ? "云端 AI · 任务文件清单" : "Cloud AI · task file manifest") + " #" + attempt,
+                requestLog,
+                () -> openAiClient.createTaskManifest(planContent, taskTitle, taskInstruction, snapshot, recentRequirements, retryContext, chinese, callTag),
+                taskId);
+        TaskManifest manifest = TaskManifestParser.fromJson(manifestJson);
+        if (manifest.blocked) {
+            return manifest.toBlockedOperations();
+        }
+        List<List<TaskManifest.Entry>> batches = ManifestBatchPolicy.batches(manifest.files);
+        FileUtils.appendText(logs, (chinese ? "任务清单：" : "Task manifest: ")
+                + manifest.files.size() + (chinese ? " 个文件，分 " : " file(s), ")
+                + batches.size() + (chinese ? " 批\n" : " batch(es)\n"));
+        List<FileOperation> accepted = new ArrayList<>();
+        ResourceSymbolsOverlay overlay = ResourceSymbolsOverlay.empty();
+        for (int i = 0; i < batches.size(); i++) {
+            List<TaskManifest.Entry> batch = batches.get(i);
+            String batchRetryContext = "";
+            boolean acceptedBatch = false;
+            for (int batchAttempt = 1; batchAttempt <= 2; batchAttempt++) {
+                TaskStreamInspectionPolicy streamInspection = new TaskStreamInspectionPolicy(taskContract);
+                String completedContext = CompletedBatchContextPolicy.context(accepted, CompletedBatchContextPolicy.DEFAULT_MAX_CHARS);
+                String effectiveRetryContext = mergeRetryContext(retryContext, batchRetryContext);
+                String batchRequest = requestLog
+                        + "\n\nBatch " + (i + 1) + "/" + batches.size() + " files:\n" + batchFileListForLog(batch)
+                        + "\n\nCompleted files context:\n" + truncateForInlineLog(completedContext, 20000);
+                try {
+                    updateStreamPhase(callTag, "coding", attempt);
+                    String batchJson = recordCloudAiCall(
+                            projectId,
+                            linkedBuildJobId,
+                            (chinese ? "云端 AI · 文件操作生成批次 " : "Cloud AI · task operations batch ")
+                                    + (i + 1) + "/" + batches.size() + " #" + attempt + "." + batchAttempt,
+                            batchRequest,
+                            () -> openAiClient.createTaskOperationsBatch(
+                                    planContent,
+                                    taskTitle,
+                                    taskInstruction,
+                                    snapshot,
+                                    recentRequirements,
+                                    effectiveRetryContext,
+                                    batch,
+                                    completedContext,
+                                    chinese,
+                                    callTag,
+                                    streamInspection),
+                            taskId);
+                    TaskOperations batchOperations = CanonicalPathPolicy.canonicalizeAll(TaskOperationsParser.fromJson(batchJson));
+                    if (batchOperations.blocked) {
+                        return batchOperations;
+                    }
+                    String validationError = BatchValidationPolicy.review(
+                            batchOperations.operations,
+                            manifestPaths(batch),
+                            taskContract,
+                            overlay,
+                            sourceDir);
+                    if (validationError == null) {
+                        accepted.addAll(batchOperations.operations);
+                        overlay.absorb(batchOperations.operations);
+                        acceptedBatch = true;
+                        break;
+                    }
+                    batchRetryContext = validationError;
+                    FileUtils.appendText(logs, (chinese ? "批次校验失败：" : "Batch validation failed: ") + validationError + "\n");
+                } catch (OpenAiClient.StreamAbortException streamAbort) {
+                    TaskOperations partial = partialBatchDraft(accepted, streamInspection.partialDraft("partial draft salvaged from aborted stream"));
+                    String message = streamAbort.getMessage() == null ? streamAbort.toString() : streamAbort.getMessage();
+                    throw new BatchGenerationException(message, partial, streamAbort);
+                } catch (IllegalArgumentException parseOrPolicyError) {
+                    batchRetryContext = parseOrPolicyError.getMessage() == null ? parseOrPolicyError.toString() : parseOrPolicyError.getMessage();
+                    FileUtils.appendText(logs, (chinese ? "批次生成失败：" : "Batch generation failed: ") + batchRetryContext + "\n");
+                }
+            }
+            if (!acceptedBatch) {
+                throw new BatchGenerationException(
+                        batchRetryContext.isEmpty() ? "Batch generation failed." : batchRetryContext,
+                        partialBatchDraft(accepted, null));
+            }
+        }
+        return new TaskOperations(manifest.summary, accepted);
+    }
+
+    private TaskOperations partialBatchDraft(List<FileOperation> accepted, TaskOperations currentPartial) {
+        List<FileOperation> operations = new ArrayList<>();
+        if (accepted != null) {
+            operations.addAll(accepted);
+        }
+        if (currentPartial != null && currentPartial.operations != null) {
+            operations.addAll(currentPartial.operations);
+        }
+        return CanonicalPathPolicy.canonicalizeAll(new TaskOperations("partial draft salvaged from aborted batch", operations));
+    }
+
+    private static List<String> manifestPaths(List<TaskManifest.Entry> batch) {
+        List<String> paths = new ArrayList<>();
+        if (batch != null) {
+            for (TaskManifest.Entry entry : batch) {
+                if (entry != null) {
+                    paths.add(entry.path);
+                }
+            }
+        }
+        return paths;
+    }
+
+    private static String batchFileListForLog(List<TaskManifest.Entry> batch) {
+        StringBuilder builder = new StringBuilder();
+        if (batch != null) {
+            for (TaskManifest.Entry entry : batch) {
+                if (entry == null) {
+                    continue;
+                }
+                builder.append("- ")
+                        .append(entry.action)
+                        .append(' ')
+                        .append(entry.path);
+                if (entry.intent != null && !entry.intent.isEmpty()) {
+                    builder.append(": ").append(entry.intent);
+                }
+                builder.append('\n');
+            }
+        }
+        return builder.toString().trim();
     }
 
     private boolean shouldRetryFromLocalGuard(LocalGuardResult result) {
@@ -1691,6 +1911,10 @@ public class AgentService {
                 item.put("action", operation.action == null ? "" : operation.action);
                 item.put("path", operation.path == null ? "" : operation.path);
                 item.put("content", operation.content == null ? "" : operation.content);
+                if ("edit".equals(operation.action)) {
+                    item.put("find", operation.find == null ? "" : operation.find);
+                    item.put("replace", operation.replace == null ? "" : operation.replace);
+                }
                 array.put(item);
             }
         }

@@ -32,6 +32,20 @@ public class TaskDraftContextPolicyTest {
     }
 
     @Test
+    public void correctionSectionSuggestsMinimalEditOperations() {
+        TaskOperations draft = operations(
+                write("app/src/main/java/com/example/BaseActivity.java", "class BaseActivity {}\n"));
+
+        String section = TaskDraftContextPolicy.correctionSection(
+                draft,
+                "Generated source policy blocked BaseActivity.java.",
+                2000);
+
+        assertTrue(section.contains("\"action\":\"edit\""));
+        assertTrue(section.contains("find text must match exactly once"));
+    }
+
+    @Test
     public void correctionSectionIncludesReferencedJavaType() {
         TaskOperations draft = operations(
                 write("app/src/main/java/com/example/CategoryDao.java", "class CategoryDao { CategoryDao(Context context) {} }\n"),

@@ -73,6 +73,34 @@ public class TaskOperationsMergePolicyTest {
         assertEquals("app/src/main/java/Foo.java", stripped.operations.get(0).path);
     }
 
+    @Test
+    public void mergeMaterializesEditOperationsIntoFullWrites() {
+        TaskOperations previous = operations("previous",
+                write("app/src/main/java/Foo.java", "class Foo { int count = 1; }\n"));
+        TaskOperations correction = operations("correction",
+                edit("app/src/main/java/Foo.java", "int count = 1;", "int count = 2;"));
+
+        TaskOperations merged = TaskOperationsMergePolicy.merge(previous, correction);
+
+        assertEquals(1, merged.operations.size());
+        assertEquals("write", merged.operations.get(0).action);
+        assertEquals("class Foo { int count = 2; }\n", merged.operations.get(0).content);
+    }
+
+    @Test
+    public void mergeRejectsEditWhenPreviousWriteIsMissing() {
+        TaskOperations previous = operations("previous",
+                write("app/src/main/java/Bar.java", "class Bar {}\n"));
+        TaskOperations correction = operations("correction",
+                edit("app/src/main/java/Foo.java", "old", "new"));
+
+        IllegalArgumentException error = org.junit.Assert.assertThrows(IllegalArgumentException.class,
+                () -> TaskOperationsMergePolicy.merge(previous, correction));
+
+        assertEquals("edit target not found in app/src/main/java/Foo.java (the file may have changed); resend the full file with action write",
+                error.getMessage());
+    }
+
     private static TaskOperations operations(String summary, FileOperation... operations) {
         return new TaskOperations(summary, Arrays.asList(operations));
     }
@@ -87,5 +115,9 @@ public class TaskOperationsMergePolicyTest {
 
     private static FileOperation drop(String path) {
         return new FileOperation("drop", path, "");
+    }
+
+    private static FileOperation edit(String path, String find, String replace) {
+        return new FileOperation("edit", path, "", find, replace);
     }
 }

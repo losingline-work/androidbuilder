@@ -57,6 +57,19 @@ public class HermesMergeCoordinatorTest {
     }
 
     @Test
+    public void mergePlanDetectsConflictsAfterCanonicalizingAndroidShortPaths() {
+        HermesAgentResult left = resultWithPath(1, "res/layout/activity_main.xml");
+        HermesAgentResult right = resultWithPath(2, "app/src/main/res/layout/activity_main.xml");
+
+        HermesMergeCoordinator.MergePlan plan = HermesMergeCoordinator.plan(Arrays.asList(left, right));
+
+        assertFalse(plan.canMergeAll);
+        assertEquals(1, plan.mergeableResults.size());
+        assertEquals(1, plan.failedResults.size());
+        assertTrue(plan.conflicts.get(0).contains("app/src/main/res/layout/activity_main.xml"));
+    }
+
+    @Test
     public void mergeWritesOperationsIntoCanonicalSource() throws Exception {
         File source = temporaryFolder.newFolder("source");
         HermesAgentResult result = resultWithOperation(
