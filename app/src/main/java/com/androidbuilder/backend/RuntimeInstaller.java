@@ -54,7 +54,7 @@ public class RuntimeInstaller {
                 connection.setInstanceFollowRedirects(true);
                 int code = connection.getResponseCode();
                 if (code < 200 || code >= 300) {
-                    throw new IllegalStateException("Download failed: HTTP " + code);
+                    throw new IllegalStateException(context.getString(com.androidbuilder.R.string.runtime_download_http_failed, code));
                 }
                 try (InputStream in = new BufferedInputStream(connection.getInputStream())) {
                     runtime.installBootstrap(in);
@@ -79,6 +79,6 @@ public class RuntimeInstaller {
                 lastError = error;
             }
         }
-        throw new IllegalStateException("Bundled bootstrap zip not found. Expected one of: runtime/bootstrap-aarch64.zip, runtime/bootstrap-arm64.zip", lastError);
+        throw new IllegalStateException(context.getString(com.androidbuilder.R.string.runtime_bundled_bootstrap_missing), lastError);
     }
 }

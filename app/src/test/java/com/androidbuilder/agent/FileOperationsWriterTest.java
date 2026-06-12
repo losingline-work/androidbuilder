@@ -99,6 +99,22 @@ public class FileOperationsWriterTest {
     }
 
     @Test
+    public void rejectedOperationsCannotApplyUnknownActions() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+
+        TaskOperations operations = new TaskOperations("bad", Collections.singletonList(
+                new FileOperation("drop", "app/src/main/res/values/extra.xml", "")
+        ));
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                new FileOperationsWriter().apply(root, operations));
+
+        assertEquals("Unsupported file operation action: drop", error.getMessage());
+        assertFalse(new File(root, "app/src/main/res/values/extra.xml").exists());
+    }
+
+    @Test
     public void scaffoldTaskMayWriteGradleOnlyBeforeManifestExists() throws Exception {
         // A fresh project starts empty; the first task writes only the Gradle skeleton. The Manifest
         // arrives in a later task, so this must NOT fail on a missing required file.

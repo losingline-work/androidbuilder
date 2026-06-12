@@ -1,5 +1,8 @@
 package com.androidbuilder.server;
 
+import android.content.Context;
+
+import com.androidbuilder.R;
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.util.FileUtils;
@@ -26,11 +29,17 @@ public class LocalBuildServer {
 
     private final AppRepository repository;
     private final Listener listener;
+    private final Context context;
     private final String token;
     private ServerSocket serverSocket;
     private Thread thread;
 
     public LocalBuildServer(AppRepository repository, Listener listener) {
+        this(null, repository, listener);
+    }
+
+    public LocalBuildServer(Context context, AppRepository repository, Listener listener) {
+        this.context = context == null ? null : context.getApplicationContext();
         this.repository = repository;
         this.listener = listener;
         this.token = createToken();
@@ -192,9 +201,14 @@ public class LocalBuildServer {
 
     private String buildResultMessage(String status, String body) {
         if ("success".equals(status)) {
-            return "Build complete: success. APK is ready.";
+            return context == null
+                    ? "Build complete: success. APK is ready."
+                    : context.getString(R.string.build_summary_success);
         }
-        return "Build complete: failed. " + firstDetailLine(body);
+        String detail = firstDetailLine(body);
+        return context == null
+                ? "Build complete: failed. " + detail
+                : context.getString(R.string.build_summary_failed, detail);
     }
 
     private String firstDetailLine(String detail) {
@@ -207,7 +221,9 @@ public class LocalBuildServer {
                 }
             }
         }
-        return "See the build log for details.";
+        return context == null
+                ? "See the build log for details."
+                : context.getString(R.string.build_summary_detail_missing);
     }
 
     private int contentLength(Map<String, String> headers) {

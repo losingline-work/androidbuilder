@@ -14,6 +14,16 @@ public class TaskOperationsPromptPolicyTest {
     }
 
     @Test
+    public void taskOperationsPromptOffersBlockedExitForMissingPrerequisites() {
+        String prompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(prompt.contains("blocked"));
+        assertTrue(prompt.contains("blockedReason"));
+        assertTrue(prompt.contains("prerequisiteWork"));
+        assertTrue(prompt.contains("missing prerequisite"));
+    }
+
+    @Test
     public void promptsAskForSmallFocusedFiles() {
         assertTrue(OpenAiClient.taskOperationsSystemPromptForTest(false).contains("under about 250 lines"));
         assertTrue(OpenAiClient.projectFilesSystemPromptForTest(false).contains("under about 250 lines"));

@@ -29,4 +29,11 @@ public class ProjectBuildCardActionPolicyTest {
         assertEquals(ProjectBuildCardActionPolicy.Action.NONE, ProjectBuildCardActionPolicy.action(running, false));
         assertEquals(ProjectBuildCardActionPolicy.Action.NONE, ProjectBuildCardActionPolicy.action(failed, false));
     }
+
+    @Test
+    public void hidesRepairActionForPlanTaskExecutionFailure() {
+        BuildJobRecord taskFailure = new BuildJobRecord(1, 1, "failed", "coding_failed", "/tmp/build.log", null, "Task failed", 0, 0, 0);
+
+        assertEquals(ProjectBuildCardActionPolicy.Action.NONE, ProjectBuildCardActionPolicy.action(taskFailure, true));
+    }
 }

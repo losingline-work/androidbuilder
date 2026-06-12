@@ -21,4 +21,12 @@ public class BuildTimeoutPolicyTest {
         assertTrue(BuildTimeoutPolicy.exceededTotalTimeout(now, now - BuildTimeoutPolicy.TOTAL_TIMEOUT_MS - 1));
         assertFalse(BuildTimeoutPolicy.exceededTotalTimeout(now, now - BuildTimeoutPolicy.TOTAL_TIMEOUT_MS + 1));
     }
+
+    @Test
+    public void timeoutMessageUsesChineseWhenRequested() {
+        String message = BuildTimeoutPolicy.timeoutMessage(11 * 60_000L, 0, 9 * 60_000L, true);
+
+        assertTrue(message.contains("构建运行 11 分钟后超时"));
+        assertTrue(message.contains("距离上次构建输出已经 2 分钟"));
+    }
 }

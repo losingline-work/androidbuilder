@@ -560,7 +560,7 @@ public class SettingsActivity extends BaseActivity {
         String rootPath = targetDir.getCanonicalPath();
         InputStream raw = getContentResolver().openInputStream(uri);
         if (raw == null) {
-            throw new java.io.IOException("Cannot open selected zip.");
+            throw new java.io.IOException(getString(R.string.offline_maven_open_zip_failed));
         }
         try (InputStream in = raw; java.util.zip.ZipInputStream zip = new java.util.zip.ZipInputStream(in)) {
             java.util.zip.ZipEntry entry;
@@ -568,14 +568,14 @@ public class SettingsActivity extends BaseActivity {
                 java.io.File target = new java.io.File(targetDir, entry.getName());
                 String targetPath = target.getCanonicalPath();
                 if (!targetPath.equals(rootPath) && !targetPath.startsWith(rootPath + java.io.File.separator)) {
-                    throw new IllegalArgumentException("Unsafe zip entry: " + entry.getName());
+                    throw new IllegalArgumentException(getString(R.string.offline_maven_unsafe_zip_entry, entry.getName()));
                 }
                 if (entry.isDirectory()) {
                     target.mkdirs();
                 } else {
                     java.io.File parent = target.getParentFile();
                     if (parent != null && !parent.exists() && !parent.mkdirs()) {
-                        throw new java.io.IOException("Cannot create directory: " + parent);
+                        throw new java.io.IOException(getString(R.string.create_directory_failed, parent));
                     }
                     try (java.io.FileOutputStream out = new java.io.FileOutputStream(target)) {
                         FileUtils.copy(zip, out);

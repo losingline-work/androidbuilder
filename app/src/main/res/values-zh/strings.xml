@@ -10,6 +10,7 @@
     <string name="build_log_running">正在构建</string>
     <string name="build_log_success">构建成功</string>
     <string name="build_log_failed">构建失败</string>
+    <string name="task_execution_failed">任务执行失败</string>
     <string name="repair_record">修复记录</string>
     <string name="build_waiting">正在准备构建...</string>
     <string name="conversation">需求沟通</string>
@@ -20,8 +21,6 @@
     <string name="export_log_saved">日志已保存。</string>
     <string name="export_log_unavailable">日志文件不可用。</string>
     <string name="export_log_failed">导出失败：%1$s</string>
-    <string name="expand_log">展开日志</string>
-    <string name="collapse_log">收起日志</string>
     <string name="copy_message">复制</string>
     <string name="delete_message">删除</string>
     <string name="delete_message_title">删除消息？</string>
@@ -49,8 +48,8 @@
     <string name="file_items">%1$d 项</string>
     <string name="close">关闭</string>
     <string name="api_required_title">需要模型 API</string>
-    <string name="api_required_message">请先添加 OpenAI、DeepSeek、MiniMax 或兼容接口的 API Key。Agent 需要调用模型把需求转换成源码。</string>
-    <string name="api_required_short">请先配置模型 API Key。</string>
+    <string name="api_required_message">请先添加 OpenAI、DeepSeek、MiniMax 或兼容接口的 API 密钥。智能体需要调用模型把需求转换成源码。</string>
+    <string name="api_required_short">请先配置模型 API 密钥。</string>
     <string name="open_settings">打开设置</string>
     <string name="back">返回</string>
     <string name="settings">设置</string>
@@ -77,7 +76,7 @@
     <string name="offline_maven_ready">已准备 %1$d 个本地 Maven 产物：%2$s</string>
     <string name="offline_maven_imported">已导入离线 Maven 缓存。</string>
     <string name="offline_maven_import_failed">离线 Maven 导入失败：%1$s</string>
-    <string name="api_key_hint">API Key</string>
+    <string name="api_key_hint">API 密钥</string>
     <string name="endpoint_preset">地址环境</string>
     <string name="endpoint_preset_custom">自定义地址</string>
     <string name="minimax_endpoint_china">MiniMax 国内</string>
@@ -103,16 +102,26 @@
     <string name="deepseek_model_invalid">DeepSeek 仅支持 deepseek-v4-flash 和 deepseek-v4-pro。</string>
     <string name="save_settings">保存设置</string>
     <string name="embedded_runtime">内置运行环境</string>
-    <string name="runtime_bootstrap_url">Bootstrap zip 下载地址</string>
-    <string name="install_bundled_runtime">安装内置 bootstrap</string>
-    <string name="download_runtime">下载并安装 bootstrap</string>
+    <string name="runtime_bootstrap_url">运行环境引导包下载地址</string>
+    <string name="install_bundled_runtime">安装内置引导包</string>
+    <string name="download_runtime">下载并安装引导包</string>
     <string name="refresh_runtime_status">刷新运行环境状态</string>
     <string name="runtime_status_checking">正在检查运行环境...</string>
     <string name="runtime_installing">正在安装内置运行环境...</string>
     <string name="runtime_downloading">正在下载运行环境...</string>
     <string name="runtime_installed">运行环境已安装。</string>
     <string name="runtime_install_failed">运行环境安装失败：%1$s</string>
-    <string name="runtime_url_required">请先输入 bootstrap zip 下载地址。</string>
+    <string name="runtime_url_required">请先输入运行环境引导包下载地址。</string>
+    <string name="runtime_download_http_failed">下载失败：HTTP %1$d</string>
+    <string name="runtime_bundled_bootstrap_missing">未找到内置运行环境引导包。期望路径：runtime/bootstrap-aarch64.zip 或 runtime/bootstrap-arm64.zip</string>
+    <string name="embedded_runtime_toolchain_incomplete">内置运行环境工具链不完整。\n缺少：%1$s\n请安装完整的 Android arm64 运行环境引导包后重试构建。</string>
+    <string name="embedded_runtime_gradle_missing">内置运行环境已初始化，但没有找到 Gradle 可执行文件。\n期望位置：\n - %1$s\n - %2$s\n请安装或打包 GPL 兼容的 Android arm64 引导包，并包含 shell/coreutils/JDK/Gradle/Android SDK/aapt2。</string>
+    <string name="termux_start_failed">无法启动 Termux。请安装 Termux 并启用 RUN_COMMAND。</string>
+    <string name="termux_run_command_permission_missing">缺少 Termux RUN_COMMAND 权限，请在安卓系统设置中授权。</string>
+    <string name="termux_setup_start_failed">无法启动 Termux 初始化：%1$s</string>
+    <string name="offline_maven_open_zip_failed">无法打开所选压缩包。</string>
+    <string name="offline_maven_unsafe_zip_entry">压缩包包含不安全路径：%1$s</string>
+    <string name="create_directory_failed">无法创建目录：%1$s</string>
     <string name="run_termux_setup">自动初始化 Termux</string>
     <string name="request_termux_permission">请求 Termux 命令权限</string>
     <string name="copy_adb_grant">复制 ADB 授权命令</string>
@@ -128,7 +137,7 @@
     <string name="foreground_work_building">正在构建 APK...</string>
     <string name="search_projects">搜索项目</string>
     <string name="new_project">新建项目</string>
-    <string name="new_project_dialog_subtitle">先写清楚需求，Android Builder 会继续生成计划和源码工作区。</string>
+    <string name="new_project_dialog_subtitle">先写清楚需求，app 制造机会继续生成计划和源码工作区。</string>
     <string name="project_name">项目名称</string>
     <string name="project_name_helper">可选。留空时会根据需求自动生成名称。</string>
     <string name="package_name_optional">包名（可选）</string>
@@ -189,7 +198,6 @@
     <string name="repair_build_not_model_repairable">这类失败需要先处理环境、依赖或构建后端配置，再修复源码。</string>
     <string name="install">安装</string>
     <string name="hermes_decisions">Hermes</string>
-    <string name="hermes_decisions_empty">暂无 Hermes 决策记录。</string>
     <string name="install_success">APK 已安装。</string>
     <string name="install_failed">安装失败：%1$s</string>
     <string name="install_permission_required">请允许安装未知来源应用，然后再次点击安装。</string>
@@ -224,8 +232,8 @@
     <string name="termux_not_installed">还没有安装 Termux。请先安装 Termux，打开一次后再回到这里。</string>
     <string name="termux_permission_required">请授予 Termux 运行命令权限，然后再次点击初始化。</string>
     <string name="termux_permission_granted">Termux 命令权限已授予。</string>
-    <string name="termux_permission_denied">权限被拒绝。请在本 App 权限中启用“Run commands in Termux environment”。</string>
+    <string name="termux_permission_denied">权限被拒绝。请在本 App 权限中启用“在 Termux 环境中运行命令”。</string>
     <string name="termux_overlay_required">请为 Termux 开启“显示在其他应用上层/悬浮窗”权限，然后返回再次点击初始化。</string>
-    <string name="termux_help">Termux 设置：\n\n这里有两个不同权限：\n\n1. Android Builder 需要“Run commands in Termux environment”。这个权限属于 Android Builder，不在 Termux 权限页里。如果系统设置里找不到，点击“请求 Termux 命令权限”。部分 OPPO/ColorOS 会隐藏这个自定义权限，此时使用 ADB 授权命令兜底。\n\n2. Termux 需要“显示在其他应用上层/悬浮窗”，用于从后台启动终端会话。\n\n普通安卓上不能静默安装 Termux 本体。请先安装 Termux，打开一次，然后启用外部命令：\n   mkdir -p ~/.termux\n   echo allow-external-apps=true >> ~/.termux/termux.properties\n重启 Termux。\n\n之后点击“自动初始化 Termux”。复制按钮是备用方案。</string>
-    <string name="third_party_notices_body">Android Builder 预留了内置运行环境接入点，用于集成 GPLv3 兼容的 Termux 组件。\n\nTermux app：GPLv3-only。源码：https://github.com/termux/termux-app\nTermux packages：https://github.com/termux/termux-packages\n如果打包 terminal-emulator、terminal-view 或其他 Termux 代码，需要保留对应版权和许可证声明。\n\n如果 APK 分发时包含 Termux GPLv3 代码或二进制文件，需要按 GPLv3 提供对应源码、许可证文本、版权声明和本地修改。\n\n内置后端会在 files/runtime 下创建私有运行环境。Bootstrap zip 可以包含 usr/bin、usr/android-sdk、home，或直接包含 bin/android-sdk，安装器会放到私有运行环境。</string>
+    <string name="termux_help">Termux 设置：\n\n这里有两个不同权限：\n\n1. app 制造机需要“在 Termux 环境中运行命令”。这个权限属于 app 制造机，不在 Termux 权限页里。如果系统设置里找不到，点击“请求 Termux 命令权限”。部分 OPPO/ColorOS 会隐藏这个自定义权限，此时使用 ADB 授权命令兜底。\n\n2. Termux 需要“显示在其他应用上层/悬浮窗”，用于从后台启动终端会话。\n\n普通安卓上不能静默安装 Termux 本体。请先安装 Termux，打开一次，然后启用外部命令：\n   mkdir -p ~/.termux\n   echo allow-external-apps=true >> ~/.termux/termux.properties\n重启 Termux。\n\n之后点击“自动初始化 Termux”。复制按钮是备用方案。</string>
+    <string name="third_party_notices_body">app 制造机预留了内置运行环境接入点，用于集成 GPLv3 兼容的 Termux 组件。\n\nTermux 应用：仅 GPLv3。源码：https://github.com/termux/termux-app\nTermux 软件包：https://github.com/termux/termux-packages\n如果打包 terminal-emulator、terminal-view 或其他 Termux 代码，需要保留对应版权和许可证声明。\n\n如果 APK 分发时包含 Termux GPLv3 代码或二进制文件，需要按 GPLv3 提供对应源码、许可证文本、版权声明和本地修改。\n\n内置后端会在 files/runtime 下创建私有运行环境。运行环境引导包可以包含 usr/bin、usr/android-sdk、home，或直接包含 bin/android-sdk，安装器会放到私有运行环境。</string>
 </resources>

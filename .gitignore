@@ -4,6 +4,7 @@
 build/
 **/build/
 **/.cxx/
+app/src/main/assets/runtime/bootstrap-aarch64.zip
 
 # Android / local SDK config
 local.properties
@@ -18,6 +19,7 @@ local.properties
 .idea/httpRequests/
 .idea/dataSources/
 .idea/dataSources.local.xml
+.idea/*
 
 # OS files
 .DS_Store

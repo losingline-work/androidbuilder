@@ -15,7 +15,7 @@ public final class AppSpecParser {
 
     public static AppSpec fromPrompt(String prompt, String fallbackName, boolean chinese) {
         String name = fallbackName == null || fallbackName.trim().isEmpty()
-                ? NameUtils.projectNameFromPrompt(prompt)
+                ? NameUtils.projectNameFromPrompt(prompt, chinese)
                 : fallbackName.trim();
         return new AppSpec(
                 name,
@@ -46,7 +46,7 @@ public final class AppSpecParser {
             JSONObject json = new JSONObject(jsonText);
             String appName = value(json, "appName", fallbackName);
             if (appName == null || appName.trim().isEmpty()) {
-                appName = NameUtils.projectNameFromPrompt(prompt);
+                appName = NameUtils.projectNameFromPrompt(prompt, chinese);
             }
             String packageName = value(json, "packageName", NameUtils.packageNameFromProject(appName));
             String description = value(json, "description", prompt);

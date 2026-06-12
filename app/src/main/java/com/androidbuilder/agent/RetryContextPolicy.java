@@ -1,8 +1,12 @@
 package com.androidbuilder.agent;
 
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 
 final class RetryContextPolicy {
+    private static final String ADDITIONAL_HEADER = "Additional retry signal:";
+    private static final int MAX_ADDITIONAL_SIGNALS = 2;
     private static final String SINGLE_FILE_OVERRIDE =
             "Reviewer rewrite scope overrides earlier negotiated patch intent or risk notes for this retry.";
 
@@ -19,10 +23,12 @@ final class RetryContextPolicy {
             cleanExisting = withoutNegotiatedScoutBlocks(cleanExisting);
             cleanExisting = append(cleanExisting, SINGLE_FILE_OVERRIDE);
         }
-        if (cleanExisting.isEmpty()) {
-            return cleanAddition;
+        RetrySignals signals = RetrySignals.from(cleanExisting);
+        if (signals.contains(cleanAddition)) {
+            return signals.assemble();
         }
-        return cleanExisting + "\n\nAdditional retry signal:\n" + cleanAddition;
+        signals.add(cleanAddition);
+        return signals.assemble();
     }
 
     private static boolean isSingleFileRewrite(String text) {
@@ -76,5 +82,77 @@ final class RetryContextPolicy {
 
     private static String collapseBlankLines(String text) {
         return text.replaceAll("\\n{3,}", "\n\n").trim();
+    }
+
+    private static final class RetrySignals {
+        final String base;
+        final List<String> additional;
+
+        RetrySignals(String base, List<String> additional) {
+            this.base = base == null ? "" : base.trim();
+            this.additional = additional;
+        }
+
+        static RetrySignals from(String text) {
+            String clean = text == null ? "" : text.trim();
+            if (clean.startsWith(ADDITIONAL_HEADER + "\n")) {
+                String value = clean.substring((ADDITIONAL_HEADER + "\n").length()).trim();
+                List<String> additional = new ArrayList<>();
+                if (!value.isEmpty()) {
+                    additional.add(value);
+                }
+                return new RetrySignals("", additional);
+            }
+            String marker = "\n\n" + ADDITIONAL_HEADER + "\n";
+            String[] parts = clean.split(java.util.regex.Pattern.quote(marker), -1);
+            String base = parts.length == 0 ? "" : parts[0].trim();
+            List<String> additional = new ArrayList<>();
+            for (int i = 1; i < parts.length; i++) {
+                String value = parts[i].trim();
+                if (!value.isEmpty() && !contains(additional, value)) {
+                    additional.add(value);
+                }
+            }
+            return new RetrySignals(base, additional);
+        }
+
+        boolean contains(String value) {
+            String clean = value == null ? "" : value.trim();
+            return clean.equals(base) || contains(additional, clean);
+        }
+
+        void add(String value) {
+            String clean = value == null ? "" : value.trim();
+            if (clean.isEmpty() || contains(clean)) {
+                return;
+            }
+            additional.add(clean);
+            while (additional.size() > MAX_ADDITIONAL_SIGNALS) {
+                additional.remove(0);
+            }
+        }
+
+        String assemble() {
+            if (base.isEmpty() && additional.size() == 1) {
+                return additional.get(0);
+            }
+            StringBuilder builder = new StringBuilder(base);
+            for (String value : additional) {
+                if (builder.length() > 0) {
+                    builder.append("\n\n");
+                }
+                builder.append(ADDITIONAL_HEADER).append('\n').append(value);
+            }
+            return builder.toString().trim();
+        }
+
+        private static boolean contains(List<String> values, String value) {
+            for (String existing : values) {
+                if (existing.equals(value)) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 }

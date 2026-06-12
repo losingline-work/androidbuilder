@@ -13,11 +13,10 @@ public class ProjectBuildLogExpansionPolicyTest {
         BuildJobRecord job = new BuildJobRecord(1, 1, "failed", "embedded_runtime_finished", "/tmp/build.log", null, "failed", 0, 0, 0);
 
         assertFalse(ProjectBuildLogExpansionPolicy.shouldShowContent(job, false));
-        assertTrue(ProjectBuildLogExpansionPolicy.shouldShowToggle(job));
     }
 
     @Test
-    public void showsFailedBuildLogAfterUserExpandsIt() {
+    public void supportsExplicitlyShowingFailedBuildLogWhenRequested() {
         BuildJobRecord job = new BuildJobRecord(1, 1, "failed", "embedded_runtime_finished", "/tmp/build.log", null, "failed", 0, 0, 0);
 
         assertTrue(ProjectBuildLogExpansionPolicy.shouldShowContent(job, true));
@@ -29,7 +28,6 @@ public class ProjectBuildLogExpansionPolicyTest {
 
         assertFalse(ProjectBuildLogExpansionPolicy.shouldShowContent(success, false));
         assertTrue(ProjectBuildLogExpansionPolicy.shouldShowContent(success, true));
-        assertTrue(ProjectBuildLogExpansionPolicy.shouldShowToggle(success));
     }
 
     @Test
@@ -37,6 +35,5 @@ public class ProjectBuildLogExpansionPolicyTest {
         BuildJobRecord running = new BuildJobRecord(2, 1, "building", "embedded_runtime", "/tmp/build.log", null, null, 0, 0, 0);
 
         assertTrue(ProjectBuildLogExpansionPolicy.shouldShowContent(running, false));
-        assertFalse(ProjectBuildLogExpansionPolicy.shouldShowToggle(running));
     }
 }

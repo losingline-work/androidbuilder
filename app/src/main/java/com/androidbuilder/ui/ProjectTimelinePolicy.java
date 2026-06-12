@@ -93,6 +93,11 @@ public final class ProjectTimelinePolicy {
         if (hasTaskGroup && !taskGroupEmitted) {
             entries.add(new Entry(Kind.TASK_GROUP, -1));
         }
+        if (buildLogVisible
+                && ProjectBuildLogContentPolicy.hasFailureSummary(latestJob)
+                && !lastMessageIndexByJob.containsKey(latestJob.id)) {
+            entries.add(new Entry(Kind.BUILD_LOG, -1));
+        }
         if (showOperationStatus) {
             entries.add(new Entry(Kind.OPERATION_STATUS, -1));
         }

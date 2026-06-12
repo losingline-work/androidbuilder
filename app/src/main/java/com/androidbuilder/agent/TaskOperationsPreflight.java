@@ -21,7 +21,7 @@ import javax.xml.parsers.ParserConfigurationException;
  */
 final class TaskOperationsPreflight {
     // Only flags an absurd batch; foundational tasks legitimately touch many files.
-    private static final int MAX_OPERATIONS_PER_TASK = 30;
+    private static final int MAX_OPERATIONS_PER_TASK = 60;
     private static final Pattern NAMESPACE_PATTERN = Pattern.compile("namespace\\s*(?:=\\s*)?[\"']([^\"']+)[\"']");
     private static final Pattern PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([a-zA-Z_][\\w]*(?:\\.[a-zA-Z_][\\w]*)*)\\s*;");
     private static final Pattern DOCTYPE_PATTERN = Pattern.compile("<!DOCTYPE\\b", Pattern.CASE_INSENSITIVE);
@@ -39,7 +39,7 @@ final class TaskOperationsPreflight {
         if (operations.operations.size() > MAX_OPERATIONS_PER_TASK) {
             return rewrite(
                     "Unusually many file operations for one task: " + operations.operations.size() + ".",
-                    "Split this into smaller tasks: write drawables/selectors/icons in one task, layout XML in another, and Java wiring in a separate task.");
+                    "Too many file operations: " + operations.operations.size() + " (cap 60). Trim the batch instead of splitting tasks: keep only files this task strictly needs, merge values resources into fewer files, drop duplicate or decorative drawables, and defer non-essential assets to a later task.");
         }
         for (FileOperation operation : operations.operations) {
             if (isXmlWrite(operation)) {

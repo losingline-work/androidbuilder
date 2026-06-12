@@ -27,19 +27,28 @@ final class HermesTaskContractGuard {
         }
 
         Set<String> writtenPaths = operationPaths(operations.operations, true);
+        Set<String> expectedFiles = normalizedSet(contract.expectedFiles);
         Set<String> missingExpected = new HashSet<>();
-        for (String expectedPath : normalizedSet(contract.expectedFiles)) {
+        for (String expectedPath : expectedFiles) {
             if (!writtenPaths.contains(expectedPath)) {
                 missingExpected.add(expectedPath);
             }
         }
-        if (!missingExpected.isEmpty()) {
+        if (isSeverelyUnderDelivered(expectedFiles.size(), missingExpected.size())) {
             String missing = join(missingExpected);
             return rewrite(
-                    "Generated operations did not produce expectedFiles: " + missing + ".",
-                    "Rewrite the operations to include write operations for: " + missing + ".");
+                    "Generated operations under-delivered expectedFiles: " + missing + ".",
+                    "Rewrite the operations to include the missing expected files or adjust the task contract if those files are no longer required: " + missing + ".");
         }
         return ok();
+    }
+
+    private static boolean isSeverelyUnderDelivered(int expectedCount, int missingCount) {
+        if (expectedCount <= 0 || missingCount < 3) {
+            return false;
+        }
+        int deliveredCount = expectedCount - missingCount;
+        return deliveredCount * 2 < expectedCount;
     }
 
     private static Set<String> operationPaths(List<FileOperation> operations, boolean writesOnly) {

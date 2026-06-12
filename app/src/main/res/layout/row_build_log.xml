@@ -25,97 +25,40 @@
                 android:text="@string/build_log"
                 android:textColor="?attr/colorPrimary" />
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/buildLogFailureCopyButton"
+                style="@style/Widget.AndroidBuilder.Button.Outlined"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginStart="8dp"
+                android:minWidth="0dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:text="@string/copy_failure_context"
+                android:textSize="12sp"
+                android:visibility="gone"
+                app:icon="@drawable/ic_copy" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/buildLogActionButton"
+                style="@style/Widget.AndroidBuilder.Button.Outlined"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginStart="8dp"
+                android:minWidth="0dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:text="@string/install"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
             <ProgressBar
                 android:id="@+id/buildProgress"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
+                android:layout_marginStart="8dp"
                 android:indeterminate="true"
                 android:visibility="gone" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="vertical">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="end"
-                android:orientation="horizontal">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/buildLogCopyButton"
-                    style="@style/Widget.AndroidBuilder.Button.Outlined"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="@string/copy_log"
-                    android:textSize="12sp"
-                    app:icon="@drawable/ic_copy" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/buildLogFailureCopyButton"
-                    style="@style/Widget.AndroidBuilder.Button.Outlined"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="8dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="@string/copy_failure_context"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    app:icon="@drawable/ic_copy" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/buildLogActionButton"
-                    style="@style/Widget.AndroidBuilder.Button.Outlined"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="8dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="@string/install"
-                    android:textSize="12sp"
-                    android:visibility="gone" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:gravity="end"
-                android:orientation="horizontal">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/buildLogExportButton"
-                    style="@style/Widget.AndroidBuilder.Button.Outlined"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="@string/export_log"
-                    android:textSize="12sp"
-                    app:icon="@drawable/ic_export" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/buildLogToggleButton"
-                    style="@style/Widget.AndroidBuilder.Button.Outlined"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="8dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="@string/expand_log"
-                    android:textSize="12sp" />
-            </LinearLayout>
         </LinearLayout>
 
         <TextView

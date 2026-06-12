@@ -206,6 +206,7 @@ public class AppRepository {
         SQLiteDatabase db = helper.getWritableDatabase();
         long now = System.currentTimeMillis();
         db.delete(DatabaseHelper.TABLE_PROJECT_TASKS, "project_id = ?", new String[]{String.valueOf(projectId)});
+        deleteTaskDrafts(projectId);
         for (int i = 0; i < tasks.size(); i++) {
             ProjectTaskRecord task = tasks.get(i);
             ContentValues values = new ContentValues();
@@ -226,6 +227,7 @@ public class AppRepository {
 
     public synchronized void clearProjectTasks(long projectId) {
         helper.getWritableDatabase().delete(DatabaseHelper.TABLE_PROJECT_TASKS, "project_id = ?", new String[]{String.valueOf(projectId)});
+        deleteTaskDrafts(projectId);
         touchProject(projectId);
     }
 
@@ -526,6 +528,10 @@ public class AppRepository {
 
     public File jobDir(long projectId, long jobId) {
         return new File(projectRoot(projectId), "jobs/" + jobId);
+    }
+
+    private void deleteTaskDrafts(long projectId) {
+        FileUtils.deleteRecursively(new File(projectRoot(projectId), "task-drafts"));
     }
 
     private void touchProject(long projectId) {

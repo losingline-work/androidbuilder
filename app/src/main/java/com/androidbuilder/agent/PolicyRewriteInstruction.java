@@ -22,6 +22,7 @@ final class PolicyRewriteInstruction {
         if (message.contains("Task operation list is empty")) {
             instruction.append("\nDo not return an empty operations array. Return at least one write or delete operation that advances this task.");
             instruction.append("\nIf the current source already contains part of the work, update the smallest relevant file with the remaining required change instead of returning no operations.");
+            instruction.append("\nIf missing prerequisite files or resources make this task unsafe within its current boundary, return compact JSON with blocked=true, blockedReason, and prerequisiteWork instead of an empty operations array.");
         }
         if (message.contains("Task operation response did not contain a JSON object") || message.contains("Unsupported file operation action")) {
             instruction.append("\nReturn only a compact JSON object with summary and operations. Each operation action must be exactly write or delete.");

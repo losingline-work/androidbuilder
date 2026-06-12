@@ -81,7 +81,6 @@ public class ProjectActivity extends BaseActivity {
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedPlanMessageIds = new HashSet<>();
     private final Set<Long> expandedDecisionTaskIds = new HashSet<>();
-    private final Set<Long> expandedBuildLogJobIds = new HashSet<>();
     private boolean tasksCollapsed = ProjectTaskListDisplayPolicy.defaultCollapsed();
     private TimelineAdapter adapter;
     private FileAdapter fileAdapter;
@@ -203,8 +202,7 @@ public class ProjectActivity extends BaseActivity {
         findViewById(R.id.buildButton).setOnClickListener(v -> buildLatest());
         findViewById(R.id.repairButton).setOnClickListener(v -> repairLatest());
         findViewById(R.id.installButton).setOnClickListener(v -> installLatest());
-        findViewById(R.id.hermesDecisionsButton).setOnClickListener(v -> showHermesDecisions());
-        buildServer = new LocalBuildServer(repository, (p, j) -> runOnUiThread(() -> {
+        buildServer = new LocalBuildServer(this, repository, (p, j) -> runOnUiThread(() -> {
             refresh();
         }));
         try {
@@ -502,19 +500,7 @@ public class ProjectActivity extends BaseActivity {
         }
         if (entry.kind == ProjectTimelinePolicy.Kind.BUILD_LOG) {
             BuildJobRecord job = buildLogJob(entry);
-            if (!ProjectLogExportPolicy.canExportBuildLog(job)) {
-                copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job));
-                return;
-            }
-            new MaterialAlertDialogBuilder(this)
-                    .setItems(new CharSequence[]{getString(R.string.copy_log), getString(R.string.export_log)}, (dialog, which) -> {
-                        if (which == 0) {
-                            copyText(getString(R.string.build_log), readBuildLogPreview(job));
-                        } else {
-                            exportBuildLog(job);
-                        }
-                    })
-                    .show();
+            copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job));
             return;
         }
         int messageIndex = entry.kind == ProjectTimelinePolicy.Kind.MESSAGE || entry.kind == ProjectTimelinePolicy.Kind.PLAN_CARD
@@ -618,7 +604,7 @@ public class ProjectActivity extends BaseActivity {
     private File prepareProjectLogsExportFile() throws Exception {
         File exportDir = exportLogCacheDir();
         File exportFile = new File(exportDir, ProjectLogExportPolicy.projectLogExportName(projectId));
-        FileUtils.writeText(exportFile, ProjectLogExportPolicy.projectLogsExportText(logResults));
+        FileUtils.writeText(exportFile, ProjectLogExportPolicy.projectLogsExportText(logResults, AppSettings.isChinese(this)));
         return exportFile;
     }
 
@@ -661,40 +647,6 @@ public class ProjectActivity extends BaseActivity {
         if (exportLogsButton != null) {
             exportLogsButton.setEnabled(!logResults.isEmpty());
         }
-    }
-
-    private void showHermesDecisions() {
-        List<HermesDecisionTimelineItem> items = HermesDecisionTimelinePolicy.fromRecords(repository.listAiConversations(projectId));
-        if (items.isEmpty()) {
-            Toast.makeText(this, R.string.hermes_decisions_empty, Toast.LENGTH_SHORT).show();
-            return;
-        }
-        StringBuilder text = new StringBuilder();
-        for (HermesDecisionTimelineItem item : items) {
-            if (text.length() > 0) {
-                text.append("\n\n");
-            }
-            text.append(timeFormat.format(new Date(item.createdAt)))
-                    .append(" · ")
-                    .append(item.role.isEmpty() ? "hermes" : item.role)
-                    .append(" · ")
-                    .append(item.phase.isEmpty() ? "event" : item.phase)
-                    .append("\n")
-                    .append(item.decision.isEmpty() ? "event" : item.decision);
-            if (!item.summary.isEmpty()) {
-                text.append("\n").append(item.summary);
-            }
-        }
-        TextView content = new TextView(this);
-        content.setText(text.toString());
-        content.setTextIsSelectable(true);
-        content.setPadding(dp(20), dp(8), dp(20), dp(8));
-        content.setMovementMethod(new ScrollingMovementMethod());
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.hermes_decisions)
-                .setView(content)
-                .setPositiveButton(R.string.close, null)
-                .show();
     }
 
     private ProjectLogEntry messageLogEntry(ChatMessage message) {
@@ -871,7 +823,10 @@ public class ProjectActivity extends BaseActivity {
                 runOnUiThread(() -> {
                     autoExecutingPlan = false;
                     setBusy(false);
-                    repository.addMessage(projectId, "assistant", getString(R.string.execute_plan_failed, error.getMessage()), null);
+                    BuildJobRecord failedJob = repository.latestBuildJob(projectId);
+                    if (ProjectExecutePlanErrorMessagePolicy.shouldAddStandaloneMessage(failedJob, error.getMessage())) {
+                        repository.addMessage(projectId, "assistant", getString(R.string.execute_plan_failed, error.getMessage()), null);
+                    }
                     refresh();
                     Toast.makeText(ProjectActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
                 });
@@ -1372,10 +1327,13 @@ public class ProjectActivity extends BaseActivity {
         executePlanButton.setEnabled(!busy && canExecutePlan);
         buildButton.setVisibility(showRepairAction ? View.GONE : View.VISIBLE);
         repairButton.setVisibility(showRepairAction ? View.VISIBLE : View.GONE);
-        buildButton.setEnabled(ProjectBuildActionPolicy.canBuild(busy, hasSourceFiles));
+        buildButton.setEnabled(ProjectBuildActionPolicy.canBuild(busy, hasSourceFiles, latestJob));
         repairButton.setEnabled(ProjectBuildActionPolicy.canRepair(busy, repairTarget, repairable));
         if (buildButton instanceof TextView) {
-            ((TextView) buildButton).setText(latestJob != null && "failed".equals(latestJob.status) ? R.string.rebuild : R.string.build);
+            boolean actualBuildFailure = latestJob != null
+                    && "failed".equals(latestJob.status)
+                    && !ProjectJobStatePolicy.isTaskExecutionFailure(latestJob);
+            ((TextView) buildButton).setText(actualBuildFailure ? R.string.rebuild : R.string.build);
         }
         installButton.setEnabled(!busy && repository.latestBuildJobWithApk(projectId) != null);
     }
@@ -1646,7 +1604,7 @@ public class ProjectActivity extends BaseActivity {
                 }
             } else {
                 container.setVisibility(View.VISIBLE);
-                for (ProjectTaskListDisplayPolicy.Group group : ProjectTaskListDisplayPolicy.groups(taskItems, false)) {
+                for (ProjectTaskListDisplayPolicy.Group group : ProjectTaskListDisplayPolicy.groups(taskItems, false, AppSettings.isChinese(ProjectActivity.this))) {
                     container.addView(taskPhaseHeaderView(group));
                     for (ProjectTaskRecord task : group.tasks) {
                         container.addView(taskRowView(task, taskItems.indexOf(task), true));
@@ -1979,52 +1937,45 @@ public class ProjectActivity extends BaseActivity {
             ProgressBar progress = view.findViewById(R.id.buildProgress);
             TextView title = view.findViewById(R.id.buildLogTitle);
             TextView content = view.findViewById(R.id.buildLogContent);
-            View copyButton = view.findViewById(R.id.buildLogCopyButton);
             View failureCopyButton = view.findViewById(R.id.buildLogFailureCopyButton);
             TextView actionButton = view.findViewById(R.id.buildLogActionButton);
-            View exportButton = view.findViewById(R.id.buildLogExportButton);
-            TextView toggleButton = view.findViewById(R.id.buildLogToggleButton);
             boolean canExport = ProjectLogExportPolicy.canExportBuildLog(job);
-            boolean canCopyFailureContext = canExport && ProjectBuildFailureContextPolicy.canCopyFailureContext(job);
+            boolean canCopyFailureContext = ProjectBuildFailureContextPolicy.canCopyFailureContext(job, messages, aiLogRecords);
             ProjectBuildCardActionPolicy.Action cardAction = ProjectBuildCardActionPolicy.action(job, job != null && isRepairableFailure(job));
-            boolean expanded = job != null && expandedBuildLogJobIds.contains(job.id);
-            boolean showContent = ProjectBuildLogExpansionPolicy.shouldShowContent(job, expanded);
-            boolean showToggle = ProjectBuildLogExpansionPolicy.shouldShowToggle(job);
+            ProjectBuildCardControlsPolicy.Controls controls = ProjectBuildCardControlsPolicy.controls(
+                    job,
+                    canCopyFailureContext,
+                    cardAction != ProjectBuildCardActionPolicy.Action.NONE);
+            boolean showContent = ProjectBuildLogExpansionPolicy.shouldShowContent(job, false);
             title.setText(buildLogTitleText(job));
             progress.setVisibility(running ? View.VISIBLE : View.GONE);
-            content.setText(showContent ? (canExport ? readBuildLogPreview(job) : getString(R.string.no_build_log)) : "");
-            content.setVisibility(showContent ? View.VISIBLE : View.GONE);
-            copyButton.setEnabled(canExport);
-            copyButton.setOnClickListener(v -> copyText(getString(R.string.build_log), job == null ? "" : readBuildLogPreview(job)));
-            failureCopyButton.setVisibility(canCopyFailureContext ? View.VISIBLE : View.GONE);
-            failureCopyButton.setEnabled(canCopyFailureContext);
+            boolean hasFailureSummary = ProjectBuildLogContentPolicy.hasFailureSummary(job);
+            String logPreview = !hasFailureSummary && showContent && canExport ? readBuildLogPreview(job) : "";
+            ProjectBuildLogContentPolicy.Content displayContent = ProjectBuildLogContentPolicy.content(
+                    job,
+                    showContent,
+                    logPreview,
+                    getString(R.string.no_build_log),
+                    AppSettings.isChinese(ProjectActivity.this));
+            content.setText(displayContent.text);
+            content.setVisibility(displayContent.visible ? View.VISIBLE : View.GONE);
+            failureCopyButton.setVisibility(controls.showFailureContext ? View.VISIBLE : View.GONE);
+            failureCopyButton.setEnabled(controls.showFailureContext);
             failureCopyButton.setOnClickListener(v -> copyText(
                     getString(R.string.failure_context),
-                    ProjectBuildFailureContextPolicy.copyText(job, readBuildLogText(job))));
-            actionButton.setVisibility(cardAction == ProjectBuildCardActionPolicy.Action.NONE ? View.GONE : View.VISIBLE);
+                    ProjectBuildFailureContextPolicy.copyText(
+                            job,
+                            readBuildLogText(job),
+                            new ArrayList<>(messages),
+                            repository.listAiConversations(projectId),
+                            AppSettings.isChinese(ProjectActivity.this))));
+            actionButton.setVisibility(controls.showCardAction ? View.VISIBLE : View.GONE);
             actionButton.setText(cardAction == ProjectBuildCardActionPolicy.Action.REPAIR ? R.string.repair_build : R.string.install);
             actionButton.setOnClickListener(v -> {
                 if (cardAction == ProjectBuildCardActionPolicy.Action.INSTALL) {
                     installJob(job);
                 } else if (cardAction == ProjectBuildCardActionPolicy.Action.REPAIR) {
                     repairBuildJob(job);
-                }
-            });
-            exportButton.setEnabled(canExport);
-            exportButton.setOnClickListener(v -> exportBuildLog(job));
-            toggleButton.setVisibility(showToggle ? View.VISIBLE : View.GONE);
-            toggleButton.setText(expanded ? R.string.collapse_log : R.string.expand_log);
-            toggleButton.setOnClickListener(v -> {
-                if (job == null) {
-                    return;
-                }
-                if (expandedBuildLogJobIds.contains(job.id)) {
-                    expandedBuildLogJobIds.remove(job.id);
-                } else {
-                    expandedBuildLogJobIds.add(job.id);
-                }
-                if (adapter != null) {
-                    adapter.notifyDataSetChanged();
                 }
             });
             return view;
@@ -2040,6 +1991,9 @@ public class ProjectActivity extends BaseActivity {
             }
             if (title == ProjectBuildLogTitlePolicy.Title.BUILD_FAILED) {
                 return R.string.build_log_failed;
+            }
+            if (title == ProjectBuildLogTitlePolicy.Title.TASK_EXECUTION_FAILED) {
+                return R.string.task_execution_failed;
             }
             if (title == ProjectBuildLogTitlePolicy.Title.REPAIR_RECORD) {
                 return R.string.repair_record;

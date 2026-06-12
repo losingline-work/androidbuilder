@@ -7,6 +7,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,12 +27,22 @@ public final class TaskOperationsParser {
         } catch (Exception parseError) {
             return fromLenientJson(jsonText, parseError);
         }
-        return fromJsonObject(json);
+        try {
+            return fromJsonObject(json);
+        } catch (IllegalArgumentException error) {
+            throw error;
+        } catch (Exception parseError) {
+            throw parseException(parseError);
+        }
     }
 
     private static TaskOperations fromJsonObject(JSONObject json) throws Exception {
         JSONArray operationsJson = json.optJSONArray("operations");
         if (operationsJson == null || operationsJson.length() == 0) {
+            TaskOperations blocked = blockedOperations(json);
+            if (blocked != null) {
+                return blocked;
+            }
             throw new IllegalArgumentException("Task operation list is empty.");
         }
         List<FileOperation> operations = new ArrayList<>();
@@ -41,13 +52,29 @@ public final class TaskOperationsParser {
         return new TaskOperations(json.optString("summary", "").trim(), operations);
     }
 
+    private static TaskOperations blockedOperations(JSONObject json) {
+        if (!json.optBoolean("blocked", false)) {
+            return null;
+        }
+        String reason = json.optString("blockedReason", "").trim();
+        if (reason.isEmpty()) {
+            return null;
+        }
+        return new TaskOperations(
+                json.optString("summary", "").trim(),
+                Collections.emptyList(),
+                true,
+                reason,
+                json.optString("prerequisiteWork", "").trim());
+    }
+
     private static TaskOperations fromLenientJson(String jsonText, Exception parseError) throws Exception {
         if (!QUOTED_OPERATION_OBJECT_PATTERN.matcher(jsonText).find()) {
-            throw parseError;
+            throw parseException(parseError);
         }
         List<JSONObject> operationObjects = operationObjectsFromMalformedArray(jsonText);
         if (operationObjects.isEmpty()) {
-            throw parseError;
+            throw parseException(parseError);
         }
         List<FileOperation> operations = new ArrayList<>();
         for (JSONObject operationObject : operationObjects) {
@@ -59,13 +86,20 @@ public final class TaskOperationsParser {
         return new TaskOperations(summaryFromText(jsonText), operations);
     }
 
+    private static IllegalArgumentException parseException(Exception parseError) {
+        String message = parseError == null || parseError.getMessage() == null
+                ? "unknown parse error"
+                : parseError.getMessage();
+        return new IllegalArgumentException("Task operation response JSON could not be parsed: " + message, parseError);
+    }
+
     private static FileOperation operationFromJson(JSONObject operationJson) {
         String action = operationJson.optString("action", "").trim();
-        if (!"write".equals(action) && !"delete".equals(action)) {
+        if (!"write".equals(action) && !"delete".equals(action) && !"drop".equals(action)) {
             throw new IllegalArgumentException("Unsupported file operation action: " + action);
         }
         String path = PathValidator.normalizeGeneratedPath(operationJson.optString("path", ""));
-        return new FileOperation(action, path, operationJson.optString("content", ""));
+        return new FileOperation(action, path, "drop".equals(action) ? "" : operationJson.optString("content", ""));
     }
 
     private static List<JSONObject> operationObjectsFromMalformedArray(String jsonText) throws Exception {

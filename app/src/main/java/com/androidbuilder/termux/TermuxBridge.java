@@ -42,7 +42,7 @@ public class TermuxBridge {
         try {
             context.startService(intent);
         } catch (Exception error) {
-            Toast.makeText(context, "Cannot start Termux. Install Termux and enable RUN_COMMAND.", Toast.LENGTH_LONG).show();
+            Toast.makeText(context, context.getString(com.androidbuilder.R.string.termux_start_failed), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -102,9 +102,9 @@ public class TermuxBridge {
         try {
             context.startService(intent);
         } catch (SecurityException error) {
-            Toast.makeText(context, "Missing Termux RUN_COMMAND permission. Grant it in Android Settings.", Toast.LENGTH_LONG).show();
+            Toast.makeText(context, context.getString(com.androidbuilder.R.string.termux_run_command_permission_missing), Toast.LENGTH_LONG).show();
         } catch (Exception error) {
-            Toast.makeText(context, "Cannot start Termux setup: " + error.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(context, context.getString(com.androidbuilder.R.string.termux_setup_start_failed, error.getMessage()), Toast.LENGTH_LONG).show();
         }
     }
 }

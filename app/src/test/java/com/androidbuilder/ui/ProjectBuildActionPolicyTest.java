@@ -20,6 +20,13 @@ public class ProjectBuildActionPolicyTest {
     }
 
     @Test
+    public void buildIsBlockedAfterPlanTaskExecutionFailure() {
+        BuildJobRecord taskFailure = new BuildJobRecord(1, 1, "failed", "coding_failed", "/tmp/build.log", null, "Task failed", 0, 0, 0);
+
+        assertFalse(ProjectBuildActionPolicy.canBuild(false, true, taskFailure));
+    }
+
+    @Test
     public void repairIsAvailableOnlyForRepairableFailedBuilds() {
         BuildJobRecord failed = new BuildJobRecord(1, 1, "failed", "embedded_runtime_finished", "/tmp/build.log", null, "javac failed", 0, 0, 0);
         BuildJobRecord success = new BuildJobRecord(2, 1, "success", "embedded_runtime_finished", "/tmp/build.log", "/tmp/app.apk", null, 0, 0, 0);

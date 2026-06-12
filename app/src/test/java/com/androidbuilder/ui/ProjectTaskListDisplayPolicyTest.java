@@ -29,7 +29,37 @@ public class ProjectTaskListDisplayPolicyTest {
 
         assertEquals("foundation", groups.get(0).key);
         assertEquals("data", groups.get(1).key);
+        assertEquals("Foundation", groups.get(0).label);
         assertEquals(2, groups.get(1).tasks.size());
+    }
+
+    @Test
+    public void groupsUseChineseLabelsWhenRequested() {
+        List<ProjectTaskRecord> tasks = Arrays.asList(
+                task(0, "Gradle", instructionWithProduces("foundation"), "done"),
+                task(1, "Stats", instructionWithProduces("stats"), "pending"),
+                task(2, "Polish", instructionWithProduces("polish"), "pending"));
+
+        List<ProjectTaskListDisplayPolicy.Group> groups = ProjectTaskListDisplayPolicy.groups(tasks, false, true);
+
+        assertEquals("基础", groups.get(0).label);
+        assertEquals("统计", groups.get(1).label);
+        assertEquals("收尾", groups.get(2).label);
+    }
+
+    @Test
+    public void expandedGroupsPreserveTaskSortOrderWhenGroupKeysRepeat() {
+        List<ProjectTaskRecord> tasks = Arrays.asList(
+                task(0, "Data first", instructionWithProduces("data"), "done"),
+                task(1, "UI middle", instructionWithProduces("ui"), "pending"),
+                task(2, "Data later", instructionWithProduces("data"), "pending"));
+
+        List<ProjectTaskListDisplayPolicy.Group> groups = ProjectTaskListDisplayPolicy.groups(tasks, false);
+
+        assertEquals(3, groups.size());
+        assertEquals("Data first", groups.get(0).tasks.get(0).title);
+        assertEquals("UI middle", groups.get(1).tasks.get(0).title);
+        assertEquals("Data later", groups.get(2).tasks.get(0).title);
     }
 
     @Test

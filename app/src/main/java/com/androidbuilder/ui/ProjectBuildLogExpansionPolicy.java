@@ -15,11 +15,4 @@ public final class ProjectBuildLogExpansionPolicy {
         }
         return userExpanded;
     }
-
-    public static boolean shouldShowToggle(BuildJobRecord job) {
-        if (job == null || job.logsPath == null || job.logsPath.trim().isEmpty()) {
-            return false;
-        }
-        return !("building".equals(job.status) || "queued".equals(job.status) || "generating".equals(job.status));
-    }
 }

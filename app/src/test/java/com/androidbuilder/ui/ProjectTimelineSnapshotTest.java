@@ -85,4 +85,45 @@ public class ProjectTimelineSnapshotTest {
         assertEquals(1, snapshot.entryAt(0).sourceIndex);
         assertNotNull(snapshot.buildLogJob(snapshot.entryAt(0)));
     }
+
+    @Test
+    public void foldsStandalonePlanExecutionFailureMessageIntoFailedBuildLogCard() {
+        String error = "Merged 0 Hermes agent result(s), failed 1.\n"
+                + "Task 637/2 agent failed: Generated source policy blocked missing XML id: R.id.toolbar in BaseActivity.java.";
+        BuildJobRecord job = new BuildJobRecord(7, 1, "failed", "coding_failed", "/tmp/build.log", null, error, 0, 100, 300);
+
+        ProjectTimelineSnapshot snapshot = ProjectTimelineSnapshot.create(
+                Arrays.asList(
+                        new ChatMessage(1, 1, "assistant", "并行执行下一批：Java source wiring", 100, 7L),
+                        new ChatMessage(2, 1, "assistant", "执行计划失败：" + error, 300, null)),
+                false,
+                null,
+                Collections.emptyList(),
+                job,
+                id -> job);
+
+        assertEquals(1, snapshot.size());
+        assertEquals(ProjectTimelinePolicy.Kind.BUILD_LOG, snapshot.entryAt(0).kind);
+        assertEquals(0, snapshot.entryAt(0).sourceIndex);
+        assertNotNull(snapshot.buildLogJob(snapshot.entryAt(0)));
+    }
+
+    @Test
+    public void showsLatestFailedPlanJobEvenWithoutLinkedMessages() {
+        BuildJobRecord job = new BuildJobRecord(7, 1, "failed", "coding_failed", "/tmp/build.log", null, "Task failed before dispatch", 0, 100, 300);
+
+        ProjectTimelineSnapshot snapshot = ProjectTimelineSnapshot.create(
+                Collections.singletonList(new ChatMessage(1, 1, "user", "执行计划", 100, null)),
+                false,
+                null,
+                Collections.emptyList(),
+                job,
+                id -> null);
+
+        assertEquals(2, snapshot.size());
+        assertEquals(ProjectTimelinePolicy.Kind.MESSAGE, snapshot.entryAt(0).kind);
+        assertEquals(ProjectTimelinePolicy.Kind.BUILD_LOG, snapshot.entryAt(1).kind);
+        assertEquals(-1, snapshot.entryAt(1).sourceIndex);
+        assertNotNull(snapshot.buildLogJob(snapshot.entryAt(1)));
+    }
 }

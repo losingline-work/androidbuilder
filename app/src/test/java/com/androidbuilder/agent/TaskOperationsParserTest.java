@@ -5,7 +5,9 @@ import com.androidbuilder.model.TaskOperations;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 public class TaskOperationsParserTest {
     @Test
@@ -18,6 +20,47 @@ public class TaskOperationsParserTest {
         assertEquals("Wrote files", operations.summary);
         assertEquals(2, operations.operations.size());
         assertEquals("settings.gradle", operations.operations.get(0).path);
+        assertFalse(operations.blocked);
+    }
+
+    @Test
+    public void fromJson_acceptsDropOperationsForDraftCorrection() throws Exception {
+        TaskOperations operations = TaskOperationsParser.fromJson("{\"summary\":\"Drop stale file\",\"operations\":[" +
+                "{\"action\":\"drop\",\"path\":\"app/src/main/res/values/extra.xml\",\"content\":\"\"}" +
+                "]}");
+
+        assertEquals(1, operations.operations.size());
+        assertEquals("drop", operations.operations.get(0).action);
+        assertEquals("app/src/main/res/values/extra.xml", operations.operations.get(0).path);
+        assertEquals("", operations.operations.get(0).content);
+    }
+
+    @Test
+    public void fromJson_acceptsBlockedResponseWithReasonAndPrerequisiteWork() throws Exception {
+        TaskOperations operations = TaskOperationsParser.fromJson("{"
+                + "\"summary\":\"Cannot safely continue\","
+                + "\"blocked\":true,"
+                + "\"blockedReason\":\"layouts missing\","
+                + "\"prerequisiteWork\":\"create manifest, values, and layouts first\""
+                + "}");
+
+        assertTrue(operations.blocked);
+        assertEquals("Cannot safely continue", operations.summary);
+        assertEquals("layouts missing", operations.blockedReason);
+        assertEquals("create manifest, values, and layouts first", operations.prerequisiteWork);
+        assertEquals(0, operations.operations.size());
+    }
+
+    @Test
+    public void fromJson_rejectsBlockedResponseWithoutReason() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> TaskOperationsParser.fromJson("{"
+                + "\"summary\":\"Cannot safely continue\","
+                + "\"blocked\":true,"
+                + "\"blockedReason\":\"\","
+                + "\"prerequisiteWork\":\"create layouts first\""
+                + "}"));
+
+        assertEquals("Task operation list is empty.", error.getMessage());
     }
 
     @Test

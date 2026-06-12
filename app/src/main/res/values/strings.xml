@@ -10,6 +10,7 @@
     <string name="build_log_running">Building</string>
     <string name="build_log_success">Build succeeded</string>
     <string name="build_log_failed">Build failed</string>
+    <string name="task_execution_failed">Task execution failed</string>
     <string name="repair_record">Repair record</string>
     <string name="build_waiting">Preparing build...</string>
     <string name="conversation">Conversation</string>
@@ -20,8 +21,6 @@
     <string name="export_log_saved">Log saved.</string>
     <string name="export_log_unavailable">Log file is not available.</string>
     <string name="export_log_failed">Export failed: %1$s</string>
-    <string name="expand_log">Expand Log</string>
-    <string name="collapse_log">Collapse Log</string>
     <string name="copy_message">Copy</string>
     <string name="delete_message">Delete</string>
     <string name="delete_message_title">Delete message?</string>
@@ -113,6 +112,16 @@
     <string name="runtime_installed">Runtime installed.</string>
     <string name="runtime_install_failed">Runtime install failed: %1$s</string>
     <string name="runtime_url_required">Enter a bootstrap zip URL first.</string>
+    <string name="runtime_download_http_failed">Download failed: HTTP %1$d</string>
+    <string name="runtime_bundled_bootstrap_missing">Bundled bootstrap zip not found. Expected one of: runtime/bootstrap-aarch64.zip, runtime/bootstrap-arm64.zip</string>
+    <string name="embedded_runtime_toolchain_incomplete">Embedded runtime toolchain is incomplete.\nMissing: %1$s\nInstall a full Android arm64 runtime bootstrap, then retry the build.</string>
+    <string name="embedded_runtime_gradle_missing">Embedded runtime is initialized, but no Gradle executable was found.\nExpected one of:\n - %1$s\n - %2$s\nInstall or bundle a GPL-compatible Android arm64 bootstrap that provides shell/coreutils/JDK/Gradle/Android SDK/aapt2.</string>
+    <string name="termux_start_failed">Cannot start Termux. Install Termux and enable RUN_COMMAND.</string>
+    <string name="termux_run_command_permission_missing">Missing Termux RUN_COMMAND permission. Grant it in Android Settings.</string>
+    <string name="termux_setup_start_failed">Cannot start Termux setup: %1$s</string>
+    <string name="offline_maven_open_zip_failed">Cannot open selected zip.</string>
+    <string name="offline_maven_unsafe_zip_entry">Unsafe zip entry: %1$s</string>
+    <string name="create_directory_failed">Cannot create directory: %1$s</string>
     <string name="run_termux_setup">Run Termux Setup</string>
     <string name="request_termux_permission">Request Termux command permission</string>
     <string name="copy_adb_grant">Copy ADB permission command</string>
@@ -189,7 +198,6 @@
     <string name="repair_build_not_model_repairable">This failure needs environment, dependency, or build backend changes before source repair.</string>
     <string name="install">Install</string>
     <string name="hermes_decisions">Hermes</string>
-    <string name="hermes_decisions_empty">No Hermes decisions yet.</string>
     <string name="install_success">APK installed.</string>
     <string name="install_failed">Install failed: %1$s</string>
     <string name="install_permission_required">Allow installs, then tap Install again.</string>

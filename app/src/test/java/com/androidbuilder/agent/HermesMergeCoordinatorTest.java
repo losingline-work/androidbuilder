@@ -99,17 +99,7 @@ public class HermesMergeCoordinatorTest {
                 1,
                 "docs/rejected.txt",
                 new FileOperation("write", "docs/rejected.txt", "bad\n"),
-                new HermesTaskContract(
-                        Collections.emptyList(),
-                        Collections.singletonList("docs/expected.txt"),
-                        Collections.emptyList(),
-                        Collections.emptyList(),
-                        Collections.emptyList(),
-                        Collections.emptyList(),
-                        Collections.emptyList(),
-                        Collections.emptyList(),
-                        "",
-                        false));
+                severelyUnderDeliveredContract());
         HermesAgentResult clean = resultWithOperation(
                 2,
                 "docs/clean.txt",
@@ -149,17 +139,7 @@ public class HermesMergeCoordinatorTest {
     @Test
     public void allFailedYieldsNoMergedResults() throws Exception {
         File source = temporaryFolder.newFolder("source");
-        HermesTaskContract contract = new HermesTaskContract(
-                Collections.emptyList(),
-                Collections.singletonList("docs/expected.txt"),
-                Collections.emptyList(),
-                Collections.emptyList(),
-                Collections.emptyList(),
-                Collections.emptyList(),
-                Collections.emptyList(),
-                Collections.emptyList(),
-                "",
-                false);
+        HermesTaskContract contract = severelyUnderDeliveredContract();
         HermesAgentResult first = resultWithContract(1, "docs/one.txt", new FileOperation("write", "docs/one.txt", "one\n"), contract);
         HermesAgentResult second = resultWithContract(2, "docs/two.txt", new FileOperation("write", "docs/two.txt", "two\n"), contract);
 
@@ -203,6 +183,24 @@ public class HermesMergeCoordinatorTest {
                 Collections.singletonList(path),
                 "ok",
                 null);
+    }
+
+    private HermesTaskContract severelyUnderDeliveredContract() {
+        return new HermesTaskContract(
+                Collections.emptyList(),
+                Arrays.asList(
+                        "docs/expected-one.txt",
+                        "docs/expected-two.txt",
+                        "docs/expected-three.txt",
+                        "docs/expected-four.txt"),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                "",
+                false);
     }
 
     private HermesAgentResult resultWithError(int sortOrder, Exception error) {

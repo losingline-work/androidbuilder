@@ -22,6 +22,9 @@ import com.androidbuilder.util.AppSettings;
 import com.androidbuilder.util.ActiveWorkRegistry;
 import com.androidbuilder.util.NameUtils;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -70,6 +73,24 @@ public class AgentService {
     private static class ParallelRepairMergeException extends Exception {
         ParallelRepairMergeException(String message) {
             super(message);
+        }
+    }
+
+    private static class FailureStreak {
+        String lastErrorSignature = "";
+        int sameErrorStreak = 0;
+
+        void remember(String errorMessage) {
+            String signature = DraftCorrectionPolicy.errorSignature(errorMessage);
+            if (signature.isEmpty()) {
+                return;
+            }
+            if (signature.equals(lastErrorSignature)) {
+                sameErrorStreak++;
+            } else {
+                lastErrorSignature = signature;
+                sameErrorStreak = 1;
+            }
         }
     }
 
@@ -267,6 +288,7 @@ public class AgentService {
         }
         repository.saveProjectPlan(projectId, plan, "planned", null);
         repository.clearProjectTasks(projectId);
+        deleteAllTaskDraftsSafely(projectId);
         repository.addMessage(projectId, "assistant", plan, null);
         CapabilityAssessment assessment = assessCapability(plan + "\n" + prompt);
         if (assessment.hasRisks()) {
@@ -320,6 +342,11 @@ public class AgentService {
             while (true) {
                 List<ProjectTaskRecord> tasks = repository.listProjectTasks(projectId);
                 List<ProjectTaskRecord> allowedTasks = HermesDispatchBudget.allowedTasks(tasks, dispatchCounts);
+                allowedTasks = SequentialFailureGate.filter(
+                        tasks,
+                        allowedTasks,
+                        dispatchCounts,
+                        SequentialFailureGate.doneProducesForTasks(tasks));
                 HermesParallelBatch scheduledBatch = HermesParallelScheduler.nextBatch(
                         allowedTasks,
                         repository.listActiveHermesAgentRuns(projectId),
@@ -394,6 +421,7 @@ public class AgentService {
             ProjectTaskRecord next = repository.nextPendingProjectTask(projectId);
             List<ProjectTaskRecord> finalTasks = repository.listProjectTasks(projectId);
             int failedTasks = countTasksWithStatus(finalTasks, "failed");
+            ProjectTaskRecord exhaustedFailure = SequentialFailureGate.firstExhaustedFailure(finalTasks, dispatchCounts);
             boolean complete = next == null && failedTasks == 0;
             repository.updateProjectPlanStatus(projectId, complete ? "generated" : "planned", job.id);
             repository.updateHermesExecutionRun(executionRun.id, failedTasks == 0 ? "done" : "failed", safeSourceHash(sourceDir));
@@ -403,13 +431,15 @@ public class AgentService {
             FileUtils.zipDirectory(repository.sourceDir(projectId), projectZip);
 
             String message;
-            if (completedTitles.isEmpty()) {
+            if (exhaustedFailure != null) {
+                message = exhaustedFailurePauseMessage(exhaustedFailure.title, chinese);
+            } else if (completedTitles.isEmpty()) {
                 message = chinese ? "所有计划任务已完成。下一步可以构建。" : "All plan tasks are done. Next, build the project.";
             } else {
                 String completedTitle = executionCompletionTitle(completedTitles, chinese);
                 message = taskCompletionMessage(completedTitle, next != null && failedTasks == 0, buildRequiredAfter, chinese);
             }
-            if (failedTasks > 0) {
+            if (failedTasks > 0 && exhaustedFailure == null) {
                 message += chinese
                         ? "；仍有 " + failedTasks + " 个任务失败，可查看日志后再次执行计划重试。"
                         : "; " + failedTasks + " task(s) still failed. Review the logs and run the plan again to retry.";
@@ -1099,6 +1129,9 @@ public class AgentService {
                 repository.listMessages(projectId), CODING_USER_REQUIREMENTS_WINDOW, CODING_USER_REQUIREMENTS_CHARS);
         IllegalArgumentException lastPolicyError = null;
         String previousFailure = initialFailureContext == null ? "" : initialFailureContext.trim();
+        TaskOperations previousDraft = null;
+        FailureStreak draftFailureStreak = new FailureStreak();
+        draftFailureStreak.remember(previousFailure);
         HermesTaskDecision taskDecision = HermesTaskScheduler.decide(
                 HermesTaskContractCodec.extractFromInstruction(taskInstruction),
                 previousFailure,
@@ -1109,6 +1142,8 @@ public class AgentService {
         int negotiationRounds = 0;
         int preflightRewrites = 0;
         int cloudReviewsUsed = 0;
+        boolean scopeExpanded = false;
+        boolean scopeExpandedRetryPending = false;
         List<FailureFingerprint> failureFingerprints = new ArrayList<>();
         for (int attempt = 1; attempt <= POLICY_REWRITE_ATTEMPTS; attempt++) {
             if ((repairFlow || !previousFailure.isEmpty()) && retryContext.isEmpty()) {
@@ -1142,27 +1177,68 @@ public class AgentService {
                     }
                 } while (ContextNegotiationPolicy.shouldContinueNegotiation(negotiation, negotiationRounds));
             }
-            String requestLog = taskOperationsRequestForAiLog(planContent, taskTitle, instruction, snapshot, retryContext, attempt);
+            boolean correctionMode = DraftCorrectionPolicy.shouldCorrect(
+                    previousDraft != null,
+                    previousFailure,
+                    draftFailureStreak.sameErrorStreak);
+            String previousDraftSection = correctionMode
+                    ? TaskDraftContextPolicy.correctionSection(previousDraft, previousFailure, TaskDraftContextPolicy.DRAFT_SECTION_LIMIT)
+                    : "";
+            if (previousDraftSection.isEmpty()) {
+                correctionMode = false;
+            }
+            String requestMode = scopeExpandedRetryPending
+                    ? BlockedTaskPolicy.MODE_SCOPE_EXPANDED
+                    : taskOperationMode(correctionMode);
+            String requestLog = taskOperationsRequestForAiLog(planContent, taskTitle, instruction, snapshot, retryContext, previousDraftSection, requestMode, attempt);
             final String attemptInstruction = instruction;
             final String attemptSnapshot = snapshot;
             final String attemptRetryContext = retryContext;
+            final String attemptPreviousDraftSection = previousDraftSection;
+            final boolean attemptCorrectionMode = correctionMode;
+            scopeExpandedRetryPending = false;
             updateStreamPhase(callTag, "coding", attempt);
             String operationsJson = recordCloudAiCall(
                     projectId,
                     linkedBuildJobId,
                     (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
                     requestLog,
-                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, chinese, callTag),
+                    () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, attemptPreviousDraftSection, chinese, callTag),
                     taskId);
             try {
                 TaskOperations operations = TaskOperationsParser.fromJson(operationsJson);
+                if (operations.blocked) {
+                    String blockedSummary = BlockedTaskPolicy.blockedSummary(operations);
+                    if (BlockedTaskPolicy.shouldExpandScope(operations, scopeExpanded)) {
+                        scopeExpanded = true;
+                        scopeExpandedRetryPending = true;
+                        previousDraft = null;
+                        previousFailure = blockedSummary;
+                        draftFailureStreak.remember(previousFailure);
+                        retryContext = mergeRetryContext(retryContext, blockedSummary);
+                        instruction = BlockedTaskPolicy.scopeExpandedInstruction(instruction, operations);
+                        snapshot = sourceSnapshot(sourceDir, BlockedTaskPolicy.snapshotFocus(operations));
+                        FileUtils.appendText(logs, (chinese ? "任务前置缺失，扩展一次执行边界：" : "Task reported missing prerequisites; expanding scope once: ")
+                                + blockedSummary + "\n");
+                        attempt--;
+                        continue;
+                    }
+                    throw new IllegalStateException(blockedSummary);
+                }
+                if (attemptCorrectionMode) {
+                    operations = TaskOperationsMergePolicy.merge(previousDraft, operations);
+                } else {
+                    operations = TaskOperationsMergePolicy.stripDrops(operations);
+                }
+                previousDraft = operations;
+                String reviewedOperationsJson = taskOperationsJson(operations);
                 HermesTaskContract taskContract = HermesTaskContractCodec.extractFromInstruction(instruction);
                 HermesReview contractReview = HermesTaskContractGuard.review(taskContract, operations);
                 String contractTitle = (chinese ? "Hermes · 任务契约预检" : "Hermes · task contract preflight") + " #" + attempt;
                 if (taskContract.hasSignals()) {
                     appendHermesReviewLog(logs, contractTitle, contractReview);
                     recordHermesReviewAi(projectId, linkedBuildJobId, contractTitle,
-                            deterministicPreflightRequest(taskTitle, instruction, operationsJson), contractReview, taskId);
+                            deterministicPreflightRequest(taskTitle, instruction, reviewedOperationsJson), contractReview, taskId);
                 }
                 if (contractReview.decision == HermesReview.Decision.REWRITE
                         && contractReview.rewriteInstruction != null
@@ -1174,16 +1250,17 @@ public class AgentService {
                             GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview("hermes-contract-guard", contractReview)));
                     previousFailure = mergeRetryContext(previousFailure,
                             rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromHermesReview("hermes-contract-guard", contractReview)));
+                    draftFailureStreak.remember(previousFailure);
                     retryContext = mergeRetryContext(retryContext, previousFailure);
                     instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, previousFailure);
-                    snapshot = sourceSnapshot(sourceDir);
+                    snapshot = sourceSnapshot(sourceDir, previousFailure);
                     continue;
                 }
                 HermesReview deterministicReview = TaskOperationsPreflight.review(operations, snapshot);
                 String deterministicTitle = (chinese ? "确定性预检" : "Deterministic preflight") + " #" + attempt;
                 appendHermesReviewLog(logs, deterministicTitle, deterministicReview);
                 recordHermesReviewAi(projectId, linkedBuildJobId, deterministicTitle,
-                        deterministicPreflightRequest(taskTitle, instruction, operationsJson), deterministicReview, taskId);
+                        deterministicPreflightRequest(taskTitle, instruction, reviewedOperationsJson), deterministicReview, taskId);
                 // Pre-apply structural rewrites are capped and never throw: they must not starve the
                 // policy-error retry budget, and AndroidSourceGuard + the real build are the final authority.
                 if (deterministicReview.decision == HermesReview.Decision.REWRITE
@@ -1196,9 +1273,10 @@ public class AgentService {
                             GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview(deterministicTitle, deterministicReview)));
                     previousFailure = mergeRetryContext(previousFailure,
                             rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromHermesReview(deterministicTitle, deterministicReview)));
+                    draftFailureStreak.remember(previousFailure);
                     retryContext = mergeRetryContext(retryContext, previousFailure);
                     instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, previousFailure);
-                    snapshot = sourceSnapshot(sourceDir);
+                    snapshot = sourceSnapshot(sourceDir, previousFailure);
                     continue;
                 }
                 LocalGuardResult preflight = reviewOperationsWithLocalRules(projectId, linkedBuildJobId, snapshot, operations, chinese);
@@ -1211,9 +1289,10 @@ public class AgentService {
                     }
                     previousFailure = mergeRetryContext(previousFailure,
                             rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromLocalGuardResult("local-guard-preflight", preflight)));
+                    draftFailureStreak.remember(previousFailure);
                     retryContext = mergeRetryContext(retryContext, previousFailure);
                     instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, preflight.additionalInstruction);
-                    snapshot = sourceSnapshot(sourceDir);
+                    snapshot = sourceSnapshot(sourceDir, previousFailure);
                     continue;
                 }
                 updateStreamPhase(callTag, "reviewing", attempt);
@@ -1224,7 +1303,7 @@ public class AgentService {
                         taskTitle,
                         instruction,
                         snapshot,
-                        operationsJson,
+                        reviewedOperationsJson,
                         operations,
                         negotiation,
                         repairFlow || !previousFailure.isEmpty(),
@@ -1243,16 +1322,19 @@ public class AgentService {
                             GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview("hermes-review", hermesReview)));
                     previousFailure = mergeRetryContext(previousFailure,
                             rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromHermesReview("hermes-review", hermesReview)));
+                    draftFailureStreak.remember(previousFailure);
                     retryContext = mergeRetryContext(retryContext, previousFailure);
                     instruction = LocalGuardInstructionComposer.forPreflightRewrite(instruction, previousFailure);
-                    snapshot = sourceSnapshot(sourceDir);
+                    snapshot = sourceSnapshot(sourceDir, previousFailure);
                     continue;
                 }
                 updateStreamPhase(callTag, "merging", attempt);
                 operationsWriter.apply(sourceDir, operations);
+                deleteTaskDraftSafely(projectId, taskId);
                 return operations;
             } catch (IllegalArgumentException policyError) {
                 if (!isRewriteablePolicyError(policyError) || attempt == POLICY_REWRITE_ATTEMPTS) {
+                    saveTaskDraftSafely(projectId, taskId, previousDraft);
                     throw policyError;
                 }
                 lastPolicyError = policyError;
@@ -1260,6 +1342,7 @@ public class AgentService {
                 // sees the offending caller and the real class declarations in full (untruncated).
                 snapshot = sourceSnapshot(sourceDir, policyError.getMessage());
                 previousFailure = policyError.getMessage();
+                draftFailureStreak.remember(previousFailure);
                 retryContext = mergeRetryContext(retryContext,
                         rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromPolicyError(policyError.getMessage())));
                 String policyInstruction = PolicyRewriteInstruction.create(instruction, policyError.getMessage(), attempt + 1);
@@ -1274,6 +1357,7 @@ public class AgentService {
                 }
             }
         }
+        saveTaskDraftSafely(projectId, taskId, previousDraft);
         throw lastPolicyError == null ? new IllegalStateException("Task operation generation failed.") : lastPolicyError;
     }
 
@@ -1318,6 +1402,30 @@ public class AgentService {
 
     private String mergeRetryContext(String existing, String addition) {
         return RetryContextPolicy.merge(existing, addition);
+    }
+
+    private void saveTaskDraftSafely(long projectId, long taskId, TaskOperations draft) {
+        try {
+            new TaskDraftStore(repository.projectRoot(projectId)).save(taskId, draft);
+        } catch (Exception ignored) {
+            // Draft memory is an optimization for retries and must never mask the real task error.
+        }
+    }
+
+    private void deleteTaskDraftSafely(long projectId, long taskId) {
+        try {
+            new TaskDraftStore(repository.projectRoot(projectId)).delete(taskId);
+        } catch (Exception ignored) {
+            // Best-effort cleanup only.
+        }
+    }
+
+    private void deleteAllTaskDraftsSafely(long projectId) {
+        try {
+            new TaskDraftStore(repository.projectRoot(projectId)).deleteAll();
+        } catch (Exception ignored) {
+            // Best-effort cleanup only.
+        }
     }
 
     private String rememberFailure(List<FailureFingerprint> history, FailureFingerprint fingerprint) {
@@ -1570,6 +1678,23 @@ public class AgentService {
                 + "\n\nGenerated operations JSON:\n" + truncateForInlineLog(operationsJson, 24000);
     }
 
+    private static String taskOperationsJson(TaskOperations operations) throws Exception {
+        JSONObject json = new JSONObject();
+        json.put("summary", operations == null || operations.summary == null ? "" : operations.summary);
+        JSONArray array = new JSONArray();
+        if (operations != null && operations.operations != null) {
+            for (FileOperation operation : operations.operations) {
+                JSONObject item = new JSONObject();
+                item.put("action", operation.action == null ? "" : operation.action);
+                item.put("path", operation.path == null ? "" : operation.path);
+                item.put("content", operation.content == null ? "" : operation.content);
+                array.put(item);
+            }
+        }
+        json.put("operations", array);
+        return json.toString();
+    }
+
     private String hermesReviewRequestForAiLog(String taskTitle, String taskInstruction, String snapshot, String operationsJson, String contextScoutNotes) {
         return "Task title:\n" + taskTitle
                 + "\n\nTask instruction:\n" + truncateForInlineLog(taskInstruction, 12000)
@@ -1687,25 +1812,38 @@ public class AgentService {
         return text.toString().trim();
     }
 
-    private String taskOperationsRequestForAiLog(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, int attempt) {
-        return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, attempt);
+    private String taskOperationsRequestForAiLog(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, String previousDraftSection, String mode, int attempt) {
+        return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, previousDraftSection, mode, attempt);
     }
 
     private static String taskOperationsRequestForAiLogText(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, int attempt) {
+        return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, "", taskOperationMode(false), attempt);
+    }
+
+    private static String taskOperationsRequestForAiLogText(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, String previousDraftSection, boolean correctionMode, int attempt) {
+        return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, previousDraftSection, taskOperationMode(correctionMode), attempt);
+    }
+
+    private static String taskOperationsRequestForAiLogText(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, String previousDraftSection, String mode, int attempt) {
         String retrySection = retryContext == null || retryContext.trim().isEmpty()
                 ? ""
                 : "\n\nAdditional retry/repair context:\n" + truncateForInlineLogText(retryContext, 12000);
+        String draftSection = previousDraftSection == null || previousDraftSection.trim().isEmpty()
+                ? ""
+                : "\n\n" + truncateForInlineLogText(previousDraftSection, TaskDraftContextPolicy.DRAFT_SECTION_LIMIT);
         String cleanInstruction = HermesTaskContractCodec.stripFromInstruction(instruction);
         String contractContext = HermesTaskContractCodec.promptContextFromInstruction(instruction);
         String contractSection = contractContext.isEmpty()
                 ? ""
                 : "\n\n" + contractContext;
         return "Attempt: " + attempt
+                + "\nMode: " + cleanTaskOperationMode(mode)
                 + "\n\nApproved engineering plan:\n" + truncateForInlineLogText(planContent, 12000)
                 + "\n\nTask title:\n" + taskTitle
                 + "\n\nTask instruction:\n" + cleanInstruction
                 + contractSection
                 + retrySection
+                + draftSection
                 + "\n\nCurrent source tree:\n" + truncateForInlineLogText(snapshot, 24000);
     }
 
@@ -1745,8 +1883,37 @@ public class AgentService {
         return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, attempt);
     }
 
+    static String taskOperationsRequestForAiLogForTest(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, String previousDraftSection, boolean correctionMode, int attempt) {
+        return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, previousDraftSection, correctionMode, attempt);
+    }
+
+    static String taskOperationsRequestForAiLogForTest(String planContent, String taskTitle, String instruction, String snapshot, String retryContext, String previousDraftSection, boolean correctionMode, int attempt, String mode) {
+        return taskOperationsRequestForAiLogText(planContent, taskTitle, instruction, snapshot, retryContext, previousDraftSection, mode, attempt);
+    }
+
+    private static String taskOperationMode(boolean correctionMode) {
+        return correctionMode ? "correction" : "full";
+    }
+
+    private static String cleanTaskOperationMode(String mode) {
+        String text = mode == null ? "" : mode.trim();
+        return text.isEmpty() ? "full" : text;
+    }
+
     static String taskCompletionMessageForTest(String taskTitle, boolean hasNextTask, boolean buildRequiredAfter, boolean chinese) {
         return taskCompletionMessage(taskTitle, hasNextTask, buildRequiredAfter, chinese);
+    }
+
+    static String exhaustedFailurePauseMessageForTest(String taskTitle, boolean chinese) {
+        return exhaustedFailurePauseMessage(taskTitle, chinese);
+    }
+
+    private static String exhaustedFailurePauseMessage(String taskTitle, boolean chinese) {
+        String title = taskTitle == null || taskTitle.trim().isEmpty() ? "未知任务" : taskTitle.trim();
+        if (chinese) {
+            return "任务「" + title + "」已失败且重试耗尽，其后续任务已暂停以避免在缺失前置产物上空跑；请点击执行下一步重试，或调整需求后重新生成计划。";
+        }
+        return "Task \"" + title + "\" failed and exhausted its retries; downstream tasks are paused to avoid running without missing prerequisites. Run the next step to retry, or adjust the requirements and regenerate the plan.";
     }
 
     private static String taskCompletionMessage(String taskTitle, boolean hasNextTask, boolean buildRequiredAfter, boolean chinese) {
@@ -1839,6 +2006,7 @@ public class AgentService {
             if (ImplementationTaskNormalizer.canReplaceExistingTasks(existingTasks)
                     && ImplementationTaskNormalizer.changed(existingTasks, normalizedExisting)) {
                 repository.replaceProjectTasks(projectId, normalizedExisting);
+                deleteAllTaskDraftsSafely(projectId);
                 repository.addMessage(projectId, "assistant", taskListMessage(normalizedExisting, chinese), null);
             }
             return;
@@ -1851,6 +2019,7 @@ public class AgentService {
                 () -> openAiClient.createImplementationTasks(plan.content, chinese));
         List<ProjectTaskRecord> tasks = ImplementationTaskNormalizer.normalize(ImplementationTaskParser.fromJson(tasksJson));
         repository.replaceProjectTasks(projectId, tasks);
+        deleteAllTaskDraftsSafely(projectId);
         repository.addMessage(projectId, "assistant", taskListMessage(tasks, chinese), null);
     }
 

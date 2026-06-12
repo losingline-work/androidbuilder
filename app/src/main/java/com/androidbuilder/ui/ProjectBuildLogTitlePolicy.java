@@ -10,6 +10,7 @@ public final class ProjectBuildLogTitlePolicy {
         BUILD_RUNNING,
         BUILD_SUCCESS,
         BUILD_FAILED,
+        TASK_EXECUTION_FAILED,
         REPAIR_RECORD
     }
 
@@ -23,6 +24,9 @@ public final class ProjectBuildLogTitlePolicy {
         String phase = job.phase == null ? "" : job.phase.toLowerCase(Locale.ROOT);
         if (phase.contains("repair")) {
             return Title.REPAIR_RECORD;
+        }
+        if (ProjectJobStatePolicy.isTaskExecutionFailure(job)) {
+            return Title.TASK_EXECUTION_FAILED;
         }
         String status = job.status == null ? "" : job.status.toLowerCase(Locale.ROOT);
         if ("success".equals(status) || "built".equals(status)) {

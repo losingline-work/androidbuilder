@@ -128,10 +128,14 @@ public class OpenAiClient {
     }
 
     public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, boolean chinese, String callTag) throws Exception {
+        return createTaskOperations(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, "", chinese, callTag);
+    }
+
+    public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection, boolean chinese, String callTag) throws Exception {
         return completeChat(
                 taskOperationsSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
-                taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext),
+                taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, previousDraftSection),
                 0.2,
                 chinese,
                 CODING_READ_TIMEOUT_MS,
@@ -745,16 +749,24 @@ public class OpenAiClient {
     }
 
     static String taskOperationsUserPromptForTest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext) {
-        return taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext);
+        return taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, "");
     }
 
-    private static String taskOperationsUserPrompt(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext) {
+    static String taskOperationsUserPromptForTest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection) {
+        return taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, previousDraftSection);
+    }
+
+    private static String taskOperationsUserPrompt(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection) {
         String requirementsSection = recentRequirements == null || recentRequirements.trim().isEmpty()
                 ? ""
                 : "\n\nRecent user requirements and clarifications (honor these even if the plan omits them):\n" + recentRequirements.trim();
         String retrySection = retryContext == null || retryContext.trim().isEmpty()
                 ? ""
                 : "\n\nAdditional retry/repair context:\n" + retryContext.trim();
+        String draftSection = previousDraftSection == null || previousDraftSection.trim().isEmpty()
+                ? ""
+                : "\n\n" + previousDraftSection.trim()
+                + "\n\nYou are CORRECTING your previous draft for this task, not rewriting it. Return only operations for files you are changing or adding; every other operation from your previous draft is preserved automatically and must NOT be resent. To remove a file from your previous draft that should not be written at all, return {\"action\":\"drop\",\"path\":\"...\"} for it. Keep the same JSON contract (summary + operations), unless missing prerequisites make the task unsafe within the current boundary; in that case return blocked=true with blockedReason and prerequisiteWork.";
         String cleanInstruction = HermesTaskContractCodec.stripFromInstruction(taskInstruction);
         String contractContext = HermesTaskContractCodec.promptContextFromInstruction(taskInstruction);
         String contractSection = contractContext.isEmpty()
@@ -763,6 +775,7 @@ public class OpenAiClient {
         return "Approved engineering plan:\n\n" + plan
                 + requirementsSection
                 + retrySection
+                + draftSection
                 + "\n\nCurrent source tree:\n" + sourceSnapshot
                 + "\n\nExecute exactly this task:\nTitle: " + taskTitle
                 + "\nInstruction: " + cleanInstruction
@@ -775,7 +788,7 @@ public class OpenAiClient {
                 "Return only compact JSON with summary and operations. operations is an array of objects with action, path, and content. " +
                 "Supported actions are write and delete. Use write for full-file replacement. Use relative POSIX paths only. Simple tasks should still prefer one or two file operations; a resource or layout phase may return a small cohesive batch when those files must be written together. " +
                 "Keep each source file focused and small, ideally under about 250 lines; split large screens into separate Adapter, Helper, Dialog, or model classes instead of one giant file, so each write replaces a small file. " +
-                "Do not return an empty operations array; every task response must include at least one write or delete operation that advances the task. " +
+                "Do not return an empty operations array; every task response must include at least one write or delete operation that advances the task. If a missing prerequisite file or resource makes the task unsafe to complete within its current boundary, return a compact blocked response instead of guessing or writing unrelated files: {\"summary\":\"...\",\"blocked\":true,\"blockedReason\":\"...\",\"prerequisiteWork\":\"...\"}. " +
                 "Do not return markdown, comments outside JSON, explanations, build logs, or base64. " +
                 "Keep the generated source buildable with Android Gradle Plugin 8.7.3, compileSdk 34, minSdk 24, targetSdk 34, and Java 8-compatible source/target. " +
                 "Use Java + XML only. Do not write Kotlin, .kt files, kotlinOptions, Kotlin Gradle plugins, DataBinding, ViewBinding, Compose, Java lambdas, or arrow syntax. Use anonymous listener classes instead of lambdas, and do not include arrow-style examples in comments/Javadocs/strings. Prefer org.json over Gson unless a Gson dependency is already declared and allowed. " + dependencyPolicyPrompt + " " +

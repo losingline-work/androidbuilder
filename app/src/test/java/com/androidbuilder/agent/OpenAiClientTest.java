@@ -189,6 +189,25 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void taskOperationsUserPromptPlacesDraftCorrectionBeforeSourceTree() {
+        String prompt = OpenAiClient.taskOperationsUserPromptForTest(
+                "# Engineering Plan\nUpdate DAO",
+                "Fix DAO",
+                "Synchronize constructor",
+                "--- app/src/main/java/com/example/RecordDao.java ---\nclass RecordDao {}",
+                "",
+                "Retry context",
+                "Previous draft manifest:\n- write app/src/main/java/com/example/RecordDao.java");
+
+        assertTrue(prompt.contains("You are CORRECTING your previous draft for this task, not rewriting it."));
+        assertTrue(prompt.contains("blockedReason"));
+        assertTrue(prompt.contains("prerequisiteWork"));
+        assertTrue(prompt.contains("\"action\":\"drop\""));
+        assertTrue(prompt.indexOf("Previous draft manifest") < prompt.indexOf("Current source tree"));
+        assertTrue(prompt.indexOf("You are CORRECTING") < prompt.indexOf("Current source tree"));
+    }
+
+    @Test
     public void taskOperationsUserPromptRendersHermesTaskContract() throws Exception {
         String instruction = HermesTaskContractCodec.appendToInstruction(
                 "Create main layout.",

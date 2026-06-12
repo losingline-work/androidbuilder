@@ -16,8 +16,17 @@ final class BuildTimeoutPolicy {
     }
 
     static String timeoutMessage(long nowMs, long startedAtMs, long lastOutputAtMs) {
+        return timeoutMessage(nowMs, startedAtMs, lastOutputAtMs, false);
+    }
+
+    static String timeoutMessage(long nowMs, long startedAtMs, long lastOutputAtMs, boolean chinese) {
         long elapsedMinutes = Math.max(1L, (nowMs - startedAtMs) / 60000L);
         long idleMinutes = Math.max(1L, (nowMs - lastOutputAtMs) / 60000L);
+        if (chinese) {
+            return "构建运行 " + elapsedMinutes + " 分钟后超时。"
+                    + "距离上次构建输出已经 " + idleMinutes + " 分钟。"
+                    + "Gradle 依赖下载或工具链执行可能已卡住；请检查 Google Maven/Maven Central 网络访问后重试。";
+        }
         return "Build timed out after " + elapsedMinutes + " minute(s). " +
                 "Last build output was " + idleMinutes + " minute(s) ago. " +
                 "Gradle dependency downloads or toolchain execution may be stalled; check network access to Google Maven/Maven Central and retry.";

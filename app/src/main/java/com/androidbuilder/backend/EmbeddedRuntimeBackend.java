@@ -7,6 +7,7 @@ import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.embeddedruntime.EmbeddedRuntime;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.util.ActiveWorkRegistry;
+import com.androidbuilder.util.AppSettings;
 import com.androidbuilder.util.FileUtils;
 
 import java.io.BufferedReader;
@@ -62,9 +63,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             FileUtils.deleteRecursively(workDir);
             FileUtils.copyRecursively(repository.sourceDir(job.projectId), sourceWorkDir);
             if (!runtime.hasMinimumTools()) {
-                String error = "Embedded runtime toolchain is incomplete.\n" +
-                        "Missing: " + runtime.missingTools() + "\n" +
-                        "Install a full Android arm64 runtime bootstrap, then retry the build.\n";
+                String error = context.getString(com.androidbuilder.R.string.embedded_runtime_toolchain_incomplete, runtime.missingTools()) + "\n";
                 FileUtils.appendText(log, error);
                 repository.updateBuildJob(job.id, "failed", "embedded_runtime_missing_tools", log.getAbsolutePath(), null, error, job.retryCount);
                 repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
@@ -89,11 +88,10 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
 
             File gradle = gradleExecutable(sourceWorkDir);
             if (gradle == null) {
-                String error = "Embedded runtime is initialized, but no Gradle executable was found.\n" +
-                        "Expected one of:\n" +
-                        " - " + new File(runtime.bin(), "gradle").getAbsolutePath() + "\n" +
-                        " - " + new File(sourceWorkDir, "gradlew").getAbsolutePath() + "\n" +
-                        "Install or bundle a GPL-compatible Android arm64 bootstrap that provides shell/coreutils/JDK/Gradle/Android SDK/aapt2.\n";
+                String error = context.getString(
+                        com.androidbuilder.R.string.embedded_runtime_gradle_missing,
+                        new File(runtime.bin(), "gradle").getAbsolutePath(),
+                        new File(sourceWorkDir, "gradlew").getAbsolutePath()) + "\n";
                 FileUtils.appendText(log, error);
                 repository.updateBuildJob(job.id, "failed", "embedded_runtime_missing_tools", log.getAbsolutePath(), null, error, job.retryCount);
                 repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
@@ -105,7 +103,9 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             ProcessResult version = runCommand(sourceWorkDir, log, listener, job, gradle.getAbsolutePath(), "--version");
             if (version.exitCode != 0) {
                 boolean timeout = version.exitCode == 124;
-                String error = summarizeFailure(timeout ? "Gradle smoke test timed out" : "Gradle smoke test failed", version);
+                String error = summarizeFailure(timeout
+                        ? localized("Gradle 冒烟测试超时", "Gradle smoke test timed out")
+                        : localized("Gradle 冒烟测试失败", "Gradle smoke test failed"), version);
                 repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "embedded_runtime_gradle_start_failed", log.getAbsolutePath(), null, error, job.retryCount);
                 repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
                 listener.onJobChanged(job.projectId, job.id);
@@ -126,8 +126,8 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 if (resolve.exitCode != 0) {
                     boolean timeout = resolve.exitCode == 124;
                     String error = summarizeFailure(timeout
-                            ? "dependency resolution timed out"
-                            : "dependency_resolution_failed: a declared dependency could not be resolved from the configured repositories", resolve);
+                            ? localized("依赖解析超时", "dependency resolution timed out")
+                            : localized("依赖解析失败：声明的依赖无法从当前仓库解析", "dependency_resolution_failed: a declared dependency could not be resolved from the configured repositories"), resolve);
                     FileUtils.appendText(log, error + "\n");
                     repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "dependency_resolution_failed", log.getAbsolutePath(), null, error, job.retryCount);
                     repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
@@ -157,7 +157,12 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 repository.addMessage(job.projectId, "assistant", context.getString(com.androidbuilder.R.string.build_summary_success), job.id);
             } else {
                 boolean timeout = build.exitCode == 124;
-                String error = summarizeFailure(timeout ? "embedded runtime build timed out" : "embedded runtime build exited with " + build.exitCode + (apk == null ? " and did not produce an APK" : ""), build);
+                String error = summarizeFailure(timeout
+                        ? localized("内置运行环境构建超时", "embedded runtime build timed out")
+                        : localized(
+                                "内置运行环境构建退出码 " + build.exitCode + (apk == null ? "，且没有产出 APK" : ""),
+                                "embedded runtime build exited with " + build.exitCode + (apk == null ? " and did not produce an APK" : "")),
+                        build);
                 FileUtils.appendText(log, error + "\n");
                 repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "embedded_runtime_finished", log.getAbsolutePath(), null, error, job.retryCount);
                 repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
@@ -165,7 +170,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
         } catch (Exception error) {
             String message = error.getMessage() == null ? error.toString() : error.getMessage();
             try {
-                FileUtils.appendText(log, "Embedded runtime error: " + message + "\n");
+                FileUtils.appendText(log, localized("内置运行环境错误：", "Embedded runtime error: ") + message + "\n");
             } catch (Exception ignored) {
             }
             repository.updateBuildJob(job.id, "failed", "embedded_runtime_error", log.getAbsolutePath(), null, message, job.retryCount);
@@ -176,6 +181,10 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
 
     private String buildFailureMessage(String detail) {
         return context.getString(com.androidbuilder.R.string.build_summary_failed, firstDetailLine(detail));
+    }
+
+    private String localized(String chineseText, String englishText) {
+        return AppSettings.isChinese(context) ? chineseText : englishText;
     }
 
     private String firstDetailLine(String detail) {
@@ -587,7 +596,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                     if (BuildTimeoutPolicy.exceededTotalTimeout(now, startedAt) ||
                             BuildTimeoutPolicy.exceededIdleTimeout(now, lastOutputAt.get())) {
                         timedOut.set(true);
-                        timeoutMessage.set(BuildTimeoutPolicy.timeoutMessage(now, startedAt, lastOutputAt.get()));
+                        timeoutMessage.set(BuildTimeoutPolicy.timeoutMessage(now, startedAt, lastOutputAt.get(), AppSettings.isChinese(context)));
                         destroyProcess(process);
                         return;
                     }
@@ -632,7 +641,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             if (timedOut.get()) {
                 String message = timeoutMessage.get();
                 if (message == null || message.isEmpty()) {
-                    message = BuildTimeoutPolicy.timeoutMessage(System.currentTimeMillis(), startedAt, lastOutputAt.get());
+                    message = BuildTimeoutPolicy.timeoutMessage(System.currentTimeMillis(), startedAt, lastOutputAt.get(), AppSettings.isChinese(context));
                 }
                 FileUtils.appendText(log, message + "\n");
                 tail.append(message).append('\n');

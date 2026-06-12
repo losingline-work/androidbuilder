@@ -15,10 +15,15 @@ final class ProjectBuildActionPolicy {
         return !busy && hasSourceFiles;
     }
 
+    static boolean canBuild(boolean busy, boolean hasSourceFiles, BuildJobRecord latestJob) {
+        return canBuild(busy, hasSourceFiles) && !ProjectJobStatePolicy.isTaskExecutionFailure(latestJob);
+    }
+
     static boolean canRepair(boolean busy, BuildJobRecord latestJob, boolean repairableByModel) {
         return !busy &&
                 latestJob != null &&
                 "failed".equals(latestJob.status) &&
+                !ProjectJobStatePolicy.isTaskExecutionFailure(latestJob) &&
                 latestJob.logsPath != null &&
                 repairableByModel;
     }

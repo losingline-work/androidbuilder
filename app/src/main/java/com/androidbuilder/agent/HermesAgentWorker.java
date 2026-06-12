@@ -67,7 +67,7 @@ final class HermesAgentWorker {
                     task,
                     logs,
                     chinese,
-                    "failed".equals(task.status) ? task.resultSummary : "",
+                    initialFailureContext(projectId, task),
                     false);
             String summary = operations.summary == null ? "" : operations.summary;
             String mergedHash = SourceTreeHashPolicy.hash(scratchSource);
@@ -92,5 +92,21 @@ final class HermesAgentWorker {
             }
         }
         return array.toString();
+    }
+
+    private String initialFailureContext(long projectId, ProjectTaskRecord task) {
+        String context = "failed".equals(task.status) ? task.resultSummary : "";
+        TaskOperations draft = new TaskDraftStore(repository.projectRoot(projectId)).load(task.id);
+        String advisory = TaskDraftContextPolicy.advisorySection(
+                draft,
+                context,
+                TaskDraftContextPolicy.DRAFT_SECTION_LIMIT);
+        if (advisory.isEmpty()) {
+            return context;
+        }
+        if (context == null || context.trim().isEmpty()) {
+            return advisory;
+        }
+        return context.trim() + "\n\n" + advisory;
     }
 }

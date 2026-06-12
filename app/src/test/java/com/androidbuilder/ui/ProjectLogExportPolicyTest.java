@@ -60,6 +60,14 @@ public class ProjectLogExportPolicyTest {
         assertTrue(text.contains("User conversation\nchat\n\nAdd export"));
     }
 
+    @Test
+    public void projectLogExportTextUsesChineseHeaderWhenRequested() {
+        String text = ProjectLogExportPolicy.projectLogsExportText(Arrays.asList(
+                entry(ProjectLogEntry.Kind.MESSAGE, 1, "消息", "聊天", "内容")), true);
+
+        assertTrue(text.startsWith("app 制造机项目日志\n记录数：1"));
+    }
+
     private static ProjectLogEntry entry(ProjectLogEntry.Kind kind, long id, String title, String subtitle, String copyText) {
         return new ProjectLogEntry(kind, id, id * 1000, id * 1000, title, subtitle, "body", copyText, "status");
     }

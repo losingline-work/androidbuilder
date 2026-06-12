@@ -66,6 +66,41 @@ public class AgentServiceRetryPolicyTest {
     }
 
     @Test
+    public void taskOperationsLogIncludesDraftModeAndSection() {
+        String request = AgentService.taskOperationsRequestForAiLogForTest(
+                "# Plan",
+                "Fix DAO",
+                "Instruction",
+                "Snapshot",
+                "Retry context",
+                "Previous draft manifest:\n- write app/src/main/java/Foo.java",
+                true,
+                2);
+
+        assertTrue(request.contains("Attempt: 2"));
+        assertTrue(request.contains("Mode: correction"));
+        assertTrue(request.contains("Previous draft manifest"));
+        assertTrue(request.indexOf("Previous draft manifest") < request.indexOf("Current source tree"));
+    }
+
+    @Test
+    public void taskOperationsLogCanMarkScopeExpandedRetries() {
+        String request = AgentService.taskOperationsRequestForAiLogForTest(
+                "# Plan",
+                "Fix DAO",
+                "Instruction",
+                "Snapshot",
+                "Retry context",
+                "",
+                false,
+                2,
+                BlockedTaskPolicy.MODE_SCOPE_EXPANDED);
+
+        assertTrue(request.contains("Attempt: 2"));
+        assertTrue(request.contains("Mode: scope-expanded"));
+    }
+
+    @Test
     public void taskOperationsLogRendersHermesTaskContractWithoutRawBlock() throws Exception {
         String instruction = HermesTaskContractCodec.appendToInstruction(
                 "Create main layout.",
@@ -131,5 +166,14 @@ public class AgentServiceRetryPolicyTest {
 
         assertTrue(message.contains("Update Gradle"));
         assertTrue(message.toLowerCase(java.util.Locale.ROOT).contains("build"));
+    }
+
+    @Test
+    public void exhaustedFailurePauseMessageNamesFailedTask() {
+        String message = AgentService.exhaustedFailurePauseMessageForTest("Resources", true);
+
+        assertTrue(message.contains("任务「Resources」已失败且重试耗尽"));
+        assertTrue(message.contains("后续任务已暂停"));
+        assertTrue(message.contains("点击执行下一步重试"));
     }
 }

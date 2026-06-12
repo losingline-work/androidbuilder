@@ -151,5 +151,7 @@ public class PolicyRewriteInstructionTest {
         assertTrue(instruction.contains("Task operation list is empty"));
         assertTrue(instruction.contains("operations array"));
         assertTrue(instruction.contains("at least one write or delete"));
+        assertTrue(instruction.contains("blockedReason"));
+        assertTrue(instruction.contains("prerequisiteWork"));
     }
 }

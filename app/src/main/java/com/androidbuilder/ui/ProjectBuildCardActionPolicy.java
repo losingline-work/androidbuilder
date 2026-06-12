@@ -19,6 +19,9 @@ final class ProjectBuildCardActionPolicy {
         if ("success".equals(job.status) && job.apkPath != null && !job.apkPath.trim().isEmpty()) {
             return Action.INSTALL;
         }
+        if (ProjectJobStatePolicy.isTaskExecutionFailure(job)) {
+            return Action.NONE;
+        }
         if ("failed".equals(job.status)
                 && job.logsPath != null
                 && !job.logsPath.trim().isEmpty()

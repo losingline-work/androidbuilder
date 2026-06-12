@@ -119,7 +119,7 @@ public class MainActivity extends BaseActivity {
             }
             String name = projectNameInput.getText().toString().trim();
             if (name.isEmpty()) {
-                name = NameUtils.projectNameFromPrompt(prompt);
+                name = NameUtils.projectNameFromPrompt(prompt, AppSettings.isChinese(this));
             }
             String packageName = packageNameInput.getText().toString().trim();
             if (packageName.isEmpty()) {

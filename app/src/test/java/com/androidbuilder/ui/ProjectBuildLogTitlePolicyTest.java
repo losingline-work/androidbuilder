@@ -20,4 +20,11 @@ public class ProjectBuildLogTitlePolicyTest {
 
         assertEquals(ProjectBuildLogTitlePolicy.Title.REPAIR_RECORD, ProjectBuildLogTitlePolicy.titleFor(job));
     }
+
+    @Test
+    public void titlesPlanTaskExecutionFailureSeparatelyFromBuildFailure() {
+        BuildJobRecord job = new BuildJobRecord(1, 1, "failed", "coding_failed", "/tmp/build.log", null, "Task failed", 0, 0, 0);
+
+        assertEquals(ProjectBuildLogTitlePolicy.Title.TASK_EXECUTION_FAILED, ProjectBuildLogTitlePolicy.titleFor(job));
+    }
 }

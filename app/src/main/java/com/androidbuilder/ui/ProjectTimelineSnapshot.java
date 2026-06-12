@@ -18,18 +18,21 @@ final class ProjectTimelineSnapshot {
     private final List<ChatMessage> messages;
     private final List<ProjectTimelinePolicy.Entry> entries;
     private final Map<Long, BuildJobRecord> buildJobsById;
+    private final BuildJobRecord latestJob;
 
     private ProjectTimelineSnapshot(
             List<ChatMessage> messages,
             List<ProjectTimelinePolicy.Entry> entries,
-            Map<Long, BuildJobRecord> buildJobsById) {
+            Map<Long, BuildJobRecord> buildJobsById,
+            BuildJobRecord latestJob) {
         this.messages = messages;
         this.entries = entries;
         this.buildJobsById = buildJobsById;
+        this.latestJob = latestJob;
     }
 
     static ProjectTimelineSnapshot empty() {
-        return new ProjectTimelineSnapshot(new ArrayList<>(), new ArrayList<>(), new HashMap<>());
+        return new ProjectTimelineSnapshot(new ArrayList<>(), new ArrayList<>(), new HashMap<>(), null);
     }
 
     static ProjectTimelineSnapshot create(
@@ -47,7 +50,8 @@ final class ProjectTimelineSnapshot {
         for (ChatMessage message : safeMessages) {
             BuildJobRecord job = message.linkedBuildJobId == null ? null : buildJobsById.get(message.linkedBuildJobId);
             linkedBuildJobIds.add(ProjectBuildLogVisibilityPolicy.shouldShow(job, message.content) ? message.linkedBuildJobId : null);
-            visible.add(!ProjectTimelineMessageVisibilityPolicy.isChatter(message.role, message.content));
+            visible.add(!ProjectTimelineMessageVisibilityPolicy.isChatter(message.role, message.content)
+                    && !ProjectExecutePlanErrorMessagePolicy.isCoveredStandaloneMessage(message.role, message.content, latestJob));
             planCards.add(PlanCardSummaryPolicy.isPlanMessage(message.content));
         }
         List<ProjectTimelinePolicy.Entry> entries = ProjectTimelinePolicy.entries(
@@ -60,8 +64,8 @@ final class ProjectTimelineSnapshot {
                 plan,
                 tasks,
                 latestJob,
-                false);
-        return new ProjectTimelineSnapshot(safeMessages, entries, buildJobsById);
+                ProjectBuildLogContentPolicy.hasFailureSummary(latestJob));
+        return new ProjectTimelineSnapshot(safeMessages, entries, buildJobsById, latestJob);
     }
 
     /**
@@ -121,7 +125,13 @@ final class ProjectTimelineSnapshot {
     }
 
     BuildJobRecord buildLogJob(ProjectTimelinePolicy.Entry entry) {
-        if (entry == null || entry.sourceIndex < 0 || entry.sourceIndex >= messages.size()) {
+        if (entry == null) {
+            return null;
+        }
+        if (entry.sourceIndex < 0) {
+            return latestJob;
+        }
+        if (entry.sourceIndex >= messages.size()) {
             return null;
         }
         return jobForMessage(messages.get(entry.sourceIndex));

@@ -33,8 +33,12 @@ final class ProjectLogExportPolicy {
     }
 
     static String projectLogsExportText(List<ProjectLogEntry> entries) {
+        return projectLogsExportText(entries, false);
+    }
+
+    static String projectLogsExportText(List<ProjectLogEntry> entries, boolean chinese) {
         int count = entries == null ? 0 : entries.size();
-        StringBuilder text = new StringBuilder("Android Builder Project Logs\nEntries: ")
+        StringBuilder text = new StringBuilder(chinese ? "app 制造机项目日志\n记录数：" : "Android Builder Project Logs\nEntries: ")
                 .append(count);
         if (entries == null) {
             return text.toString();

@@ -7,11 +7,10 @@ import com.androidbuilder.model.ProjectTaskRecord;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 
 public final class ProjectTaskListDisplayPolicy {
@@ -23,22 +22,29 @@ public final class ProjectTaskListDisplayPolicy {
     }
 
     public static List<Group> groups(List<ProjectTaskRecord> tasks, boolean collapsed) {
+        return groups(tasks, collapsed, false);
+    }
+
+    public static List<Group> groups(List<ProjectTaskRecord> tasks, boolean collapsed, boolean chinese) {
         if (tasks == null || tasks.isEmpty()) {
             return Collections.emptyList();
         }
-        Map<String, List<ProjectTaskRecord>> grouped = new LinkedHashMap<>();
-        for (ProjectTaskRecord task : tasks) {
-            String key = groupKey(task);
-            List<ProjectTaskRecord> rows = grouped.get(key);
-            if (rows == null) {
-                rows = new ArrayList<>();
-                grouped.put(key, rows);
-            }
-            rows.add(task);
-        }
         List<Group> result = new ArrayList<>();
-        for (Map.Entry<String, List<ProjectTaskRecord>> entry : grouped.entrySet()) {
-            result.add(new Group(entry.getKey(), labelFor(entry.getKey()), entry.getValue(), shouldExpandGroup(entry.getValue(), collapsed)));
+        String currentKey = null;
+        List<ProjectTaskRecord> currentRows = null;
+        for (ProjectTaskRecord task : orderedTasks(tasks)) {
+            String key = groupKey(task);
+            if (currentRows == null || !key.equals(currentKey)) {
+                if (currentRows != null) {
+                    result.add(new Group(currentKey, labelFor(currentKey, chinese), currentRows, shouldExpandGroup(currentRows, collapsed)));
+                }
+                currentKey = key;
+                currentRows = new ArrayList<>();
+            }
+            currentRows.add(task);
+        }
+        if (currentRows != null) {
+            result.add(new Group(currentKey, labelFor(currentKey, chinese), currentRows, shouldExpandGroup(currentRows, collapsed)));
         }
         return result;
     }
@@ -57,7 +63,7 @@ public final class ProjectTaskListDisplayPolicy {
         List<ProjectTaskRecord> visible = new ArrayList<>();
         ProjectTaskRecord firstPending = null;
         Set<Long> activeAgentTaskIds = activeAgentTaskIds(agentRuns);
-        for (ProjectTaskRecord task : tasks) {
+        for (ProjectTaskRecord task : orderedTasks(tasks)) {
             String status = status(task);
             if ("failed".equals(status) || "running".equals(status) || activeAgentTaskIds.contains(task.id)) {
                 visible.add(task);
@@ -69,6 +75,21 @@ public final class ProjectTaskListDisplayPolicy {
             visible.add(firstPending);
         }
         return visible;
+    }
+
+    private static List<ProjectTaskRecord> orderedTasks(List<ProjectTaskRecord> tasks) {
+        List<ProjectTaskRecord> ordered = new ArrayList<>(tasks);
+        Collections.sort(ordered, new Comparator<ProjectTaskRecord>() {
+            @Override
+            public int compare(ProjectTaskRecord left, ProjectTaskRecord right) {
+                int order = Integer.compare(left.sortOrder, right.sortOrder);
+                if (order != 0) {
+                    return order;
+                }
+                return Long.compare(left.id, right.id);
+            }
+        });
+        return ordered;
     }
 
     public static boolean shouldCollapseCompleted(List<ProjectTaskRecord> tasks) {
@@ -172,23 +193,23 @@ public final class ProjectTaskListDisplayPolicy {
         return text.isEmpty() ? "polish" : text.replaceAll("[^a-z0-9_-]+", "_");
     }
 
-    private static String labelFor(String key) {
+    private static String labelFor(String key, boolean chinese) {
         if ("foundation".equals(key)) {
-            return "Foundation";
+            return chinese ? "基础" : "Foundation";
         }
         if ("data".equals(key)) {
-            return "Data";
+            return chinese ? "数据" : "Data";
         }
         if ("ui".equals(key)) {
             return "UI";
         }
         if ("stats".equals(key)) {
-            return "Stats";
+            return chinese ? "统计" : "Stats";
         }
         if ("settings".equals(key)) {
-            return "Settings";
+            return chinese ? "设置" : "Settings";
         }
-        return "Polish";
+        return chinese ? "收尾" : "Polish";
     }
 
     private static String status(ProjectTaskRecord task) {

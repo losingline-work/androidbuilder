@@ -7,9 +7,13 @@ public final class NameUtils {
     }
 
     public static String projectNameFromPrompt(String prompt) {
+        return projectNameFromPrompt(prompt, false);
+    }
+
+    public static String projectNameFromPrompt(String prompt, boolean chinese) {
         String value = firstWords(prompt, 5).trim();
         if (value.isEmpty()) {
-            return "New App";
+            return chinese ? "新 App" : "New App";
         }
         return value.length() > 28 ? value.substring(0, 28).trim() : value;
     }

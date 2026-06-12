@@ -69,8 +69,10 @@ public class FileOperationsWriter {
             }
             if ("delete".equals(operation.action)) {
                 FileUtils.deleteRecursively(target);
-            } else {
+            } else if ("write".equals(operation.action)) {
                 FileUtils.writeText(target, operation.content);
+            } else {
+                throw new IllegalArgumentException("Unsupported file operation action: " + operation.action);
             }
         }
     }

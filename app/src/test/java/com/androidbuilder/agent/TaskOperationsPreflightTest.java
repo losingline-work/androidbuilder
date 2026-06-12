@@ -34,7 +34,7 @@ public class TaskOperationsPreflightTest {
     @Test
     public void rewritesOnlyAbsurdlyLargeOperationLists() {
         List<FileOperation> operations = new ArrayList<>();
-        for (int i = 0; i < 31; i++) {
+        for (int i = 0; i < 61; i++) {
             operations.add(new FileOperation("write", "app/src/main/res/drawable/item_" + i + ".xml",
                     "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" />"));
         }
@@ -43,7 +43,23 @@ public class TaskOperationsPreflightTest {
 
         assertEquals(HermesReview.Decision.REWRITE, review.decision);
         assertTrue(review.summary.contains("Unusually many file operations"));
-        assertTrue(review.rewriteInstruction.contains("Split"));
+        assertTrue(review.rewriteInstruction.contains("cap 60"));
+        assertTrue(review.rewriteInstruction.contains("Trim"));
+        assertTrue(review.rewriteInstruction.contains("defer"));
+        assertTrue(!review.rewriteInstruction.contains("Split this into smaller tasks"));
+    }
+
+    @Test
+    public void allowsCoarseResourceBatchesUpToSixtyOperations() {
+        List<FileOperation> operations = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            operations.add(new FileOperation("write", "app/src/main/res/drawable/item_" + i + ".xml",
+                    "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" />"));
+        }
+
+        HermesReview review = TaskOperationsPreflight.review(new TaskOperations("resource batch", operations), "");
+
+        assertEquals(HermesReview.Decision.OK, review.decision);
     }
 
     @Test
