@@ -1422,6 +1422,7 @@ public class AgentService {
                     continue;
                 }
                 updateStreamPhase(callTag, "reviewing", attempt);
+                FileUtils.appendText(logs, BatchNarrationPolicy.reviewingLine(chinese));
                 HermesReview hermesReview = reviewOperationsWithHermes(
                         projectId,
                         linkedBuildJobId,
@@ -1463,6 +1464,7 @@ public class AgentService {
                     continue;
                 }
                 updateStreamPhase(callTag, "merging", attempt);
+                FileUtils.appendText(logs, BatchNarrationPolicy.mergingLine(chinese));
                 operationsWriter.apply(sourceDir, operations);
                 if (deleteDraftOnApplySuccess) {
                     deleteTaskDraftSafely(projectId, taskId);
@@ -1602,11 +1604,14 @@ public class AgentService {
                 + manifest.files.size() + (chinese ? " 个文件，分 " : " file(s), ")
                 + allBatches.size() + (chinese ? " 批，剩余 " : " batch(es), remaining ")
                 + batches.size() + "\n");
+        FileUtils.appendText(logs, BatchNarrationPolicy.manifestLine(
+                manifest.summary, manifest.files.size(), allBatches.size(), chinese));
         ResourceSymbolsOverlay overlay = ResourceSymbolsOverlay.empty();
         overlay.absorb(accepted);
         for (int i = 0; i < batches.size(); i++) {
             List<TaskManifest.Entry> batch = batches.get(i);
             int batchNumber = completedBeforeResume + i + 1;
+            FileUtils.appendText(logs, BatchNarrationPolicy.batchLine(batchNumber, allBatches.size(), batch, chinese));
             String batchRetryContext = "";
             boolean acceptedBatch = false;
             for (int batchAttempt = 1; batchAttempt <= 2; batchAttempt++) {
