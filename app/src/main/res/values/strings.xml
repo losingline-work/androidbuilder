@@ -169,6 +169,9 @@
     <string name="collapse_plan">Collapse Plan</string>
     <string name="task_card_title">Plan Tasks</string>
     <string name="task_card_summary">%1$d tasks · %2$d done · %3$d failed</string>
+    <string name="task_card_progress">%1$d/%2$d done</string>
+    <string name="view_task_detail">View detail</string>
+    <string name="hide_task_detail">Hide detail</string>
     <string name="task_card_summary_running">%1$d tasks · %2$d done · %3$d failed · running %4$d</string>
     <string name="collapse_tasks">Collapse</string>
     <string name="expand_tasks">Expand</string>

@@ -137,6 +137,35 @@ public class ProjectTaskListDisplayPolicyTest {
         assertEquals("", ProjectTaskListDisplayPolicy.completionSummary(tasks, true));
     }
 
+    @Test
+    public void orderedListsEveryTaskInExecutionOrderSoRemainingWorkIsVisible() {
+        List<ProjectTaskRecord> tasks = Arrays.asList(
+                task(12, 2, "Third", "", "pending"),
+                task(10, 0, "First", "", "done"),
+                task(11, 1, "Second", "", "running"));
+
+        List<ProjectTaskRecord> ordered = ProjectTaskListDisplayPolicy.ordered(tasks);
+
+        assertEquals(3, ordered.size());
+        assertEquals("First", ordered.get(0).title);
+        assertEquals("Second", ordered.get(1).title);
+        assertEquals("Third", ordered.get(2).title);
+    }
+
+    @Test
+    public void progressReflectsDoneOverTotal() {
+        List<ProjectTaskRecord> tasks = Arrays.asList(
+                task(10, 0, "a", "", "done"),
+                task(11, 1, "b", "", "done"),
+                task(12, 2, "c", "", "failed"),
+                task(13, 3, "d", "", "pending"));
+
+        assertEquals(2, ProjectTaskListDisplayPolicy.doneCount(tasks));
+        assertEquals(1, ProjectTaskListDisplayPolicy.failedCount(tasks));
+        assertEquals(50, ProjectTaskListDisplayPolicy.progressPercent(tasks));
+        assertEquals(0, ProjectTaskListDisplayPolicy.progressPercent(java.util.Collections.emptyList()));
+    }
+
     private static ProjectTaskRecord task(int order, String title, String instruction, String status) {
         return task(0, order, title, instruction, status);
     }

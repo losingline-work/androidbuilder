@@ -81,6 +81,7 @@ public class ProjectActivity extends BaseActivity {
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedPlanMessageIds = new HashSet<>();
     private final Set<Long> expandedDecisionTaskIds = new HashSet<>();
+    private final Set<Long> expandedTaskDetailIds = new HashSet<>();
     private boolean tasksCollapsed = ProjectTaskListDisplayPolicy.defaultCollapsed();
     private TimelineAdapter adapter;
     private FileAdapter fileAdapter;
@@ -1585,6 +1586,13 @@ public class ProjectActivity extends BaseActivity {
             String activeAgentSummary = HermesAgentRunDisplayPolicy.activeSummary(agentRunItems, AppSettings.isChinese(ProjectActivity.this));
             agentSummary.setText(activeAgentSummary);
             agentSummary.setVisibility(activeAgentSummary.isEmpty() ? View.GONE : View.VISIBLE);
+            ProgressBar progressBar = view.findViewById(R.id.tasksProgressBar);
+            if (progressBar != null) {
+                progressBar.setVisibility(taskItems.isEmpty() ? View.GONE : View.VISIBLE);
+                progressBar.setProgress(ProjectTaskListDisplayPolicy.progressPercent(taskItems));
+            }
+            // "Expand" now means: show every task's full detail at once. The default already shows
+            // every task as a compact line, so the overview and remaining work are always visible.
             toggle.setText(tasksCollapsed ? R.string.expand_tasks : R.string.collapse_tasks);
             View.OnClickListener toggleListener = v -> {
                 tasksCollapsed = !tasksCollapsed;
@@ -1593,44 +1601,33 @@ public class ProjectActivity extends BaseActivity {
                 }
             };
             toggle.setOnClickListener(toggleListener);
-            view.setOnClickListener(toggleListener);
 
             container.removeAllViews();
-            if (tasksCollapsed) {
-                List<ProjectTaskRecord> visibleTasks = ProjectTaskListDisplayPolicy.visibleTasks(taskItems, true, agentRunItems);
-                container.setVisibility(visibleTasks.isEmpty() ? View.GONE : View.VISIBLE);
-                for (ProjectTaskRecord task : visibleTasks) {
-                    container.addView(taskRowView(task, taskItems.indexOf(task), true));
-                }
-            } else {
-                container.setVisibility(View.VISIBLE);
-                for (ProjectTaskListDisplayPolicy.Group group : ProjectTaskListDisplayPolicy.groups(taskItems, false, AppSettings.isChinese(ProjectActivity.this))) {
-                    container.addView(taskPhaseHeaderView(group));
-                    for (ProjectTaskRecord task : group.tasks) {
-                        container.addView(taskRowView(task, taskItems.indexOf(task), true));
-                    }
-                }
+            List<ProjectTaskRecord> ordered = ProjectTaskListDisplayPolicy.ordered(taskItems);
+            container.setVisibility(ordered.isEmpty() ? View.GONE : View.VISIBLE);
+            for (ProjectTaskRecord task : ordered) {
+                container.addView(compactTaskRowView(task, taskItems.indexOf(task)));
             }
             return view;
         }
 
-        private View taskPhaseHeaderView(ProjectTaskListDisplayPolicy.Group group) {
-            TextView header = new TextView(ProjectActivity.this);
-            header.setText(group.label + " · " + group.tasks.size());
-            header.setTextSize(12);
-            header.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            header.setTextColor(getResources().getColor(R.color.colorPrimary));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            params.setMargins(0, dp(12), 0, dp(2));
-            header.setLayoutParams(params);
-            return header;
-        }
+        private View compactTaskRowView(ProjectTaskRecord task, int index) {
+            String status = task.status == null ? "pending" : task.status;
+            boolean running = "running".equals(status)
+                    || TaskRunningDisplayPolicy.shouldShowPredictedRunning(autoExecutingPlan, index, status, taskItems);
+            boolean detailOpen = !tasksCollapsed || expandedTaskDetailIds.contains(task.id);
+            String stepsText = taskStepsText(task.instruction);
+            String decisionsText = taskDecisionsText(task);
+            String logText = taskLogText(task, index);
+            boolean hasDetail = !stepsText.isEmpty() || !decisionsText.isEmpty() || !logText.isEmpty();
 
-        private View taskRowView(ProjectTaskRecord task, int index, boolean showAgentRun) {
             LinearLayout row = new LinearLayout(ProjectActivity.this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(android.view.Gravity.TOP);
+            row.setOrientation(LinearLayout.VERTICAL);
             row.setPadding(0, index == 0 ? 0 : dp(10), 0, 0);
+
+            LinearLayout head = new LinearLayout(ProjectActivity.this);
+            head.setOrientation(LinearLayout.HORIZONTAL);
+            head.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
             TextView icon = new TextView(ProjectActivity.this);
             icon.setGravity(android.view.Gravity.CENTER);
@@ -1638,127 +1635,100 @@ public class ProjectActivity extends BaseActivity {
             icon.setTextSize(13);
             icon.setTextColor(getResources().getColor(R.color.colorOnPrimaryContainer));
             icon.setBackgroundResource(R.drawable.bg_status);
-            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(28), dp(28));
-            row.addView(icon, iconParams);
+            head.addView(icon, new LinearLayout.LayoutParams(dp(26), dp(26)));
 
             LinearLayout body = new LinearLayout(ProjectActivity.this);
             body.setOrientation(LinearLayout.VERTICAL);
             LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
             bodyParams.setMarginStart(dp(10));
-            row.addView(body, bodyParams);
+            head.addView(body, bodyParams);
 
             TextView taskTitle = new TextView(ProjectActivity.this);
             taskTitle.setText((task.sortOrder + 1) + ". " + task.title);
             taskTitle.setTextColor(getResources().getColor(R.color.colorOnSurface));
             taskTitle.setTextSize(14);
             taskTitle.setTypeface(taskTitle.getTypeface(), android.graphics.Typeface.BOLD);
+            if (!detailOpen) {
+                taskTitle.setMaxLines(1);
+                taskTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            }
             body.addView(taskTitle);
 
-            TextView status = new TextView(ProjectActivity.this);
-            status.setText(taskStatusText(task, index));
-            status.setTextSize(13);
-            body.addView(status);
+            TextView statusView = new TextView(ProjectActivity.this);
+            statusView.setText(taskStatusText(task, index));
+            statusView.setTextSize(12);
+            statusView.setTextColor(getResources().getColor(running ? R.color.colorPrimary : R.color.colorOnSurfaceVariant));
+            body.addView(statusView);
 
-            String progressText = taskProgressText(task);
-            if (!progressText.isEmpty()) {
-                TextView progress = new TextView(ProjectActivity.this);
-                progress.setText(progressText);
-                progress.setTextSize(12);
-                progress.setTextColor(getResources().getColor(R.color.colorPrimary));
-                LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                progressParams.setMargins(0, dp(4), 0, 0);
-                body.addView(progress, progressParams);
+            if (hasDetail) {
+                TextView chevron = new TextView(ProjectActivity.this);
+                chevron.setText(getString(detailOpen ? R.string.hide_task_detail : R.string.view_task_detail));
+                chevron.setTextSize(12);
+                chevron.setTextColor(getResources().getColor(R.color.colorPrimary));
+                chevron.setPadding(dp(8), 0, dp(2), 0);
+                head.addView(chevron);
+            }
+            row.addView(head);
+
+            if (running) {
+                addTaskBodyLine(body, taskProgressText(task), R.color.colorPrimary, 12);
+                addTaskBodyLine(body, taskNarrationText(task), R.color.colorOnSurfaceVariant, 12);
+                addTaskBodyLine(body, agentRunText(task), R.color.colorOnSurfaceVariant, 12);
             }
 
-            String narrationText = taskNarrationText(task);
-            if (!narrationText.isEmpty()) {
-                TextView narration = new TextView(ProjectActivity.this);
-                narration.setText(narrationText);
-                narration.setTextSize(12);
-                narration.setTextColor(getResources().getColor(R.color.colorOnSurfaceVariant));
-                LinearLayout.LayoutParams narrationParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                narrationParams.setMargins(0, dp(2), 0, 0);
-                body.addView(narration, narrationParams);
-            }
-
-            if (showAgentRun) {
-                String agentRunText = agentRunText(task);
-                if (!agentRunText.isEmpty()) {
-                    TextView agentRun = new TextView(ProjectActivity.this);
-                    agentRun.setText(agentRunText);
-                    agentRun.setTextSize(12);
-                    agentRun.setTextColor(getResources().getColor(R.color.colorOnSurfaceVariant));
-                    LinearLayout.LayoutParams agentParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                    agentParams.setMargins(0, dp(4), 0, 0);
-                    body.addView(agentRun, agentParams);
+            if (detailOpen) {
+                addTaskBodyLine(body, stepsText, R.color.colorOnSurfaceVariant, 13);
+                if (!decisionsText.isEmpty()) {
+                    addTaskLogBlock(body, decisionsText, getString(R.string.hermes_decisions));
+                }
+                if (!logText.isEmpty()) {
+                    addTaskLogBlock(body, logText, getString(R.string.copy_log));
                 }
             }
 
-            if (canShowTaskDecisions(task)) {
+            if (hasDetail) {
                 row.setOnClickListener(v -> {
-                    if (expandedDecisionTaskIds.contains(task.id)) {
-                        expandedDecisionTaskIds.remove(task.id);
+                    if (expandedTaskDetailIds.contains(task.id)) {
+                        expandedTaskDetailIds.remove(task.id);
                     } else {
-                        expandedDecisionTaskIds.add(task.id);
+                        expandedTaskDetailIds.add(task.id);
                     }
                     if (adapter != null) {
                         adapter.notifyDataSetChanged();
                     }
                 });
             }
-
-            String stepsText = taskStepsText(task.instruction);
-            if (!stepsText.isEmpty()) {
-                TextView steps = new TextView(ProjectActivity.this);
-                steps.setText(stepsText);
-                steps.setTextSize(13);
-                LinearLayout.LayoutParams stepsParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                stepsParams.setMargins(0, dp(4), 0, 0);
-                body.addView(steps, stepsParams);
-            }
-
-            String decisionsText = taskDecisionsText(task);
-            if (!decisionsText.isEmpty()) {
-                TextView decisions = new TextView(ProjectActivity.this);
-                decisions.setText(decisionsText);
-                decisions.setTextSize(12);
-                decisions.setPadding(dp(8), dp(6), dp(8), dp(6));
-                decisions.setBackgroundResource(R.drawable.bg_log_md3);
-                decisions.setTextColor(getResources().getColor(R.color.colorInverseOnSurface));
-                decisions.setOnLongClickListener(v -> {
-                    copyText(getString(R.string.hermes_decisions), decisionsText);
-                    return true;
-                });
-                LinearLayout.LayoutParams decisionParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                decisionParams.setMargins(0, dp(6), 0, 0);
-                body.addView(decisions, decisionParams);
-            }
-
-            String logText = taskLogText(task, index);
-            if (!logText.isEmpty()) {
-                TextView log = new TextView(ProjectActivity.this);
-                log.setText(logText);
-                log.setTextSize(12);
-                log.setTypeface(android.graphics.Typeface.MONOSPACE);
-                log.setPadding(dp(8), dp(6), dp(8), dp(6));
-                log.setBackgroundResource(R.drawable.bg_log_md3);
-                log.setTextColor(getResources().getColor(R.color.colorInverseOnSurface));
-                log.setOnLongClickListener(v -> {
-                    copyText(getString(R.string.copy_log), logText);
-                    return true;
-                });
-                LinearLayout.LayoutParams logParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                logParams.setMargins(0, dp(6), 0, 0);
-                body.addView(log, logParams);
-            }
             return row;
         }
 
-        private boolean canShowTaskDecisions(ProjectTaskRecord task) {
-            if (task == null || task.status == null) {
-                return false;
+        private void addTaskBodyLine(LinearLayout body, String text, int colorRes, int sizeSp) {
+            if (text == null || text.isEmpty()) {
+                return;
             }
-            return "done".equals(task.status) || "failed".equals(task.status);
+            TextView tv = new TextView(ProjectActivity.this);
+            tv.setText(text);
+            tv.setTextSize(sizeSp);
+            tv.setTextColor(getResources().getColor(colorRes));
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            p.setMargins(0, dp(3), 0, 0);
+            body.addView(tv, p);
+        }
+
+        private void addTaskLogBlock(LinearLayout body, String text, String copyLabel) {
+            TextView tv = new TextView(ProjectActivity.this);
+            tv.setText(text);
+            tv.setTextSize(12);
+            tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+            tv.setPadding(dp(8), dp(6), dp(8), dp(6));
+            tv.setBackgroundResource(R.drawable.bg_log_md3);
+            tv.setTextColor(getResources().getColor(R.color.colorInverseOnSurface));
+            tv.setOnLongClickListener(v -> {
+                copyText(copyLabel, text);
+                return true;
+            });
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            p.setMargins(0, dp(6), 0, 0);
+            body.addView(tv, p);
         }
 
         private String taskDecisionsText(ProjectTaskRecord task) {

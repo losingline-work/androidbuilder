@@ -83,6 +83,42 @@ public final class ProjectTaskListDisplayPolicy {
         return visible;
     }
 
+    /** Full task list in execution order - the compact overview shows every task so remaining work is visible. */
+    public static List<ProjectTaskRecord> ordered(List<ProjectTaskRecord> tasks) {
+        if (tasks == null || tasks.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return orderedTasks(tasks);
+    }
+
+    public static int doneCount(List<ProjectTaskRecord> tasks) {
+        return countStatus(tasks, "done");
+    }
+
+    public static int failedCount(List<ProjectTaskRecord> tasks) {
+        return countStatus(tasks, "failed");
+    }
+
+    public static int progressPercent(List<ProjectTaskRecord> tasks) {
+        if (tasks == null || tasks.isEmpty()) {
+            return 0;
+        }
+        return (int) Math.round(doneCount(tasks) * 100.0d / tasks.size());
+    }
+
+    private static int countStatus(List<ProjectTaskRecord> tasks, String wanted) {
+        if (tasks == null) {
+            return 0;
+        }
+        int count = 0;
+        for (ProjectTaskRecord task : tasks) {
+            if (wanted.equals(status(task))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static List<ProjectTaskRecord> orderedTasks(List<ProjectTaskRecord> tasks) {
         List<ProjectTaskRecord> ordered = new ArrayList<>(tasks);
         Collections.sort(ordered, new Comparator<ProjectTaskRecord>() {

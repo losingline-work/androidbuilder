@@ -167,6 +167,9 @@
     <string name="collapse_plan">收起计划</string>
     <string name="task_card_title">计划任务</string>
     <string name="task_card_summary">共 %1$d 项 · 已完成 %2$d · 失败 %3$d</string>
+    <string name="task_card_progress">%1$d/%2$d 完成</string>
+    <string name="view_task_detail">查看详情</string>
+    <string name="hide_task_detail">收起详情</string>
     <string name="task_card_summary_running">共 %1$d 项 · 已完成 %2$d · 失败 %3$d · 正在执行第 %4$d 项</string>
     <string name="collapse_tasks">收起</string>
     <string name="expand_tasks">展开</string>
