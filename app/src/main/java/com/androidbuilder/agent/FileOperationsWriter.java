@@ -44,6 +44,7 @@ public class FileOperationsWriter {
         try {
             applyToDirectory(tempDir, taskOperations);
             DatabaseContractNormalizer.normalize(tempDir);
+            JavaApiReconciler.reconcile(tempDir);
             validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {
                 sourceGuard.validate(tempDir);
