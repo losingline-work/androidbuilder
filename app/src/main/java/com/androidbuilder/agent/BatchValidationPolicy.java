@@ -29,7 +29,12 @@ final class BatchValidationPolicy {
         Set<String> plannedPaths = canonicalPaths(manifestPathsForBatch);
         Set<String> actualPaths = operationPaths(canonicalOps);
         for (String actualPath : actualPaths) {
-            if (!plannedPaths.contains(actualPath)) {
+            // A res/values file is an additive, conflict-free resource declaration. When a Java/XML
+            // batch references a value resource a sibling task owns (not yet in this scratch tree),
+            // the model self-heals by adding the values file that declares it; that is exactly the
+            // fix we want, not an "unplanned file" to reject. Other unplanned files still sprawl and
+            // are rejected.
+            if (!plannedPaths.contains(actualPath) && !isValueResourceFile(actualPath)) {
                 return "Batch validation: batch contained unplanned file " + actualPath + "; regenerate only the requested files.";
             }
         }
@@ -44,6 +49,9 @@ final class BatchValidationPolicy {
         }
         ResourceSymbolsOverlay symbols = ResourceSymbolsOverlay.fromSourceDir(sourceDir);
         symbols.addAll(acceptedSoFar);
+        // A batch's own resource files (e.g. a self-heal values/ids.xml added alongside the Java
+        // file) declare resources the same batch's Java may reference.
+        symbols.absorb(canonicalOps);
         for (FileOperation operation : canonicalOps) {
             if ("write".equals(operation.action) && operation.path.endsWith(".java")) {
                 String error = validateJavaResources(operation, symbols);
@@ -64,6 +72,12 @@ final class BatchValidationPolicy {
             canonical.add(CanonicalPathPolicy.canonicalOperation(operation));
         }
         return canonical;
+    }
+
+    private static boolean isValueResourceFile(String path) {
+        return path != null
+                && path.startsWith("app/src/main/res/values")
+                && path.endsWith(".xml");
     }
 
     private static Set<String> canonicalPaths(List<String> paths) {

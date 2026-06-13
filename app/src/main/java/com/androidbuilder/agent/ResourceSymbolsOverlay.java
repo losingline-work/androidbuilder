@@ -66,6 +66,9 @@ final class ResourceSymbolsOverlay {
         while (idMatcher.find()) {
             ids.add(idMatcher.group(1));
         }
+        // A values file may declare ids via <item type="id" name="X"/>; recognize them so a
+        // self-heal ids.xml satisfies later R.id references in the same batch.
+        AndroidSourceGuard.collectValueItemIds(content, ids);
         if (path.startsWith("app/src/main/res/layout")) {
             layouts.add(fileStem(path));
         } else if (path.startsWith("app/src/main/res/drawable")) {

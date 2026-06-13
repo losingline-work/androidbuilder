@@ -341,6 +341,19 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void recognizesIdsDeclaredViaValuesItemTag() throws Exception {
+        // <item type="id" name="X"/> in a values file is a valid R.id source; a Java reference to
+        // it must not be blocked as a missing id.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/values/ids.xml",
+                "<resources><item type=\"id\" name=\"account_manage_title\"/></resources>");
+        write(root, "app/src/main/java/com/example/AccountManageActivity.java",
+                "package com.example;\nclass AccountManageActivity { int t() { return R.id.account_manage_title; } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
     public void blocksMissingCustomModelFieldAccess() throws Exception {
         File root = temporaryFolder.newFolder("source");
         write(root, "app/src/main/java/com/example/CategorySum.java",

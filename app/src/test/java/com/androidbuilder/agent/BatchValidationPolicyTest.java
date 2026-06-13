@@ -45,6 +45,41 @@ public class BatchValidationPolicyTest {
     }
 
     @Test
+    public void allowsUnplannedValuesFileForResourceSelfHeal() throws Exception {
+        // After scope expansion a Java/XML batch self-heals a missing value resource by adding the
+        // values file that declares it; that additive file must not be rejected as "unplanned".
+        String error = BatchValidationPolicy.review(
+                Arrays.asList(
+                        new FileOperation("write", "app/src/main/java/com/example/BillListFragment.java",
+                                "package com.example;\nclass BillListFragment { int t() { return R.string.bill_summary_title; } }"),
+                        new FileOperation("write", "app/src/main/res/values/strings.xml",
+                                "<resources><string name=\"bill_summary_title\">Summary</string></resources>")),
+                Collections.singletonList("app/src/main/java/com/example/BillListFragment.java"),
+                HermesTaskContract.empty(),
+                ResourceSymbolsOverlay.empty(),
+                temporaryFolder.newFolder("source"));
+
+        assertNull(error);
+    }
+
+    @Test
+    public void allowsUnplannedIdsFileAndRecognizesValueDeclaredIds() throws Exception {
+        // ids declared via <item type="id"> in a self-heal values file satisfy later R.id refs.
+        String error = BatchValidationPolicy.review(
+                Arrays.asList(
+                        new FileOperation("write", "app/src/main/res/values/ids.xml",
+                                "<resources><item type=\"id\" name=\"account_manage_title\"/></resources>"),
+                        new FileOperation("write", "app/src/main/java/com/example/AccountManageActivity.java",
+                                "package com.example;\nclass AccountManageActivity { int t() { return R.id.account_manage_title; } }")),
+                Collections.singletonList("app/src/main/java/com/example/AccountManageActivity.java"),
+                HermesTaskContract.empty(),
+                ResourceSymbolsOverlay.empty(),
+                temporaryFolder.newFolder("source"));
+
+        assertNull(error);
+    }
+
+    @Test
     public void rejectsMissingManifestFilesInBatchResponse() throws Exception {
         String error = BatchValidationPolicy.review(
                 Collections.singletonList(new FileOperation("write", "app/src/main/res/layout/activity_main.xml", "<LinearLayout />")),

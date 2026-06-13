@@ -15,6 +15,11 @@ import java.util.regex.Pattern;
 public class AndroidSourceGuard {
     private static final int MAX_REPORTED_VIOLATIONS = 10;
     static final Pattern XML_ID = Pattern.compile("android:id\\s*=\\s*[\"']@\\+?id/([A-Za-z_][A-Za-z0-9_]*)[\"']");
+    // A values file may declare ids via <item type="id" name="X"/> (attributes in either order);
+    // these are valid R.id sources but were invisible to the id collector and overlay.
+    private static final Pattern VALUE_ITEM_TAG = Pattern.compile("<\\s*item\\b([^>]*?)/?>");
+    private static final Pattern ITEM_TYPE_ID = Pattern.compile("\\btype\\s*=\\s*[\"']id[\"']");
+    private static final Pattern ITEM_NAME = Pattern.compile("\\bname\\s*=\\s*[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
     private static final String APP_R_PREFIX = "(?<![A-Za-z0-9_.])R\\.";
     static final Pattern R_ID = Pattern.compile(APP_R_PREFIX + "id\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
     static final Pattern R_LAYOUT = Pattern.compile(APP_R_PREFIX + "layout\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
@@ -69,10 +74,12 @@ public class AndroidSourceGuard {
         }
         if (file.isFile()) {
             if (file.getName().endsWith(".xml")) {
-                Matcher matcher = XML_ID.matcher(FileUtils.readText(file));
+                String content = FileUtils.readText(file);
+                Matcher matcher = XML_ID.matcher(content);
                 while (matcher.find()) {
                     ids.add(matcher.group(1));
                 }
+                collectValueItemIds(content, ids);
             }
             return;
         }
@@ -82,6 +89,20 @@ public class AndroidSourceGuard {
         }
         for (File child : children) {
             collectXmlIds(child, ids);
+        }
+    }
+
+    static void collectValueItemIds(String content, Set<String> ids) {
+        Matcher tag = VALUE_ITEM_TAG.matcher(content == null ? "" : content);
+        while (tag.find()) {
+            String attrs = tag.group(1);
+            if (!ITEM_TYPE_ID.matcher(attrs).find()) {
+                continue;
+            }
+            Matcher name = ITEM_NAME.matcher(attrs);
+            if (name.find()) {
+                ids.add(name.group(1));
+            }
         }
     }
 
