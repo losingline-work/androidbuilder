@@ -1231,6 +1231,7 @@ public class AgentService {
             scopeExpandedRetryPending = false;
             updateStreamPhase(callTag, "coding", attempt);
             TaskOperations generatedOperations;
+            TaskOperations batchedDraftForResume = null;
             try {
                 if (shouldUseBatchedGeneration(previousDraft, attemptCorrectionMode)) {
                     generatedOperations = createTaskOperationsInBatches(
@@ -1252,6 +1253,7 @@ public class AgentService {
                             journal,
                             logs,
                             chinese);
+                    batchedDraftForResume = generatedOperations;
                 } else {
                     TaskStreamInspectionPolicy streamInspection = new TaskStreamInspectionPolicy(taskContract);
                     singleStreamInspection[0] = streamInspection;
@@ -1484,6 +1486,18 @@ public class AgentService {
                 }
                 lastPolicyError = policyError;
                 recordAttemptTermination(logs, journal, attempt, "policy-error-retry", policyError.getMessage());
+                // P2: if a batched generation was rejected by the whole-tree merge guard, resume the
+                // manifest with only the rejected files evicted. The next attempt regenerates just
+                // those callers against the frozen, already-accepted foundation (correct DbHelper /
+                // DAO signatures in context) instead of dropping to single-shot full mode that
+                // truncates the foundation and re-rolls every signature - the loop that burned a week.
+                TaskOperations resumeDraft = resumeDraftEvictingRejectedFiles(batchedDraftForResume, policyError.getMessage());
+                if (resumeDraft != null) {
+                    previousDraft = resumeDraft;
+                    saveTaskDraftSafely(projectId, taskId, resumeDraft);
+                    FileUtils.appendText(logs, (chinese ? "保留已通过的基础，仅重生成被拒文件后续批。\n"
+                            : "Froze accepted foundation; resuming batches to regenerate only the rejected files.\n"));
+                }
                 // Refocus the snapshot on the files/types named in the rejection so the next attempt
                 // sees the offending caller and the real class declarations in full (untruncated).
                 snapshot = sourceSnapshot(sourceDir, policyError.getMessage());
@@ -1686,7 +1700,18 @@ public class AgentService {
                         partialBatchDraft(accepted, null, manifestJson));
             }
         }
-        return new TaskOperations(manifest.summary, accepted);
+        // Carry the manifest + accepted paths so that, if the whole-tree merge guard later rejects
+        // a caller, the next attempt can RESUME this manifest and regenerate only the rejected files
+        // against the frozen, already-accepted foundation - instead of re-emitting all 30 files in
+        // single-shot mode (which truncates the foundation and re-rolls every signature).
+        return new TaskOperations(
+                manifest.summary,
+                accepted,
+                false,
+                "",
+                "",
+                manifestJson,
+                ManifestResumePolicy.acceptedPathsFor(accepted));
     }
 
     private TaskOperations partialBatchDraft(List<FileOperation> accepted, TaskOperations currentPartial, String manifestJson) {
@@ -1805,6 +1830,10 @@ public class AgentService {
             FileUtils.appendText(logs, text);
         } catch (Exception ignored) {
         }
+    }
+
+    private TaskOperations resumeDraftEvictingRejectedFiles(TaskOperations batchedDraft, String guardMessage) {
+        return BatchResumePolicy.resumeDraftEvicting(batchedDraft, guardMessage);
     }
 
     private void saveTaskDraftSafely(long projectId, long taskId, TaskOperations draft) {
