@@ -9,6 +9,8 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 final class TaskDraftStore {
     // Draft JSON measures ~6.7KB per file in practice; a legitimate manifest can plan up to
@@ -23,7 +25,7 @@ final class TaskDraftStore {
     }
 
     void save(long taskId, TaskOperations draft) {
-        if (taskId <= 0 || draft == null || draft.operations == null || draft.operations.isEmpty()) {
+        if (taskId <= 0 || draft == null || isEmptyDraft(draft)) {
             return;
         }
         File file = fileForTask(taskId);
@@ -54,7 +56,7 @@ final class TaskDraftStore {
             return null;
         }
         try {
-            return TaskOperationsParser.fromJson(FileUtils.readText(file));
+            return fromJson(FileUtils.readText(file));
         } catch (Exception ignored) {
             delete(taskId);
             return null;
@@ -83,6 +85,12 @@ final class TaskDraftStore {
         return new File(directory, "task-" + taskId + ".json");
     }
 
+    private static boolean isEmptyDraft(TaskOperations draft) {
+        return (draft.operations == null || draft.operations.isEmpty())
+                && (draft.manifestJson == null || draft.manifestJson.trim().isEmpty())
+                && !draft.blocked;
+    }
+
     private static JSONObject toJson(TaskOperations draft) throws Exception {
         JSONObject json = new JSONObject();
         json.put("summary", draft.summary == null ? "" : draft.summary);
@@ -99,6 +107,58 @@ final class TaskDraftStore {
             operations.put(item);
         }
         json.put("operations", operations);
+        if (draft.manifestJson != null && !draft.manifestJson.trim().isEmpty()) {
+            json.put("manifestJson", draft.manifestJson.trim());
+        }
+        if (draft.acceptedPaths != null && !draft.acceptedPaths.isEmpty()) {
+            JSONArray paths = new JSONArray();
+            for (String path : draft.acceptedPaths) {
+                paths.put(PathValidator.normalizeGeneratedPath(path));
+            }
+            json.put("acceptedPaths", paths);
+        }
         return json;
+    }
+
+    private static TaskOperations fromJson(String raw) throws Exception {
+        JSONObject json = new JSONObject(raw == null ? "" : raw);
+        JSONArray operationsJson = json.optJSONArray("operations");
+        List<FileOperation> operations = new ArrayList<>();
+        if (operationsJson != null) {
+            for (int i = 0; i < operationsJson.length(); i++) {
+                operations.add(operationFromJson(operationsJson.getJSONObject(i)));
+            }
+        }
+        return new TaskOperations(
+                json.optString("summary", ""),
+                operations,
+                json.optBoolean("blocked", false),
+                json.optString("blockedReason", ""),
+                json.optString("prerequisiteWork", ""),
+                json.optString("manifestJson", ""),
+                stringArray(json.optJSONArray("acceptedPaths")));
+    }
+
+    private static FileOperation operationFromJson(JSONObject operationJson) {
+        String action = operationJson.optString("action", "").trim();
+        String path = PathValidator.normalizeGeneratedPath(operationJson.optString("path", ""));
+        if ("edit".equals(action)) {
+            return new FileOperation(action, path, "", operationJson.optString("find", ""), operationJson.optString("replace", ""));
+        }
+        return new FileOperation(action, path, "drop".equals(action) ? "" : operationJson.optString("content", ""));
+    }
+
+    private static List<String> stringArray(JSONArray array) {
+        List<String> values = new ArrayList<>();
+        if (array == null) {
+            return values;
+        }
+        for (int i = 0; i < array.length(); i++) {
+            String value = array.optString(i, "").trim();
+            if (!value.isEmpty()) {
+                values.add(PathValidator.normalizeGeneratedPath(value));
+            }
+        }
+        return values;
     }
 }

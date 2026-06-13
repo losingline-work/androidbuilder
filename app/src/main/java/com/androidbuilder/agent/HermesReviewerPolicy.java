@@ -21,7 +21,20 @@ final class HermesReviewerPolicy {
     }
 
     static boolean shouldReviewOperations(boolean retryOrRepairFlow, int attempt, ContextNegotiation negotiation, TaskOperations operations, int cloudReviewsUsed) {
+        return shouldReviewOperations(retryOrRepairFlow, attempt, negotiation, operations, cloudReviewsUsed, Integer.MAX_VALUE, true);
+    }
+
+    static boolean shouldReviewOperations(boolean retryOrRepairFlow,
+                                          int attempt,
+                                          ContextNegotiation negotiation,
+                                          TaskOperations operations,
+                                          int cloudReviewsUsed,
+                                          int maxAttempts,
+                                          boolean rewriteBudgetAvailable) {
         if (cloudReviewsUsed > 0) {
+            return false;
+        }
+        if (!rewriteBudgetAvailable || attempt >= maxAttempts) {
             return false;
         }
         if (retryOrRepairFlow || attempt > 1 || hasScoutSignal(negotiation)) {
@@ -48,6 +61,24 @@ final class HermesReviewerPolicy {
             touchesXml = touchesXml || path.endsWith(".xml");
         }
         return touchesJava && touchesXml;
+    }
+
+    static boolean isStaleOrDuplicate(HermesReview review, boolean deterministicOkThisAttempt) {
+        if (!deterministicOkThisAttempt
+                || review == null
+                || review.decision != HermesReview.Decision.REWRITE) {
+            return false;
+        }
+        String text = ((review.summary == null ? "" : review.summary)
+                + "\n"
+                + (review.rewriteInstruction == null ? "" : review.rewriteInstruction)).toLowerCase();
+        return text.contains("missing r import")
+                || text.contains("uses r.* but is missing r import")
+                || (text.contains("import ") && text.contains(".r;"));
+    }
+
+    static boolean isValidCloudDecision(HermesReview review) {
+        return review != null && review.decision != HermesReview.Decision.FALLBACK;
     }
 
     static String contextScoutNotes(ContextNegotiation negotiation) {

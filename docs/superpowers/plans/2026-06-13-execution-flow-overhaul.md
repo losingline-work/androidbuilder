@@ -142,6 +142,18 @@ project-51 日志记录了任务 667(drawable and layout XML)与 668(Java source
 
 **改动**:列出全部返回 REWRITE 的规则,逐条判断是否机械可修(像 R-import 一样修复指令完全确定)。保守原则:只把"修复内容可由规则自身唯一确定"的规则转为 normalizer;有任何歧义的保持 REWRITE。在计划执行记录中写明每条的判断。
 
+### 执行记录:`TaskOperationsPreflight.review` 全部 REWRITE 规则审计(2026-06-13)
+
+`TaskOperationsPreflight.java` 中 `review()` 只有三处返回 REWRITE,逐条裁定:
+
+| 规则 | 位置 | 机械可修? | 裁定 |
+|------|------|-----------|------|
+| 操作数超 `MAX_OPERATIONS_PER_TASK` | L41-45 | ❌ 否 | 删哪些文件是语义判断,规则无法唯一确定"该砍哪个"——保持 REWRITE。修正方向应是改进分批(已由阶段 3 的清单/续批承担),而非自动删文件。 |
+| XML 非良构 | L48-53 | ❌ 否 | "把 XML 补完整"涉及补哪个标签/属性,无唯一确定的机械变换——保持 REWRITE。 |
+| 子包 Java 用 `R.*` 缺 R import | L86 | ✅ 是 | 修复指令完全确定(`import <namespace>.R;`),唯一变换——**已在任务 4.1 提取为 `JavaImportNormalizer`,在预检前自动修复**,该规则现作为兜底保留(自动修复后不应再触发)。 |
+
+结论:三条 REWRITE 规则中只有 R-import 一条满足"修复内容由规则自身唯一确定",已转为 normalizer(任务 4.1);另两条有语义歧义,按保守原则保持 REWRITE。无新增 normalizer。
+
 ---
 
 # 阶段 5:云端审查员整顿

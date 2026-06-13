@@ -19,7 +19,7 @@ final class BlockedTaskPolicy {
 
     static String scopeExpandedInstruction(String originalInstruction, TaskOperations blocked) {
         String prerequisite = prerequisiteText(blocked);
-        String original = originalInstruction == null ? "" : originalInstruction.trim();
+        String original = HermesTaskContractCodec.stripFromInstruction(originalInstruction);
         StringBuilder instruction = new StringBuilder();
         instruction.append(SCOPE_EXPANDED_TEMPLATE)
                 .append("\nPrerequisites: ")

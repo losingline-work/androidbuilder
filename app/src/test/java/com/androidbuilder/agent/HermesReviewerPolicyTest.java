@@ -66,4 +66,26 @@ public class HermesReviewerPolicyTest {
         assertTrue(HermesReviewerPolicy.shouldReviewOperations(false, 1, null, gradleWrite, 0));
         assertFalse(HermesReviewerPolicy.shouldReviewOperations(true, 2, null, deleteOperation, 1));
     }
+
+    @Test
+    public void skipsCloudReviewWhenRetryCannotUseTheAnswer() {
+        TaskOperations deleteOperation = new TaskOperations("delete", Collections.singletonList(
+                new FileOperation("delete", "app/src/main/java/com/example/OldActivity.java", "")));
+
+        assertFalse(HermesReviewerPolicy.shouldReviewOperations(true, 5, null, deleteOperation, 0, 5, true));
+        assertFalse(HermesReviewerPolicy.shouldReviewOperations(true, 2, null, deleteOperation, 0, 5, false));
+    }
+
+    @Test
+    public void treatsDeterministicRImportEchoAsStaleDuplicate() {
+        HermesReview rewrite = new HermesReview(
+                HermesReview.Decision.REWRITE,
+                "Java file in subpackage com.generated.app.ui uses R.* but is missing R import.",
+                "Add import com.generated.app.R;");
+
+        assertTrue(HermesReviewerPolicy.isStaleOrDuplicate(rewrite, true));
+        assertFalse(HermesReviewerPolicy.isStaleOrDuplicate(rewrite, false));
+        assertFalse(HermesReviewerPolicy.isValidCloudDecision(new HermesReview(HermesReview.Decision.FALLBACK, "unavailable", "")));
+        assertTrue(HermesReviewerPolicy.isValidCloudDecision(new HermesReview(HermesReview.Decision.OK, "ok", "")));
+    }
 }

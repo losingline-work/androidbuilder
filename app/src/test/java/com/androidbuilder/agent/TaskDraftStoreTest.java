@@ -100,4 +100,43 @@ public class TaskDraftStoreTest {
 
         assertEquals(90, store.load(12).operations.size());
     }
+
+    @Test
+    public void saveLoadPreservesManifestResumeMetadata() throws Exception {
+        TaskDraftStore store = new TaskDraftStore(temporaryFolder.newFolder("project"));
+        TaskOperations draft = new TaskOperations(
+                "partial",
+                Arrays.asList(new FileOperation("write", "app/src/main/res/values/strings.xml",
+                        "<resources><string name=\"app_name\">App</string></resources>")),
+                false,
+                "",
+                "",
+                "{\"summary\":\"partial\",\"files\":[{\"path\":\"app/src/main/res/values/strings.xml\",\"action\":\"write\",\"intent\":\"strings\"},{\"path\":\"app/src/main/java/com/example/MainActivity.java\",\"action\":\"write\",\"intent\":\"activity\"}]}",
+                Arrays.asList("app/src/main/res/values/strings.xml"));
+
+        store.save(13, draft);
+
+        TaskOperations loaded = store.load(13);
+        assertEquals(draft.manifestJson, loaded.manifestJson);
+        assertEquals(Arrays.asList("app/src/main/res/values/strings.xml"), loaded.acceptedPaths);
+    }
+
+    @Test
+    public void saveLoadAllowsManifestDraftBeforeAnyBatchAccepted() throws Exception {
+        TaskDraftStore store = new TaskDraftStore(temporaryFolder.newFolder("project"));
+        TaskOperations draft = new TaskOperations(
+                "manifest only",
+                java.util.Collections.<FileOperation>emptyList(),
+                false,
+                "",
+                "",
+                "{\"summary\":\"partial\",\"files\":[{\"path\":\"app/src/main/java/com/example/MainActivity.java\",\"action\":\"write\",\"intent\":\"activity\"}]}",
+                java.util.Collections.<String>emptyList());
+
+        store.save(14, draft);
+
+        TaskOperations loaded = store.load(14);
+        assertEquals(0, loaded.operations.size());
+        assertEquals(draft.manifestJson, loaded.manifestJson);
+    }
 }

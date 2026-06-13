@@ -135,7 +135,7 @@ public class AgentService {
         this.operationsWriter = new FileOperationsWriter(new DependencyGuard(
                 BuildBackendSettings.dependencyMode(this.context),
                 BuildBackendSettings.offlineMavenDir(this.context)));
-        this.taskOperationExecutor = new TaskOperationExecutor((projectId, linkedBuildJobId, sourceDir, planContent, task, logs, chinese, initialFailureContext, repairFlow) ->
+        this.taskOperationExecutor = new TaskOperationExecutor((projectId, linkedBuildJobId, sourceDir, planContent, task, logs, chinese, initialFailureContext, initialDraft, deleteDraftOnApplySuccess, repairFlow) ->
                 createAndApplyTaskOperationsInternal(
                         projectId,
                         linkedBuildJobId,
@@ -148,6 +148,8 @@ public class AgentService {
                         logs,
                         chinese,
                         initialFailureContext,
+                        initialDraft,
+                        deleteDraftOnApplySuccess,
                         repairFlow));
     }
 
@@ -412,6 +414,7 @@ public class AgentService {
                         repository.updateHermesAgentRun(result.run.id, "done", mergedHash, summary, "");
                     }
                     repository.updateProjectTask(result.task.id, "done", summary);
+                    deleteTaskDraftSafely(projectId, result.task.id);
                     clearStreamProgressForTask(result.task);
                     completedTitles.add(result.task.title);
                     anyMerged = true;
@@ -785,6 +788,8 @@ public class AgentService {
                     logs,
                     chinese,
                     shard.logExcerpt.isEmpty() ? buildLog : shard.logExcerpt,
+                    null,
+                    false,
                     true);
             String summary = operations.summary == null ? "" : operations.summary;
             return new HermesAgentResult(task, null, HermesTaskContract.empty(), operations,
@@ -1135,10 +1140,12 @@ public class AgentService {
                 logs,
                 chinese,
                 initialFailureContext,
+                null,
+                true,
                 repairFlow);
     }
 
-    private TaskOperations createAndApplyTaskOperationsInternal(long projectId, Long linkedBuildJobId, long taskId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese, String initialFailureContext, boolean repairFlow) throws Exception {
+    private TaskOperations createAndApplyTaskOperationsInternal(long projectId, Long linkedBuildJobId, long taskId, File sourceDir, String planContent, String taskTitle, String taskInstruction, String snapshot, File logs, boolean chinese, String initialFailureContext, TaskOperations initialDraft, boolean deleteDraftOnApplySuccess, boolean repairFlow) throws Exception {
         String instruction = taskInstruction;
         String callTag = streamCallTag(taskId, linkedBuildJobId, repairFlow);
         // Recent user requirements live in chat but may never have reached the plan text; feed them
@@ -1147,7 +1154,7 @@ public class AgentService {
                 repository.listMessages(projectId), CODING_USER_REQUIREMENTS_WINDOW, CODING_USER_REQUIREMENTS_CHARS);
         IllegalArgumentException lastPolicyError = null;
         String previousFailure = initialFailureContext == null ? "" : initialFailureContext.trim();
-        TaskOperations previousDraft = null;
+        TaskOperations previousDraft = initialDraft;
         FailureStreak draftFailureStreak = new FailureStreak();
         draftFailureStreak.remember(previousFailure);
         HermesTaskDecision taskDecision = HermesTaskScheduler.decide(
@@ -1163,6 +1170,7 @@ public class AgentService {
         boolean scopeExpanded = false;
         boolean scopeExpandedRetryPending = false;
         List<FailureFingerprint> failureFingerprints = new ArrayList<>();
+        TaskAttemptJournal journal = new TaskAttemptJournal();
         for (int attempt = 1; attempt <= POLICY_REWRITE_ATTEMPTS; attempt++) {
             if ((repairFlow || !previousFailure.isEmpty()) && retryContext.isEmpty()) {
                 retryContext = ContextNegotiationPolicy.retryContext(previousFailure, null);
@@ -1236,6 +1244,8 @@ public class AgentService {
                             callTag,
                             attempt,
                             taskContract,
+                            previousDraft,
+                            journal,
                             logs,
                             chinese);
                 } else {
@@ -1248,16 +1258,20 @@ public class AgentService {
                             requestLog,
                             () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, attemptPreviousDraftSection, chinese, callTag, streamInspection),
                             taskId);
-                    generatedOperations = CanonicalPathPolicy.canonicalizeAll(TaskOperationsParser.fromJson(operationsJson));
+                    generatedOperations = JavaImportNormalizer.normalize(
+                            CanonicalPathPolicy.canonicalizeAll(TaskOperationsParser.fromJson(operationsJson)),
+                            attemptSnapshot);
                 }
             } catch (BatchGenerationException batchError) {
                 previousFailure = batchError.getMessage() == null ? batchError.toString() : batchError.getMessage();
-                previousDraft = batchError.partialDraft == null || batchError.partialDraft.operations.isEmpty() ? null : batchError.partialDraft;
+                previousDraft = hasDraftProgress(batchError.partialDraft) ? batchError.partialDraft : null;
                 saveTaskDraftSafely(projectId, taskId, previousDraft);
+                recordAttemptTermination(logs, journal, attempt, "batch-generation", previousFailure);
                 draftFailureStreak.remember(previousFailure);
                 retryContext = mergeRetryContext(retryContext, previousFailure);
                 snapshot = sourceSnapshot(sourceDir, previousFailure);
                 if (attempt == POLICY_REWRITE_ATTEMPTS) {
+                    emitExecutionSummary(logs, journal, "failed", chinese);
                     throw batchError;
                 }
                 continue;
@@ -1267,25 +1281,55 @@ public class AgentService {
                 TaskOperations salvaged = streamInspection == null
                         ? new TaskOperations("partial draft salvaged from aborted stream", Collections.<FileOperation>emptyList())
                         : streamInspection.partialDraft("partial draft salvaged from aborted stream");
-                previousDraft = salvaged.operations.isEmpty() ? null : salvaged;
+                previousDraft = hasDraftProgress(salvaged) ? salvaged : null;
                 saveTaskDraftSafely(projectId, taskId, previousDraft);
+                recordAttemptTermination(logs, journal, attempt, "stream-abort", previousFailure);
                 draftFailureStreak.remember(previousFailure);
                 retryContext = mergeRetryContext(retryContext, previousFailure);
                 snapshot = sourceSnapshot(sourceDir, previousFailure);
                 if (attempt == POLICY_REWRITE_ATTEMPTS) {
+                    emitExecutionSummary(logs, journal, "failed", chinese);
                     throw new IllegalArgumentException(previousFailure, streamAbort);
+                }
+                continue;
+            } catch (IllegalArgumentException generationError) {
+                previousFailure = generationError.getMessage() == null ? generationError.toString() : generationError.getMessage();
+                TaskStreamInspectionPolicy streamInspection = singleStreamInspection[0];
+                TaskOperations salvaged = streamInspection == null
+                        ? new TaskOperations("partial draft salvaged from failed generation", Collections.<FileOperation>emptyList())
+                        : streamInspection.partialDraft("partial draft salvaged from failed generation");
+                previousDraft = hasDraftProgress(salvaged) ? salvaged : previousDraft;
+                saveTaskDraftSafely(projectId, taskId, previousDraft);
+                recordAttemptTermination(logs, journal, attempt, "generation", previousFailure);
+                draftFailureStreak.remember(previousFailure);
+                retryContext = mergeRetryContext(retryContext, previousFailure);
+                snapshot = sourceSnapshot(sourceDir, previousFailure);
+                if (attempt == POLICY_REWRITE_ATTEMPTS) {
+                    emitExecutionSummary(logs, journal, "failed", chinese);
+                    throw generationError;
                 }
                 continue;
             }
             try {
                 TaskOperations operations = generatedOperations;
                 if (operations.blocked) {
+                    if (ManifestResumePolicy.hasManifest(operations)) {
+                        previousDraft = new TaskOperations(
+                                operations.summary,
+                                operations.operations,
+                                false,
+                                "",
+                                "",
+                                operations.manifestJson,
+                                operations.acceptedPaths);
+                    }
                     String blockedSummary = BlockedTaskPolicy.blockedSummary(operations);
                     if (BlockedTaskPolicy.shouldExpandScope(operations, scopeExpanded)) {
                         scopeExpanded = true;
                         scopeExpandedRetryPending = true;
-                        previousDraft = null;
                         previousFailure = blockedSummary;
+                        saveTaskDraftSafely(projectId, taskId, previousDraft);
+                        recordAttemptTermination(logs, journal, attempt, "blocked-scope-expand", previousFailure);
                         draftFailureStreak.remember(previousFailure);
                         retryContext = mergeRetryContext(retryContext, blockedSummary);
                         instruction = BlockedTaskPolicy.scopeExpandedInstruction(instruction, operations);
@@ -1295,6 +1339,9 @@ public class AgentService {
                         attempt--;
                         continue;
                     }
+                    saveTaskDraftSafely(projectId, taskId, previousDraft);
+                    recordAttemptTermination(logs, journal, attempt, "blocked", blockedSummary);
+                    emitExecutionSummary(logs, journal, "blocked", chinese);
                     throw new IllegalStateException(blockedSummary);
                 }
                 if (attemptCorrectionMode) {
@@ -1302,6 +1349,7 @@ public class AgentService {
                 } else {
                     operations = TaskOperationsMergePolicy.stripDrops(operations);
                 }
+                operations = JavaImportNormalizer.normalize(operations, snapshot);
                 previousDraft = operations;
                 String reviewedOperationsJson = taskOperationsJson(operations);
                 HermesReview contractReview = HermesTaskContractGuard.review(taskContract, operations);
@@ -1316,6 +1364,7 @@ public class AgentService {
                         && !contractReview.rewriteInstruction.trim().isEmpty()
                         && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
                     preflightRewrites++;
+                    journal.recordRewrite();
                     previousFailure = mergeRetryContext(
                             HermesReviewerPolicy.rewriteContext(contractReview),
                             GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview("hermes-contract-guard", contractReview)));
@@ -1339,6 +1388,7 @@ public class AgentService {
                         && !deterministicReview.rewriteInstruction.trim().isEmpty()
                         && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
                     preflightRewrites++;
+                    journal.recordRewrite();
                     previousFailure = mergeRetryContext(
                             HermesReviewerPolicy.rewriteContext(deterministicReview),
                             GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview(deterministicTitle, deterministicReview)));
@@ -1354,6 +1404,7 @@ public class AgentService {
                 appendLocalGuardLog(logs, chinese ? "确定性规则预审" : "Deterministic rule preflight", preflight);
                 if (shouldRetryFromLocalGuard(preflight) && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
                     preflightRewrites++;
+                    journal.recordRewrite();
                     previousFailure = GuardFindingPolicy.retryContext(GuardFindingPolicy.fromLocalGuardResult("local-guard-preflight", preflight));
                     if (previousFailure.isEmpty()) {
                         previousFailure = preflight.additionalInstruction;
@@ -1380,14 +1431,22 @@ public class AgentService {
                         repairFlow || !previousFailure.isEmpty(),
                         attempt,
                         cloudReviewsUsed,
+                        POLICY_REWRITE_ATTEMPTS,
+                        preflightRewrites < PREFLIGHT_REWRITE_BUDGET,
                         logs,
                         chinese);
-                if (hermesReview != null) {
+                boolean deterministicOkThisAttempt = deterministicReview.decision == HermesReview.Decision.OK;
+                if (HermesReviewerPolicy.isStaleOrDuplicate(hermesReview, deterministicOkThisAttempt)) {
+                    hermesReview = null;
+                }
+                if (HermesReviewerPolicy.isValidCloudDecision(hermesReview)) {
                     cloudReviewsUsed++;
+                    journal.recordReview();
                 }
                 if (HermesReviewerPolicy.shouldRetry(hermesReview, attempt, POLICY_REWRITE_ATTEMPTS)
                         && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {
                     preflightRewrites++;
+                    journal.recordRewrite();
                     previousFailure = mergeRetryContext(
                             HermesReviewerPolicy.rewriteContext(hermesReview),
                             GuardFindingPolicy.retryContext(GuardFindingPolicy.fromHermesReview("hermes-review", hermesReview)));
@@ -1401,14 +1460,24 @@ public class AgentService {
                 }
                 updateStreamPhase(callTag, "merging", attempt);
                 operationsWriter.apply(sourceDir, operations);
-                deleteTaskDraftSafely(projectId, taskId);
-                return operations;
+                if (deleteDraftOnApplySuccess) {
+                    deleteTaskDraftSafely(projectId, taskId);
+                }
+                recordAttemptTermination(logs, journal, attempt, "apply", "success");
+                String executionSummary = (chinese ? "执行流摘要：" : "Execution flow: ")
+                        + journal.renderSummary("success");
+                FileUtils.appendText(logs, (chinese ? "任务执行摘要：" : "Task execution summary: ")
+                        + executionSummary + "\n");
+                return withExecutionSummary(operations, executionSummary);
             } catch (IllegalArgumentException policyError) {
                 if (!isRewriteablePolicyError(policyError) || attempt == POLICY_REWRITE_ATTEMPTS) {
                     saveTaskDraftSafely(projectId, taskId, previousDraft);
+                    recordAttemptTermination(logs, journal, attempt, "policy-error", policyError.getMessage());
+                    emitExecutionSummary(logs, journal, "failed", chinese);
                     throw policyError;
                 }
                 lastPolicyError = policyError;
+                recordAttemptTermination(logs, journal, attempt, "policy-error-retry", policyError.getMessage());
                 // Refocus the snapshot on the files/types named in the rejection so the next attempt
                 // sees the offending caller and the real class declarations in full (untruncated).
                 snapshot = sourceSnapshot(sourceDir, policyError.getMessage());
@@ -1429,13 +1498,43 @@ public class AgentService {
             }
         }
         saveTaskDraftSafely(projectId, taskId, previousDraft);
-        throw lastPolicyError == null ? new IllegalStateException("Task operation generation failed.") : lastPolicyError;
+        String finalFailure = previousFailure == null || previousFailure.trim().isEmpty()
+                ? "Task operation generation failed."
+                : "Task operation generation failed. Last failure: " + previousFailure.trim();
+        emitExecutionSummary(logs, journal, "exhausted", chinese);
+        throw lastPolicyError == null ? new IllegalStateException(finalFailure) : lastPolicyError;
     }
 
     private boolean shouldUseBatchedGeneration(TaskOperations previousDraft, boolean correctionMode) {
-        return previousDraft == null
-                && !correctionMode
-                && OpenAiClient.batchedGenerationEnabled(context.getSharedPreferences(OpenAiClient.PREFS, Context.MODE_PRIVATE));
+        if (!OpenAiClient.batchedGenerationEnabled(context.getSharedPreferences(OpenAiClient.PREFS, Context.MODE_PRIVATE))) {
+            return false;
+        }
+        if (ManifestResumePolicy.shouldResume(previousDraft)) {
+            return true;
+        }
+        return previousDraft == null && !correctionMode;
+    }
+
+    private static boolean hasDraftProgress(TaskOperations draft) {
+        return draft != null
+                && ((draft.operations != null && !draft.operations.isEmpty())
+                || ManifestResumePolicy.hasManifest(draft));
+    }
+
+    private static TaskOperations withExecutionSummary(TaskOperations operations, String executionSummary) {
+        if (operations == null || executionSummary == null || executionSummary.trim().isEmpty()) {
+            return operations;
+        }
+        String summary = operations.summary == null ? "" : operations.summary.trim();
+        summary = summary.isEmpty() ? executionSummary.trim() : summary + "\n" + executionSummary.trim();
+        return new TaskOperations(
+                summary,
+                operations.operations,
+                operations.blocked,
+                operations.blockedReason,
+                operations.prerequisiteWork,
+                operations.manifestJson,
+                operations.acceptedPaths);
     }
 
     private TaskOperations createTaskOperationsInBatches(
@@ -1453,28 +1552,57 @@ public class AgentService {
             String callTag,
             int attempt,
             HermesTaskContract taskContract,
+            TaskOperations previousDraft,
+            TaskAttemptJournal journal,
             File logs,
             boolean chinese) throws Exception {
         updateStreamPhase(callTag, "manifest", attempt);
-        String manifestJson = recordCloudAiCall(
-                projectId,
-                linkedBuildJobId,
-                (chinese ? "云端 AI · 任务文件清单" : "Cloud AI · task file manifest") + " #" + attempt,
-                requestLog,
-                () -> openAiClient.createTaskManifest(planContent, taskTitle, taskInstruction, snapshot, recentRequirements, retryContext, chinese, callTag),
-                taskId);
-        TaskManifest manifest = TaskManifestParser.fromJson(manifestJson);
+        String manifestJson;
+        TaskManifest manifest;
+        List<FileOperation> accepted = new ArrayList<>();
+        if (ManifestResumePolicy.hasManifest(previousDraft)) {
+            manifestJson = previousDraft.manifestJson;
+            manifest = ManifestResumePolicy.manifest(previousDraft);
+            accepted.addAll(ManifestResumePolicy.acceptedOperations(previousDraft));
+            FileUtils.appendText(logs, chinese
+                    ? "复用任务清单草稿，继续剩余批次。\n"
+                    : "Resuming task manifest draft for remaining batches.\n");
+        } else {
+            manifestJson = recordCloudAiCall(
+                    projectId,
+                    linkedBuildJobId,
+                    (chinese ? "云端 AI · 任务文件清单" : "Cloud AI · task file manifest") + " #" + attempt,
+                    requestLog,
+                    () -> openAiClient.createTaskManifest(planContent, taskTitle, taskInstruction, snapshot, recentRequirements, retryContext, chinese, callTag),
+                    taskId);
+            if (journal != null) {
+                journal.recordManifest();
+            }
+            manifest = TaskManifestParser.fromJson(manifestJson);
+        }
         if (manifest.blocked) {
             return manifest.toBlockedOperations();
         }
-        List<List<TaskManifest.Entry>> batches = ManifestBatchPolicy.batches(manifest.files);
+        List<List<TaskManifest.Entry>> allBatches = ManifestBatchPolicy.batches(manifest.files);
+        List<List<TaskManifest.Entry>> batches = ManifestResumePolicy.hasManifest(previousDraft)
+                ? ManifestResumePolicy.remainingBatches(manifest, previousDraft.acceptedPaths)
+                : allBatches;
+        int completedBeforeResume = allBatches.size() - batches.size();
+        if (journal != null) {
+            journal.recordBatchProgress(completedBeforeResume, allBatches.size());
+        }
+        if (batches.isEmpty()) {
+            return new TaskOperations(manifest.summary, accepted);
+        }
         FileUtils.appendText(logs, (chinese ? "任务清单：" : "Task manifest: ")
                 + manifest.files.size() + (chinese ? " 个文件，分 " : " file(s), ")
-                + batches.size() + (chinese ? " 批\n" : " batch(es)\n"));
-        List<FileOperation> accepted = new ArrayList<>();
+                + allBatches.size() + (chinese ? " 批，剩余 " : " batch(es), remaining ")
+                + batches.size() + "\n");
         ResourceSymbolsOverlay overlay = ResourceSymbolsOverlay.empty();
+        overlay.absorb(accepted);
         for (int i = 0; i < batches.size(); i++) {
             List<TaskManifest.Entry> batch = batches.get(i);
+            int batchNumber = completedBeforeResume + i + 1;
             String batchRetryContext = "";
             boolean acceptedBatch = false;
             for (int batchAttempt = 1; batchAttempt <= 2; batchAttempt++) {
@@ -1482,7 +1610,7 @@ public class AgentService {
                 String completedContext = CompletedBatchContextPolicy.context(accepted, CompletedBatchContextPolicy.DEFAULT_MAX_CHARS);
                 String effectiveRetryContext = mergeRetryContext(retryContext, batchRetryContext);
                 String batchRequest = requestLog
-                        + "\n\nBatch " + (i + 1) + "/" + batches.size() + " files:\n" + batchFileListForLog(batch)
+                        + "\n\nBatch " + batchNumber + "/" + allBatches.size() + " files:\n" + batchFileListForLog(batch)
                         + "\n\nCompleted files context:\n" + truncateForInlineLog(completedContext, 20000);
                 try {
                     updateStreamPhase(callTag, "coding", attempt);
@@ -1490,7 +1618,7 @@ public class AgentService {
                             projectId,
                             linkedBuildJobId,
                             (chinese ? "云端 AI · 文件操作生成批次 " : "Cloud AI · task operations batch ")
-                                    + (i + 1) + "/" + batches.size() + " #" + attempt + "." + batchAttempt,
+                                    + batchNumber + "/" + allBatches.size() + " #" + attempt + "." + batchAttempt,
                             batchRequest,
                             () -> openAiClient.createTaskOperationsBatch(
                                     planContent,
@@ -1505,9 +1633,20 @@ public class AgentService {
                                     callTag,
                                     streamInspection),
                             taskId);
-                    TaskOperations batchOperations = CanonicalPathPolicy.canonicalizeAll(TaskOperationsParser.fromJson(batchJson));
+                    TaskOperations batchOperations = JavaImportNormalizer.normalize(
+                            CanonicalPathPolicy.canonicalizeAll(TaskOperationsParser.fromJson(batchJson)),
+                            snapshot);
                     if (batchOperations.blocked) {
-                        return batchOperations;
+                        TaskOperations partial = partialBatchDraft(accepted, null, manifestJson);
+                        saveTaskDraftSafely(projectId, taskId, partial);
+                        return new TaskOperations(
+                                batchOperations.summary,
+                                partial.operations,
+                                true,
+                                batchOperations.blockedReason,
+                                batchOperations.prerequisiteWork,
+                                manifestJson,
+                                partial.acceptedPaths);
                     }
                     String validationError = BatchValidationPolicy.review(
                             batchOperations.operations,
@@ -1518,13 +1657,30 @@ public class AgentService {
                     if (validationError == null) {
                         accepted.addAll(batchOperations.operations);
                         overlay.absorb(batchOperations.operations);
+                        saveTaskDraftSafely(projectId, taskId, partialBatchDraft(accepted, null, manifestJson));
+                        if (journal != null) {
+                            journal.recordBatchProgress(batchNumber, allBatches.size());
+                        }
                         acceptedBatch = true;
                         break;
+                    }
+                    TaskOperations blocked = BatchEscalationPolicy.blockedIfManifestCannotProduce(validationError, manifest);
+                    if (blocked != null) {
+                        TaskOperations partial = partialBatchDraft(accepted, null, manifestJson);
+                        saveTaskDraftSafely(projectId, taskId, partial);
+                        return new TaskOperations(
+                                blocked.summary,
+                                partial.operations,
+                                true,
+                                blocked.blockedReason,
+                                blocked.prerequisiteWork,
+                                manifestJson,
+                                partial.acceptedPaths);
                     }
                     batchRetryContext = validationError;
                     FileUtils.appendText(logs, (chinese ? "批次校验失败：" : "Batch validation failed: ") + validationError + "\n");
                 } catch (OpenAiClient.StreamAbortException streamAbort) {
-                    TaskOperations partial = partialBatchDraft(accepted, streamInspection.partialDraft("partial draft salvaged from aborted stream"));
+                    TaskOperations partial = partialBatchDraft(accepted, streamInspection.partialDraft("partial draft salvaged from aborted stream"), manifestJson);
                     String message = streamAbort.getMessage() == null ? streamAbort.toString() : streamAbort.getMessage();
                     throw new BatchGenerationException(message, partial, streamAbort);
                 } catch (IllegalArgumentException parseOrPolicyError) {
@@ -1535,13 +1691,13 @@ public class AgentService {
             if (!acceptedBatch) {
                 throw new BatchGenerationException(
                         batchRetryContext.isEmpty() ? "Batch generation failed." : batchRetryContext,
-                        partialBatchDraft(accepted, null));
+                        partialBatchDraft(accepted, null, manifestJson));
             }
         }
         return new TaskOperations(manifest.summary, accepted);
     }
 
-    private TaskOperations partialBatchDraft(List<FileOperation> accepted, TaskOperations currentPartial) {
+    private TaskOperations partialBatchDraft(List<FileOperation> accepted, TaskOperations currentPartial, String manifestJson) {
         List<FileOperation> operations = new ArrayList<>();
         if (accepted != null) {
             operations.addAll(accepted);
@@ -1549,7 +1705,15 @@ public class AgentService {
         if (currentPartial != null && currentPartial.operations != null) {
             operations.addAll(currentPartial.operations);
         }
-        return CanonicalPathPolicy.canonicalizeAll(new TaskOperations("partial draft salvaged from aborted batch", operations));
+        TaskOperations canonical = CanonicalPathPolicy.canonicalizeAll(new TaskOperations("partial draft salvaged from aborted batch", operations));
+        return new TaskOperations(
+                canonical.summary,
+                canonical.operations,
+                false,
+                "",
+                "",
+                manifestJson,
+                ManifestResumePolicy.acceptedPathsFor(accepted));
     }
 
     private static List<String> manifestPaths(List<TaskManifest.Entry> batch) {
@@ -1627,6 +1791,30 @@ public class AgentService {
         return RetryContextPolicy.merge(existing, addition);
     }
 
+    // Phase 7.1: record one attempt's terminal outcome in the journal AND write the structured
+    // per-attempt line to the job log, so every failed attempt's reason survives (the journal used
+    // to keep only the last) and the next diagnosis does not need a multi-megabyte raw log.
+    private void recordAttemptTermination(File logs, TaskAttemptJournal journal, int attempt, String phase, String reason) {
+        String line = journal.recordAttempt(attempt, phase, reason);
+        appendLogSafely(logs, "attempt-termination: " + line + "\n");
+    }
+
+    // Phase 7.2: emit the end-of-task execution summary card on every termination path, not just
+    // success and policy-error, so a batch/stream/generation/blocked failure also leaves the card.
+    private void emitExecutionSummary(File logs, TaskAttemptJournal journal, String reason, boolean chinese) {
+        appendLogSafely(logs, (chinese ? "任务执行摘要：" : "Task execution summary: ")
+                + journal.renderSummary(reason) + "\n");
+    }
+
+    // Observability writes are best-effort: a log-append failure must never mask the real task
+    // error these helpers are called alongside (often right before a throw).
+    private void appendLogSafely(File logs, String text) {
+        try {
+            FileUtils.appendText(logs, text);
+        } catch (Exception ignored) {
+        }
+    }
+
     private void saveTaskDraftSafely(long projectId, long taskId, TaskOperations draft) {
         try {
             new TaskDraftStore(repository.projectRoot(projectId)).save(taskId, draft);
@@ -1666,8 +1854,8 @@ public class AgentService {
         return (chinese ? "Hermes · 上下文侦察" : "Hermes · Context Scout") + " #" + round;
     }
 
-    private HermesReview reviewOperationsWithHermes(long projectId, Long linkedBuildJobId, String callTag, String taskTitle, String taskInstruction, String snapshot, String operationsJson, TaskOperations operations, ContextNegotiation negotiation, boolean retryOrRepairFlow, int attempt, int cloudReviewsUsed, File logs, boolean chinese) {
-        if (!HermesReviewerPolicy.shouldReviewOperations(retryOrRepairFlow, attempt, negotiation, operations, cloudReviewsUsed)) {
+    private HermesReview reviewOperationsWithHermes(long projectId, Long linkedBuildJobId, String callTag, String taskTitle, String taskInstruction, String snapshot, String operationsJson, TaskOperations operations, ContextNegotiation negotiation, boolean retryOrRepairFlow, int attempt, int cloudReviewsUsed, int maxAttempts, boolean rewriteBudgetAvailable, File logs, boolean chinese) {
+        if (!HermesReviewerPolicy.shouldReviewOperations(retryOrRepairFlow, attempt, negotiation, operations, cloudReviewsUsed, maxAttempts, rewriteBudgetAvailable)) {
             return null;
         }
         String title = (chinese ? "Hermes · 文件操作审查" : "Hermes · file operation review") + " #" + attempt;

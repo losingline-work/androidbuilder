@@ -989,6 +989,7 @@ public class OpenAiClient {
                 + "decision must be one of ok, rewrite, or fallback. "
                 + "Use ok when the patch is focused and cross-file APIs look consistent. "
                 + "Use rewrite when the patch is too broad, recreates the project, omits a needed paired file, or creates obvious API/resource mismatches. "
+                + "Do not suggest inline literal workarounds for missing Android resources; require a real matching resource file/value or a reference to an existing indexed resource. "
                 + "Use fallback only if the input is insufficient to review. Do not return markdown. " + language;
     }
 

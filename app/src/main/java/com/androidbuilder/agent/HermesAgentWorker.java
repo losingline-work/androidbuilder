@@ -59,6 +59,7 @@ final class HermesAgentWorker {
                     agentRoot.getAbsolutePath(),
                     baseHash,
                     locksJson(locks));
+            TaskOperations draft = initialDraft(projectId, task);
             TaskOperations operations = executor.execute(
                     projectId,
                     linkedBuildJobId,
@@ -67,7 +68,9 @@ final class HermesAgentWorker {
                     task,
                     logs,
                     chinese,
-                    initialFailureContext(projectId, task),
+                    initialFailureContext(task, draft),
+                    draft,
+                    false,
                     false);
             String summary = operations.summary == null ? "" : operations.summary;
             String mergedHash = SourceTreeHashPolicy.hash(scratchSource);
@@ -94,9 +97,12 @@ final class HermesAgentWorker {
         return array.toString();
     }
 
-    private String initialFailureContext(long projectId, ProjectTaskRecord task) {
+    private TaskOperations initialDraft(long projectId, ProjectTaskRecord task) {
+        return new TaskDraftStore(repository.projectRoot(projectId)).load(task.id);
+    }
+
+    private String initialFailureContext(ProjectTaskRecord task, TaskOperations draft) {
         String context = "failed".equals(task.status) ? task.resultSummary : "";
-        TaskOperations draft = new TaskDraftStore(repository.projectRoot(projectId)).load(task.id);
         String advisory = TaskDraftContextPolicy.advisorySection(
                 draft,
                 context,

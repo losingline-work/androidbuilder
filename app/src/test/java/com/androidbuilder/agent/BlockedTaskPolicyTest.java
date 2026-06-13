@@ -44,6 +44,29 @@ public class BlockedTaskPolicyTest {
     }
 
     @Test
+    public void scopeExpandedInstructionStripsOldHermesTaskContract() throws Exception {
+        TaskOperations blocked = new TaskOperations(
+                "blocked",
+                Collections.emptyList(),
+                true,
+                "layouts missing",
+                "create app/src/main/res/layout/activity_main.xml");
+        String original = HermesTaskContractCodec.appendToInstruction(
+                "Wire MainActivity.",
+                HermesTaskContractCodec.fromJson(new org.json.JSONObject("{"
+                        + "\"allowedPaths\":[\"app/src/main/java/com/example/MainActivity.java\"],"
+                        + "\"expectedFiles\":[\"app/src/main/java/com/example/MainActivity.java\"]"
+                        + "}")));
+
+        String instruction = BlockedTaskPolicy.scopeExpandedInstruction(original, blocked);
+
+        assertFalse(instruction.contains(HermesTaskContractCodec.START));
+        assertFalse(HermesTaskContractCodec.extractFromInstruction(instruction).hasSignals());
+        assertTrue(instruction.contains("Wire MainActivity."));
+        assertTrue(instruction.contains("create app/src/main/res/layout/activity_main.xml"));
+    }
+
+    @Test
     public void blockedSummaryUsesReason() {
         TaskOperations blocked = new TaskOperations(
                 "",

@@ -16,6 +16,8 @@ public final class TaskOperationExecutor {
                 File logs,
                 boolean chinese,
                 String initialFailureContext,
+                TaskOperations initialDraft,
+                boolean deleteDraftOnApplySuccess,
                 boolean repairFlow) throws Exception;
     }
 
@@ -34,6 +36,8 @@ public final class TaskOperationExecutor {
             File logs,
             boolean chinese,
             String initialFailureContext,
+            TaskOperations initialDraft,
+            boolean deleteDraftOnApplySuccess,
             boolean repairFlow) throws Exception {
         return runner.execute(
                 projectId,
@@ -44,6 +48,8 @@ public final class TaskOperationExecutor {
                 logs,
                 chinese,
                 initialFailureContext,
+                initialDraft,
+                deleteDraftOnApplySuccess,
                 repairFlow);
     }
 }
