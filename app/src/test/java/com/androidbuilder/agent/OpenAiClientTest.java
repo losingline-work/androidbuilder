@@ -291,7 +291,8 @@ public class OpenAiClientTest {
         assertTrue(prompt.contains("Generate complete file operations for exactly these files"));
         assertTrue(prompt.contains("app/src/main/res/values/strings.xml"));
         assertTrue(prompt.contains("base strings"));
-        assertTrue(prompt.contains("Files already accepted earlier in this task"));
+        assertTrue(prompt.contains("AUTHORITATIVE API CONTRACT"));
+        assertTrue(prompt.contains("EXACT method names"));
         assertTrue(prompt.contains("Do not include any unrequested file"));
     }
 

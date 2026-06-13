@@ -875,7 +875,10 @@ public class OpenAiClient {
         return base
                 + "\n\nGenerate complete file operations for exactly these files:\n"
                 + batchFileList(batchFiles)
-                + "\n\nFiles already accepted earlier in this task (authoritative; keep new code consistent with them):\n"
+                + "\n\nAUTHORITATIVE API CONTRACT - the files below are already accepted and frozen. "
+                + "Call their classes using the EXACT method names, parameter types, constructor signatures, "
+                + "and field/constant names shown; do not re-guess or rename them. If you need a method or field "
+                + "that does not exist on a frozen class, you must conform to what exists, not invent a new member:\n"
                 + completed
                 + "\n\nDo not include any unrequested file. Return only summary and operations JSON for this batch.";
     }

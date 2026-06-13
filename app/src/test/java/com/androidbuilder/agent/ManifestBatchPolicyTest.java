@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class ManifestBatchPolicyTest {
     @Test
@@ -79,6 +80,39 @@ public class ManifestBatchPolicyTest {
         assertEquals(2, batches.size());
         assertEquals(ManifestBatchPolicy.MAX_BATCH_WEIGHT, batches.get(0).size());
         assertEquals(2, batches.get(1).size());
+    }
+
+    @Test
+    public void javaFilesAreOrderedProducerBeforeConsumer() {
+        // Data layer given in a deliberately shuffled (consumer-first) manifest order; batching must
+        // emit DB foundation -> entities -> DAOs -> repositories -> ui so a caller's batch always
+        // follows its callee's batch.
+        List<TaskManifest.Entry> files = Arrays.asList(
+                entry("app/src/main/java/com/example/ui/MainActivity.java"),
+                entry("app/src/main/java/com/example/data/repo/CategoryRepository.java"),
+                entry("app/src/main/java/com/example/data/dao/CategoryDao.java"),
+                entry("app/src/main/java/com/example/data/entity/Category.java"),
+                entry("app/src/main/java/com/example/data/db/DbHelper.java"),
+                entry("app/src/main/java/com/example/util/DateUtils.java"),
+                entry("app/src/main/java/com/example/App.java"));
+
+        List<List<TaskManifest.Entry>> batches = ManifestBatchPolicy.batches(files);
+        List<String> order = new java.util.ArrayList<>();
+        for (List<TaskManifest.Entry> batch : batches) {
+            for (TaskManifest.Entry e : batch) {
+                order.add(e.path);
+            }
+        }
+
+        int db = order.indexOf("app/src/main/java/com/example/data/db/DbHelper.java");
+        int entity = order.indexOf("app/src/main/java/com/example/data/entity/Category.java");
+        int dao = order.indexOf("app/src/main/java/com/example/data/dao/CategoryDao.java");
+        int repo = order.indexOf("app/src/main/java/com/example/data/repo/CategoryRepository.java");
+        int ui = order.indexOf("app/src/main/java/com/example/ui/MainActivity.java");
+        assertTrue(db < entity);
+        assertTrue(entity < dao);
+        assertTrue(dao < repo);
+        assertTrue(repo < ui);
     }
 
     private static TaskManifest.Entry entry(String path) {
