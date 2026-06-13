@@ -323,7 +323,8 @@ public class OpenAiClientTest {
 
         assertTrue(prompt.contains("resource index"));
         assertTrue(prompt.contains("only authoritative resource truth table"));
-        assertTrue(prompt.contains("return blocked instead of inventing it"));
+        assertTrue(prompt.contains("Never invent a new resource name"));
+        assertTrue(prompt.contains("return blocked with prerequisiteWork naming it"));
         assertTrue(prompt.contains("Conversely, every name listed here EXISTS"));
         assertTrue(prompt.contains("The snapshot inventory (full text + API digest + coverage note) is complete"));
         assertTrue(prompt.contains("creating it is part of your task when needed"));

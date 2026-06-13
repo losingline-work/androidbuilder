@@ -60,9 +60,9 @@ public class SourceSnapshotComposerTest {
                 resourceIndex,
                 "The project is larger than the context budget.",
                 500,
-                1000);
+                1300);
 
-        assertTrue(snapshot.length() <= 1000);
+        assertTrue(snapshot.length() <= 1300);
         assertTrue(snapshot.contains(resourceIndex));
         assertTrue(snapshot.contains("--- context note ---"));
         assertTrue(snapshot.contains("...[truncated]"));

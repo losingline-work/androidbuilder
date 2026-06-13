@@ -3,23 +3,25 @@ package com.androidbuilder.agent;
 import com.androidbuilder.model.FileOperation;
 import com.androidbuilder.model.HermesTaskContract;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
+/**
+ * Batch validation adjudicates a batch from its OWN operations + the batch manifest only. It does
+ * NOT check resource existence: a task runs in an isolated scratch fork that cannot see sibling
+ * tasks' resources, so a scratch-tree existence check produces a false "missing R.X" for every
+ * legitimate cross-task reference. Resource existence is a whole-tree property and is validated
+ * exactly once, by AndroidSourceGuard at merge time on the full canonical tree (the sole authority).
+ */
 final class BatchValidationPolicy {
     private BatchValidationPolicy() {
     }
 
     static String review(List<FileOperation> batchOps,
                          List<String> manifestPathsForBatch,
-                         HermesTaskContract contract,
-                         ResourceSymbolsOverlay acceptedSoFar,
-                         File sourceDir) {
+                         HermesTaskContract contract) {
         List<FileOperation> canonicalOps = canonicalOps(batchOps);
         for (FileOperation operation : canonicalOps) {
             if (!"write".equals(operation.action) && !"delete".equals(operation.action)) {
@@ -29,12 +31,12 @@ final class BatchValidationPolicy {
         Set<String> plannedPaths = canonicalPaths(manifestPathsForBatch);
         Set<String> actualPaths = operationPaths(canonicalOps);
         for (String actualPath : actualPaths) {
-            // A res/values file is an additive, conflict-free resource declaration. When a Java/XML
-            // batch references a value resource a sibling task owns (not yet in this scratch tree),
-            // the model self-heals by adding the values file that declares it; that is exactly the
-            // fix we want, not an "unplanned file" to reject. Other unplanned files still sprawl and
-            // are rejected.
-            if (!plannedPaths.contains(actualPath) && !isValueResourceFile(actualPath)) {
+            // An additive res/** file is a conflict-free resource the batch may need to declare for a
+            // referenced-but-not-yet-present resource (any type: drawable, layout, menu, values, ...).
+            // Self-healing it in one pass is the desired behavior, not an "unplanned file" to reject;
+            // the merge-time guard still rejects a structurally broken or duplicate resource. Other
+            // unplanned files (stray Java, etc.) still sprawl and are rejected.
+            if (!plannedPaths.contains(actualPath) && !isAdditiveResourceFile(actualPath)) {
                 return "Batch validation: batch contained unplanned file " + actualPath + "; regenerate only the requested files.";
             }
         }
@@ -43,24 +45,7 @@ final class BatchValidationPolicy {
                 return "Batch validation: missing planned file " + plannedPath + ".";
             }
         }
-        String streamError = TaskStreamPreflight.review(canonicalOps, contract);
-        if (streamError != null) {
-            return streamError;
-        }
-        ResourceSymbolsOverlay symbols = ResourceSymbolsOverlay.fromSourceDir(sourceDir);
-        symbols.addAll(acceptedSoFar);
-        // A batch's own resource files (e.g. a self-heal values/ids.xml added alongside the Java
-        // file) declare resources the same batch's Java may reference.
-        symbols.absorb(canonicalOps);
-        for (FileOperation operation : canonicalOps) {
-            if ("write".equals(operation.action) && operation.path.endsWith(".java")) {
-                String error = validateJavaResources(operation, symbols);
-                if (error != null) {
-                    return error;
-                }
-            }
-        }
-        return null;
+        return TaskStreamPreflight.review(canonicalOps, contract);
     }
 
     private static List<FileOperation> canonicalOps(List<FileOperation> operations) {
@@ -74,10 +59,8 @@ final class BatchValidationPolicy {
         return canonical;
     }
 
-    private static boolean isValueResourceFile(String path) {
-        return path != null
-                && path.startsWith("app/src/main/res/values")
-                && path.endsWith(".xml");
+    private static boolean isAdditiveResourceFile(String path) {
+        return path != null && path.startsWith("app/src/main/res/");
     }
 
     private static Set<String> canonicalPaths(List<String> paths) {
@@ -97,46 +80,5 @@ final class BatchValidationPolicy {
             paths.add(operation.path);
         }
         return paths;
-    }
-
-    private static String validateJavaResources(FileOperation operation, ResourceSymbolsOverlay symbols) {
-        String scannable = JavaApiDigest.stripJavaCommentsAndStrings(operation.content == null ? "" : operation.content);
-        String fileName = new File(operation.path).getName();
-        String error = missing(AndroidSourceGuard.R_ID, symbols.ids, "XML id", "R.id", scannable, fileName);
-        if (error != null) {
-            return error;
-        }
-        error = missing(AndroidSourceGuard.R_LAYOUT, symbols.layouts, "layout resource", "R.layout", scannable, fileName);
-        if (error != null) {
-            return error;
-        }
-        error = missing(AndroidSourceGuard.R_STRING, symbols.strings, "string resource", "R.string", scannable, fileName);
-        if (error != null) {
-            return error;
-        }
-        error = missing(AndroidSourceGuard.R_COLOR, symbols.colors, "color resource", "R.color", scannable, fileName);
-        if (error != null) {
-            return error;
-        }
-        error = missing(AndroidSourceGuard.R_DRAWABLE, symbols.drawables, "drawable resource", "R.drawable", scannable, fileName);
-        if (error != null) {
-            return error;
-        }
-        error = missing(AndroidSourceGuard.R_MIPMAP, symbols.mipmaps, "mipmap resource", "R.mipmap", scannable, fileName);
-        if (error != null) {
-            return error;
-        }
-        return missing(AndroidSourceGuard.R_STYLE, symbols.styles, "style resource", "R.style", scannable, fileName);
-    }
-
-    private static String missing(Pattern pattern, Set<String> known, String label, String prefix, String content, String fileName) {
-        Matcher matcher = pattern.matcher(content);
-        while (matcher.find()) {
-            String name = matcher.group(1);
-            if (!known.contains(name)) {
-                return "Batch validation: missing " + label + " " + prefix + "." + name + " in " + fileName + ".";
-            }
-        }
-        return null;
     }
 }

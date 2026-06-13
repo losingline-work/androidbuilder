@@ -1606,8 +1606,6 @@ public class AgentService {
                 + batches.size() + "\n");
         FileUtils.appendText(logs, BatchNarrationPolicy.manifestLine(
                 manifest.summary, manifest.files.size(), allBatches.size(), chinese));
-        ResourceSymbolsOverlay overlay = ResourceSymbolsOverlay.empty();
-        overlay.absorb(accepted);
         for (int i = 0; i < batches.size(); i++) {
             List<TaskManifest.Entry> batch = batches.get(i);
             int batchNumber = completedBeforeResume + i + 1;
@@ -1661,31 +1659,15 @@ public class AgentService {
                     String validationError = BatchValidationPolicy.review(
                             batchOperations.operations,
                             manifestPaths(batch),
-                            taskContract,
-                            overlay,
-                            sourceDir);
+                            taskContract);
                     if (validationError == null) {
                         accepted.addAll(batchOperations.operations);
-                        overlay.absorb(batchOperations.operations);
                         saveTaskDraftSafely(projectId, taskId, partialBatchDraft(accepted, null, manifestJson));
                         if (journal != null) {
                             journal.recordBatchProgress(batchNumber, allBatches.size());
                         }
                         acceptedBatch = true;
                         break;
-                    }
-                    TaskOperations blocked = BatchEscalationPolicy.blockedIfManifestCannotProduce(validationError, manifest);
-                    if (blocked != null) {
-                        TaskOperations partial = partialBatchDraft(accepted, null, manifestJson);
-                        saveTaskDraftSafely(projectId, taskId, partial);
-                        return new TaskOperations(
-                                blocked.summary,
-                                partial.operations,
-                                true,
-                                blocked.blockedReason,
-                                blocked.prerequisiteWork,
-                                manifestJson,
-                                partial.acceptedPaths);
                     }
                     batchRetryContext = validationError;
                     FileUtils.appendText(logs, (chinese ? "批次校验失败：" : "Batch validation failed: ") + validationError + "\n");

@@ -8,7 +8,7 @@ import java.util.Set;
 final class SourceSnapshotComposer {
     static final String JAVA_API_DIGEST_HEADER = "--- Java API digest (non-focused source files) ---";
     static final String RESOURCE_INDEX_HEADER = "--- resource index (complete, authoritative) ---";
-    static final String RESOURCE_INDEX_RULE = "Every R.id/R.layout/R.string/R.color/R.drawable/R.mipmap/R.style in Java MUST appear verbatim in this index. If a needed id is missing here, it does not exist - return blocked instead of inventing it. Conversely, every name listed here EXISTS - you may reference it from Java without seeing the XML body.";
+    static final String RESOURCE_INDEX_RULE = "Every R.id/R.layout/R.string/R.color/R.drawable/R.mipmap/R.style in Java MUST appear verbatim in this index. Never invent a new resource name: if the exact name is missing, bind to the nearest existing indexed name, or return blocked with prerequisiteWork naming it - do not reference an R.* name that is not in this index. Conversely, every name listed here EXISTS - you may reference it from Java without seeing the XML body.";
     private static final String TRUNCATED = "\n...[truncated]";
 
     private SourceSnapshotComposer() {
