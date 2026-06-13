@@ -49,6 +49,32 @@ public class StreamProgressRegistryTest {
     }
 
     @Test
+    public void batchProgressSurvivesCountUpdatesAndResetsOnPhaseChange() {
+        StreamProgressRegistry registry = new StreamProgressRegistry();
+
+        registry.updatePhase("task:7", "coding", 1, 5);
+        registry.updateBatch("task:7", 3, 8);
+        registry.updateCounts("task:7", 800, 0);
+
+        StreamProgressRegistry.StreamProgress coding = registry.snapshot().get("task:7");
+        assertEquals(3, coding.batchDone);
+        assertEquals(8, coding.batchTotal);
+        assertEquals(800, coding.answerChars);
+
+        // A new batch in the same phase bumps the counter and resets the streamed char count.
+        registry.updatePhase("task:7", "coding", 1, 5);
+        registry.updateBatch("task:7", 4, 8);
+        StreamProgressRegistry.StreamProgress nextBatch = registry.snapshot().get("task:7");
+        assertEquals(4, nextBatch.batchDone);
+
+        // Leaving the coding phase clears batch progress.
+        registry.updatePhase("task:7", "reviewing", 1, 5);
+        StreamProgressRegistry.StreamProgress reviewing = registry.snapshot().get("task:7");
+        assertEquals(0, reviewing.batchDone);
+        assertEquals(0, reviewing.batchTotal);
+    }
+
+    @Test
     public void snapshotIsStableCopy() {
         StreamProgressRegistry registry = new StreamProgressRegistry();
         registry.updateCounts("task:1", 100, 0);

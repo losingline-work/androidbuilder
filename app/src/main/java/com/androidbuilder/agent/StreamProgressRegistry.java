@@ -26,7 +26,31 @@ public final class StreamProgressRegistry {
                 Math.max(0, maxAttempts),
                 samePhase ? current.answerChars : 0,
                 samePhase ? current.reasoningChars : 0,
+                // Batch progress belongs to the coding phase of a batched task; carry it while the
+                // phase holds, reset it when the phase changes (e.g. coding -> reviewing).
+                samePhase ? current.batchDone : 0,
+                samePhase ? current.batchTotal : 0,
                 samePhase ? current.startedAt : now,
+                now));
+    }
+
+    public synchronized void updateBatch(String callTag, int batchDone, int batchTotal) {
+        String tag = clean(callTag);
+        if (tag.isEmpty()) {
+            return;
+        }
+        StreamProgress current = progressByTag.get(tag);
+        long now = System.currentTimeMillis();
+        progressByTag.put(tag, new StreamProgress(
+                tag,
+                current == null ? "" : current.phase,
+                current == null ? 0 : current.attempt,
+                current == null ? 0 : current.maxAttempts,
+                current == null ? 0 : current.answerChars,
+                current == null ? 0 : current.reasoningChars,
+                Math.max(0, batchDone),
+                Math.max(0, batchTotal),
+                current == null ? now : current.startedAt,
                 now));
     }
 
@@ -44,6 +68,8 @@ public final class StreamProgressRegistry {
                 current == null ? 0 : current.maxAttempts,
                 Math.max(0, answerChars),
                 Math.max(0, reasoningChars),
+                current == null ? 0 : current.batchDone,
+                current == null ? 0 : current.batchTotal,
                 current == null ? now : current.startedAt,
                 now));
     }
@@ -70,17 +96,22 @@ public final class StreamProgressRegistry {
         public final int maxAttempts;
         public final int answerChars;
         public final int reasoningChars;
+        public final int batchDone;
+        public final int batchTotal;
         public final long startedAt;
         public final long updatedAt;
 
         public StreamProgress(String callTag, String phase, int attempt, int maxAttempts,
-                              int answerChars, int reasoningChars, long startedAt, long updatedAt) {
+                              int answerChars, int reasoningChars, int batchDone, int batchTotal,
+                              long startedAt, long updatedAt) {
             this.callTag = clean(callTag);
             this.phase = clean(phase);
             this.attempt = Math.max(0, attempt);
             this.maxAttempts = Math.max(0, maxAttempts);
             this.answerChars = Math.max(0, answerChars);
             this.reasoningChars = Math.max(0, reasoningChars);
+            this.batchDone = Math.max(0, batchDone);
+            this.batchTotal = Math.max(0, batchTotal);
             this.startedAt = Math.max(0, startedAt);
             this.updatedAt = Math.max(0, updatedAt);
         }

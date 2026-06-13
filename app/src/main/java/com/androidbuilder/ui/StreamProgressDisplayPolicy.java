@@ -13,11 +13,13 @@ public final class StreamProgressDisplayPolicy {
             return "";
         }
         String phase = phaseLabel(progress.phase, chinese);
+        String batch = batchLabel(progress.batchDone, progress.batchTotal, chinese);
         String attempt = attemptLabel(progress.attempt, progress.maxAttempts, chinese);
         String count = countLabel(progress.answerChars, progress.reasoningChars, chinese);
         String elapsed = elapsedLabel(progress.startedAt, nowMs);
         StringBuilder builder = new StringBuilder();
         appendPart(builder, phase);
+        appendPart(builder, batch);
         appendPart(builder, attempt);
         appendPart(builder, count);
         appendPart(builder, elapsed);
@@ -29,6 +31,9 @@ public final class StreamProgressDisplayPolicy {
         if ("scouting".equals(value)) {
             return chinese ? "侦察中" : "scouting";
         }
+        if ("manifest".equals(value)) {
+            return chinese ? "列清单" : "manifest";
+        }
         if ("coding".equals(value)) {
             return chinese ? "生成中" : "coding";
         }
@@ -39,6 +44,13 @@ public final class StreamProgressDisplayPolicy {
             return chinese ? "合并中" : "merging";
         }
         return "";
+    }
+
+    private static String batchLabel(int batchDone, int batchTotal, boolean chinese) {
+        if (batchTotal <= 0 || batchDone <= 0) {
+            return "";
+        }
+        return (chinese ? "批次 " : "batch ") + batchDone + "/" + batchTotal;
     }
 
     private static String attemptLabel(int attempt, int maxAttempts, boolean chinese) {

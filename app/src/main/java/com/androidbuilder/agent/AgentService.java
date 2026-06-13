@@ -1092,6 +1092,10 @@ public class AgentService {
         streamProgressRegistry.updatePhase(callTag, phase, attempt, POLICY_REWRITE_ATTEMPTS);
     }
 
+    private void updateStreamBatch(String callTag, int batchNumber, int batchTotal) {
+        streamProgressRegistry.updateBatch(callTag, batchNumber, batchTotal);
+    }
+
     private void clearStreamProgressForTask(ProjectTaskRecord task) {
         if (task != null) {
             streamProgressRegistry.clear("task:" + task.id);
@@ -1614,6 +1618,7 @@ public class AgentService {
                         + "\n\nCompleted files context:\n" + truncateForInlineLog(completedContext, 20000);
                 try {
                     updateStreamPhase(callTag, "coding", attempt);
+                    updateStreamBatch(callTag, batchNumber, allBatches.size());
                     String batchJson = recordCloudAiCall(
                             projectId,
                             linkedBuildJobId,
