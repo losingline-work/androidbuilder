@@ -2180,6 +2180,11 @@ public class ProjectActivity extends BaseActivity {
         if (logs.length() <= 5000) {
             return logs;
         }
+        // While the job is live, show the most recent narration (the tail), not the failure-triage
+        // preview which surfaces the log head and scrolls the current step out of view.
+        if (ProjectRunningLogPolicy.isLiveJob(job)) {
+            return ProjectRunningLogPolicy.tail(logs, 4500, AppSettings.isChinese(ProjectActivity.this));
+        }
         return ProjectBuildFailureContextPolicy.previewText(logs);
     }
 
