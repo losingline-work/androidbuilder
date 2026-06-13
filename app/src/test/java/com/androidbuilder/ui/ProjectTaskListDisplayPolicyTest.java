@@ -79,10 +79,12 @@ public class ProjectTaskListDisplayPolicyTest {
     }
 
     @Test
-    public void collapsedListShowsTaskWithMergePendingAgentRun() {
+    public void collapsedListShowsNotYetFlippedTaskWithMergePendingAgentRun() {
+        // A task whose record has not yet flipped to running but whose agent run is already
+        // merging in-flight is promoted to visible.
         List<ProjectTaskRecord> tasks = Arrays.asList(
                 task(10, 0, "Done", "", "done"),
-                task(11, 1, "Merging", "", "done"),
+                task(11, 1, "Merging", "", "pending"),
                 task(12, 2, "Next", "", "pending"));
         List<HermesAgentRunRecord> agentRuns = Arrays.asList(
                 new HermesAgentRunRecord(1, 2, 11, 1, 0, "merge_pending", "", "", "", "[]", "", "", 0, 0));
@@ -91,6 +93,26 @@ public class ProjectTaskListDisplayPolicyTest {
 
         assertEquals(2, visible.size());
         assertEquals("Merging", visible.get(0).title);
+        assertEquals("Next", visible.get(1).title);
+    }
+
+    @Test
+    public void doneTaskIsFoldedDespiteStaleFailedAgentRun() {
+        // Real bug: a task that failed on an earlier dispatch then succeeded keeps the old failed
+        // agent run on record; the now-done task must still fold away during execution.
+        List<ProjectTaskRecord> tasks = Arrays.asList(
+                task(10, 0, "Retried", "", "done"),
+                task(11, 1, "Running", "", "running"),
+                task(12, 2, "Next", "", "pending"));
+        List<HermesAgentRunRecord> agentRuns = Arrays.asList(
+                new HermesAgentRunRecord(1, 2, 10, 0, 0, "failed", "", "", "", "[]", "", "", 0, 0),
+                new HermesAgentRunRecord(2, 2, 10, 1, 0, "done", "", "", "", "[]", "", "", 0, 0));
+
+        List<ProjectTaskRecord> visible = ProjectTaskListDisplayPolicy.visibleTasks(tasks, true, agentRuns);
+
+        assertFalse(visible.contains(tasks.get(0)));
+        assertEquals(2, visible.size());
+        assertEquals("Running", visible.get(0).title);
         assertEquals("Next", visible.get(1).title);
     }
 

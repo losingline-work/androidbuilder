@@ -65,6 +65,12 @@ public final class ProjectTaskListDisplayPolicy {
         Set<Long> activeAgentTaskIds = activeAgentTaskIds(agentRuns);
         for (ProjectTaskRecord task : orderedTasks(tasks)) {
             String status = status(task);
+            // A completed task is always foldable. Its own status is authoritative: a stale agent
+            // run from an earlier failed dispatch (a task that failed once then succeeded keeps that
+            // old failed run on record) must not pin the now-done task open during execution.
+            if ("done".equals(status)) {
+                continue;
+            }
             if ("failed".equals(status) || "running".equals(status) || activeAgentTaskIds.contains(task.id)) {
                 visible.add(task);
             } else if ("pending".equals(status) && firstPending == null) {
@@ -134,7 +140,10 @@ public final class ProjectTaskListDisplayPolicy {
         Set<Long> ids = new HashSet<>();
         for (HermesAgentRunRecord run : agentRuns) {
             String status = run == null || run.status == null ? "" : run.status.trim().toLowerCase(Locale.ROOT);
-            if ("running".equals(status) || "merge_pending".equals(status) || "failed".equals(status)) {
+            // Only genuinely in-flight runs promote a not-yet-flipped task to visible. A "failed"
+            // run is either stale (the task was retried to done) or already reflected by the task's
+            // own "failed" status, so it must not force-show a task.
+            if ("running".equals(status) || "merge_pending".equals(status)) {
                 ids.add(run.projectTaskId);
             }
         }
