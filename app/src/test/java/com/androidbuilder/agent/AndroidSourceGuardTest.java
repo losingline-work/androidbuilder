@@ -367,6 +367,41 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void boxedAndWidenedNumericArgsAreNotMismatches() throws Exception {
+        // project-8 false positives: findById(Long)/delete(Long) vs findById(long), and int->long
+        // widening, are valid Java and must not be reported as argument mismatches.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/CategoryDao.java",
+                "package com.example;\nclass CategoryDao { public void findById(long id) {} public void touch(long t) {} }");
+        write(root, "app/src/main/java/com/example/CategoryRepository.java",
+                "package com.example;\nclass CategoryRepository { CategoryDao dao;\n"
+                        + " void a(Long boxed) { dao.findById(boxed); }\n"
+                        + " void b(int small) { dao.touch(small); } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void conflictingOverloadParamNamesDoNotProducePhantomMismatch() throws Exception {
+        // The putLong(String,String) phantom: a file-global last-write-wins type map collapsed the
+        // `value` param of putLong(String,long) to the `String value` of putString, producing a
+        // false "putLong(String,String)" mismatch. A conflicted variable name is now treated unknown.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/SettingDao.java",
+                "package com.example;\nclass SettingDao {\n"
+                        + " public void putString(String key, String value) {}\n"
+                        + " public void putLong(String key, long value) {}\n"
+                        + " public void putInt(String key, int value) {} }");
+        write(root, "app/src/main/java/com/example/SettingRepository.java",
+                "package com.example;\nclass SettingRepository { SettingDao dao;\n"
+                        + " void s(String key, String value) { dao.putString(key, value); }\n"
+                        + " void l(String key, long value) { dao.putLong(key, value); }\n"
+                        + " void i(String key, int value) { dao.putInt(key, value); } }");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
     public void blocksConstructorArgumentTypeMismatch() throws Exception {
         File root = temporaryFolder.newFolder("source");
         write(root, "app/src/main/java/com/example/CategoryDAO.java",

@@ -35,7 +35,7 @@ public class AndroidSourceGuard {
     private static final Pattern DECLARED_VARIABLE = Pattern.compile("\\b(?:val|var)\\s+%s\\b|\\blateinit\\s+var\\s+%s\\b");
     private static final Pattern JAVA_CLASS = Pattern.compile("\\bclass\\s+([A-Z][A-Za-z0-9_]*)\\b(?:\\s+extends\\s+([A-Za-z_][A-Za-z0-9_$.]*))?");
     private static final Pattern JAVA_FIELD_DECLARATION = Pattern.compile("\\b(?:public|protected|private)?\\s*(?:static\\s+)?(?:final\\s+)?([A-Za-z_][A-Za-z0-9_$.<>?\\[\\]]*)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?=[=;,])");
-    private static final Pattern JAVA_VARIABLE_DECLARATION = Pattern.compile("\\b(?:final\\s+)?([A-Z][A-Za-z0-9_$.]*(?:\\s*<[^;(){}]+>)?(?:\\[\\])?)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b");
+    private static final Pattern JAVA_VARIABLE_DECLARATION = Pattern.compile("\\b(?:final\\s+)?((?:[A-Z][A-Za-z0-9_$.]*(?:\\s*<[^;(){}]+>)?|long|int|short|byte|char|boolean|float|double)(?:\\[\\])?)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b");
     private static final Pattern JAVA_FIELD_ACCESS = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\b");
     private static final Pattern JAVA_METHOD_DECLARATION = Pattern.compile("\\b(?:public|protected|private)?\\s*(?:static\\s+)?(?:final\\s+)?(?:synchronized\\s+)?(?:[A-Za-z_][A-Za-z0-9_$.<>?\\[\\]]*\\s+)+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(([^)]*)\\)\\s*(?:throws\\s+[A-Za-z0-9_.,\\s]+)?[\\{;]");
     private static final Pattern JAVA_METHOD_CALL = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\s*\\(([^()]*)\\)");
@@ -584,13 +584,26 @@ public class AndroidSourceGuard {
 
     private Map<String, String> collectVariableTypes(String content) {
         Map<String, String> variableTypes = new HashMap<>();
+        Set<String> ambiguous = new HashSet<>();
         Matcher matcher = JAVA_VARIABLE_DECLARATION.matcher(content);
         while (matcher.find()) {
             String type = simpleType(matcher.group(1));
             String name = matcher.group(2);
-            if (!type.isEmpty() && !isJavaKeyword(name)) {
-                variableTypes.put(name, type);
+            if (type.isEmpty() || isJavaKeyword(name)) {
+                continue;
             }
+            String existing = variableTypes.get(name);
+            if (existing != null && !existing.equals(type)) {
+                // Same variable name declared with conflicting types in this file (e.g. a `String
+                // value` param of putString and a `long value` param of putLong). A file-global map
+                // cannot tell which method scope applies, so its type is unreliable: mark it unknown
+                // so argument inference does not raise a phantom mismatch (javac is the real authority).
+                ambiguous.add(name);
+            }
+            variableTypes.put(name, type);
+        }
+        for (String name : ambiguous) {
+            variableTypes.remove(name);
         }
         return variableTypes;
     }
@@ -763,6 +776,11 @@ public class AndroidSourceGuard {
         if (actual.equals(expected) || "Object".equals(expected)) {
             return true;
         }
+        // Java autoboxing + JLS primitive widening: Long<->long, int->long, etc. are assignable and
+        // must not be reported as argument mismatches (the dominant false positive in data-layer DAOs).
+        if (isPrimitiveOrBoxedAssignable(actual, expected)) {
+            return true;
+        }
         if ("Context".equals(expected) && (actual.endsWith("Activity") || actual.endsWith("Service") || "Application".equals(actual))) {
             return true;
         }
@@ -778,6 +796,50 @@ public class AndroidSourceGuard {
             parent = javaSymbols.superClassByClass.get(parent);
         }
         return false;
+    }
+
+    // Numeric widening rank per JLS 5.1.2 (byte<short<int<long<float<double; char widens to int+).
+    private static int numericRank(String primitive) {
+        switch (primitive) {
+            case "byte": return 1;
+            case "short": return 2;
+            case "char": return 2;
+            case "int": return 3;
+            case "long": return 4;
+            case "float": return 5;
+            case "double": return 6;
+            default: return 0;
+        }
+    }
+
+    private static String unbox(String type) {
+        switch (type) {
+            case "Long": case "long": return "long";
+            case "Integer": case "int": return "int";
+            case "Short": case "short": return "short";
+            case "Byte": case "byte": return "byte";
+            case "Character": case "char": return "char";
+            case "Boolean": case "boolean": return "boolean";
+            case "Float": case "float": return "float";
+            case "Double": case "double": return "double";
+            default: return "";
+        }
+    }
+
+    private boolean isPrimitiveOrBoxedAssignable(String actual, String expected) {
+        String a = unbox(actual);
+        String e = unbox(expected);
+        if (a.isEmpty() || e.isEmpty()) {
+            return false;
+        }
+        // Autoboxing/unboxing equivalence (Long<->long), then directional numeric widening (int->long).
+        if (a.equals(e)) {
+            return true;
+        }
+        if ("boolean".equals(a) || "boolean".equals(e)) {
+            return false;
+        }
+        return numericRank(a) > 0 && numericRank(a) <= numericRank(e);
     }
 
     private boolean isLikelyModelType(String type) {
