@@ -1670,6 +1670,17 @@ public class ProjectActivity extends BaseActivity {
                 body.addView(progress, progressParams);
             }
 
+            String narrationText = taskNarrationText(task);
+            if (!narrationText.isEmpty()) {
+                TextView narration = new TextView(ProjectActivity.this);
+                narration.setText(narrationText);
+                narration.setTextSize(12);
+                narration.setTextColor(getResources().getColor(R.color.colorOnSurfaceVariant));
+                LinearLayout.LayoutParams narrationParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                narrationParams.setMargins(0, dp(2), 0, 0);
+                body.addView(narration, narrationParams);
+            }
+
             if (showAgentRun) {
                 String agentRunText = agentRunText(task);
                 if (!agentRunText.isEmpty()) {
@@ -1781,6 +1792,13 @@ public class ProjectActivity extends BaseActivity {
             Map<String, com.androidbuilder.agent.StreamProgressRegistry.StreamProgress> snapshot = agentService.streamProgressSnapshot();
             com.androidbuilder.agent.StreamProgressRegistry.StreamProgress progress = snapshot.get("task:" + task.id);
             return StreamProgressDisplayPolicy.text(progress, AppSettings.isChinese(ProjectActivity.this), System.currentTimeMillis());
+        }
+
+        private String taskNarrationText(ProjectTaskRecord task) {
+            if (task == null || agentService == null) {
+                return "";
+            }
+            return agentService.taskNarration("task:" + task.id);
         }
 
         private String agentRunText(ProjectTaskRecord task) {

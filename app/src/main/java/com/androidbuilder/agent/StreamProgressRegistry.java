@@ -6,6 +6,21 @@ import java.util.Map;
 
 public final class StreamProgressRegistry {
     private final Map<String, StreamProgress> progressByTag = new HashMap<>();
+    private final Map<String, String> narrationByTag = new HashMap<>();
+
+    /** Latest human-readable sub-step line ("✍️ 生成第 3/8 批：...") shown on the running task card. */
+    public synchronized void updateNarration(String callTag, String narration) {
+        String tag = clean(callTag);
+        if (tag.isEmpty() || narration == null) {
+            return;
+        }
+        narrationByTag.put(tag, narration.trim());
+    }
+
+    public synchronized String narration(String callTag) {
+        String tag = clean(callTag);
+        return tag.isEmpty() ? "" : narrationByTag.getOrDefault(tag, "");
+    }
 
     public synchronized void updatePhase(String callTag, String phase, int attempt, int maxAttempts) {
         String tag = clean(callTag);
@@ -78,6 +93,7 @@ public final class StreamProgressRegistry {
         String tag = clean(callTag);
         if (!tag.isEmpty()) {
             progressByTag.remove(tag);
+            narrationByTag.remove(tag);
         }
     }
 

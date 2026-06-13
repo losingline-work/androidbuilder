@@ -75,6 +75,18 @@ public class StreamProgressRegistryTest {
     }
 
     @Test
+    public void narrationIsStoredAndClearedPerTask() {
+        StreamProgressRegistry registry = new StreamProgressRegistry();
+
+        registry.updateNarration("task:7", "✍️ 生成第 3/8 批：CategoryDao.java");
+        assertEquals("✍️ 生成第 3/8 批：CategoryDao.java", registry.narration("task:7"));
+        assertEquals("", registry.narration("task:9"));
+
+        registry.clear("task:7");
+        assertEquals("", registry.narration("task:7"));
+    }
+
+    @Test
     public void snapshotIsStableCopy() {
         StreamProgressRegistry registry = new StreamProgressRegistry();
         registry.updateCounts("task:1", 100, 0);

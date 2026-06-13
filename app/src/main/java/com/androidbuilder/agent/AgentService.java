@@ -1096,6 +1096,21 @@ public class AgentService {
         streamProgressRegistry.updateBatch(callTag, batchNumber, batchTotal);
     }
 
+    // Mirror the human-readable narration line onto the running task card (where the user is looking),
+    // in addition to the build log. Trim to one line and a reasonable width for the card.
+    private void narrate(String callTag, File logs, String line) throws java.io.IOException {
+        FileUtils.appendText(logs, line);
+        String oneLine = line == null ? "" : line.replace("\n", " ").trim();
+        if (oneLine.length() > 140) {
+            oneLine = oneLine.substring(0, 140) + "…";
+        }
+        streamProgressRegistry.updateNarration(callTag, oneLine);
+    }
+
+    public String taskNarration(String callTag) {
+        return streamProgressRegistry.narration(callTag);
+    }
+
     private void clearStreamProgressForTask(ProjectTaskRecord task) {
         if (task != null) {
             streamProgressRegistry.clear("task:" + task.id);
@@ -1424,7 +1439,7 @@ public class AgentService {
                     continue;
                 }
                 updateStreamPhase(callTag, "reviewing", attempt);
-                FileUtils.appendText(logs, BatchNarrationPolicy.reviewingLine(chinese));
+                narrate(callTag, logs, BatchNarrationPolicy.reviewingLine(chinese));
                 HermesReview hermesReview = reviewOperationsWithHermes(
                         projectId,
                         linkedBuildJobId,
@@ -1466,7 +1481,7 @@ public class AgentService {
                     continue;
                 }
                 updateStreamPhase(callTag, "merging", attempt);
-                FileUtils.appendText(logs, BatchNarrationPolicy.mergingLine(chinese));
+                narrate(callTag, logs, BatchNarrationPolicy.mergingLine(chinese));
                 operationsWriter.apply(sourceDir, operations);
                 if (deleteDraftOnApplySuccess) {
                     deleteTaskDraftSafely(projectId, taskId);
@@ -1618,12 +1633,12 @@ public class AgentService {
                 + manifest.files.size() + (chinese ? " 个文件，分 " : " file(s), ")
                 + allBatches.size() + (chinese ? " 批，剩余 " : " batch(es), remaining ")
                 + batches.size() + "\n");
-        FileUtils.appendText(logs, BatchNarrationPolicy.manifestLine(
+        narrate(callTag, logs, BatchNarrationPolicy.manifestLine(
                 manifest.summary, manifest.files.size(), allBatches.size(), chinese));
         for (int i = 0; i < batches.size(); i++) {
             List<TaskManifest.Entry> batch = batches.get(i);
             int batchNumber = completedBeforeResume + i + 1;
-            FileUtils.appendText(logs, BatchNarrationPolicy.batchLine(batchNumber, allBatches.size(), batch, chinese));
+            narrate(callTag, logs, BatchNarrationPolicy.batchLine(batchNumber, allBatches.size(), batch, chinese));
             String batchRetryContext = "";
             boolean acceptedBatch = false;
             for (int batchAttempt = 1; batchAttempt <= 2; batchAttempt++) {
