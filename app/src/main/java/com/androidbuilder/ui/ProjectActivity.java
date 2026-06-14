@@ -1733,8 +1733,9 @@ public class ProjectActivity extends BaseActivity {
                 if (!flow.isEmpty()) {
                     addTaskSection(body, getString(R.string.task_detail_flow), flow);
                 }
-                addTaskSection(body, getString(R.string.task_detail_result),
-                        resultText.isEmpty() ? getString(R.string.task_detail_no_result) : resultText);
+                if (!resultText.isEmpty()) {
+                    addTaskSection(body, getString(R.string.task_detail_result), abbreviateResult(resultText));
+                }
             }
 
             if (hasDetail) {
@@ -1781,6 +1782,19 @@ public class ProjectActivity extends BaseActivity {
             LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             cp.setMargins(0, dp(2), 0, 0);
             body.addView(contentView, cp);
+        }
+
+        /** A one-line, length-capped result summary - the full detail now lives in the execution log. */
+        private static String abbreviateResult(String text) {
+            String trimmed = text == null ? "" : text.trim();
+            int newline = trimmed.indexOf('\n');
+            boolean hasMore = newline >= 0;
+            String line = hasMore ? trimmed.substring(0, newline).trim() : trimmed;
+            int max = 120;
+            if (line.length() > max) {
+                return line.substring(0, max).trim() + "…";
+            }
+            return hasMore ? line + " …" : line;
         }
 
         private static String bullets(List<String> items) {
