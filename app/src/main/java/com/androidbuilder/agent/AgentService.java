@@ -53,6 +53,10 @@ public class AgentService {
     // Pre-apply structural rewrites are capped separately so
     // they cannot starve the policy-error retry budget; after this many they yield to the real guard.
     private static final int PREFLIGHT_REWRITE_BUDGET = 2;
+    // After this many DISTINCT methods of one DAO are flagged "not declared" across a dispatch, the
+    // family is treated as stuck and the next attempt reconciles the whole DAO + callers cluster at
+    // once (RC3), instead of letting mutating method names defeat the same-error fuse.
+    private static final int STUCK_FAMILY_THRESHOLD = 2;
     private static final int CONTEXT_NEGOTIATION_ROUNDS = ContextNegotiationPolicy.MAX_NEGOTIATION_ROUNDS;
     private static final int AI_LOG_TEXT_LIMIT = 80000;
     // Conversation context sent to the cloud: drop status chatter, keep a recent window.
@@ -1233,11 +1237,27 @@ public class AgentService {
             if (previousDraftSection.isEmpty()) {
                 correctionMode = false;
             }
+            // RC3: family-level stuck detector. A DAO whose callers keep failing to reconcile cycles
+            // through many method names; each looks like a new error, so the digit-only same-error fuse
+            // never fires and the retry budget drains re-discovering one method per round. When a DAO
+            // family is stuck (>= STUCK_FAMILY_THRESHOLD distinct methods flagged "not declared" this
+            // dispatch), inject a one-pass reconcile directive listing every method the callers need and
+            // refocus the snapshot on that DAO + its callers, so the model declares them all and aligns
+            // the call-sites together. Derived fresh each attempt from the persistent fingerprint
+            // history so the directive never stacks. Strategy/context only - the merge-time
+            // AndroidSourceGuard remains the sole authority on the assembled tree.
+            StuckFamilyPolicy.Family stuckFamily = StuckFamilyPolicy.detect(failureFingerprints, STUCK_FAMILY_THRESHOLD);
+            String effectiveInstruction = instruction;
+            if (stuckFamily != null) {
+                effectiveInstruction = LocalGuardInstructionComposer.forPreflightRewrite(
+                        instruction, StuckFamilyPolicy.reconcileDirective(stuckFamily));
+                snapshot = sourceSnapshot(sourceDir, stuckFamily.className);
+            }
             String requestMode = scopeExpandedRetryPending
                     ? BlockedTaskPolicy.MODE_SCOPE_EXPANDED
                     : taskOperationMode(correctionMode);
-            String requestLog = taskOperationsRequestForAiLog(planContent, taskTitle, instruction, snapshot, retryContext, previousDraftSection, requestMode, attempt);
-            final String attemptInstruction = instruction;
+            String requestLog = taskOperationsRequestForAiLog(planContent, taskTitle, effectiveInstruction, snapshot, retryContext, previousDraftSection, requestMode, attempt);
+            final String attemptInstruction = effectiveInstruction;
             final String attemptSnapshot = snapshot;
             final String attemptRetryContext = retryContext;
             final String attemptPreviousDraftSection = previousDraftSection;
@@ -1286,7 +1306,13 @@ public class AgentService {
                 }
             } catch (BatchGenerationException batchError) {
                 previousFailure = batchError.getMessage() == null ? batchError.toString() : batchError.getMessage();
-                previousDraft = hasDraftProgress(batchError.partialDraft) ? batchError.partialDraft : null;
+                // Merge the salvaged partial onto the accumulated draft rather than replacing it: a
+                // file written in an earlier correction round (e.g. a DAO gaining listInRange) must
+                // survive an abort that only salvaged the caller, or the merged tree the guard
+                // validates becomes internally inconsistent (caller present, callee's method gone).
+                previousDraft = hasDraftProgress(batchError.partialDraft)
+                        ? TaskOperationsMergePolicy.merge(previousDraft, batchError.partialDraft)
+                        : previousDraft;
                 saveTaskDraftSafely(projectId, taskId, previousDraft);
                 recordAttemptTermination(logs, journal, attempt, "batch-generation", previousFailure);
                 draftFailureStreak.remember(previousFailure);
@@ -1303,7 +1329,11 @@ public class AgentService {
                 TaskOperations salvaged = streamInspection == null
                         ? new TaskOperations("partial draft salvaged from aborted stream", Collections.<FileOperation>emptyList())
                         : streamInspection.partialDraft("partial draft salvaged from aborted stream");
-                previousDraft = hasDraftProgress(salvaged) ? salvaged : null;
+                // Merge onto the accumulated draft (see BatchGenerationException above); never null
+                // out work the model already produced in earlier rounds.
+                previousDraft = hasDraftProgress(salvaged)
+                        ? TaskOperationsMergePolicy.merge(previousDraft, salvaged)
+                        : previousDraft;
                 saveTaskDraftSafely(projectId, taskId, previousDraft);
                 recordAttemptTermination(logs, journal, attempt, "stream-abort", previousFailure);
                 draftFailureStreak.remember(previousFailure);
@@ -1320,7 +1350,11 @@ public class AgentService {
                 TaskOperations salvaged = streamInspection == null
                         ? new TaskOperations("partial draft salvaged from failed generation", Collections.<FileOperation>emptyList())
                         : streamInspection.partialDraft("partial draft salvaged from failed generation");
-                previousDraft = hasDraftProgress(salvaged) ? salvaged : previousDraft;
+                // Merge onto the accumulated draft (see BatchGenerationException above) instead of
+                // replacing it with the salvage alone.
+                previousDraft = hasDraftProgress(salvaged)
+                        ? TaskOperationsMergePolicy.merge(previousDraft, salvaged)
+                        : previousDraft;
                 saveTaskDraftSafely(projectId, taskId, previousDraft);
                 recordAttemptTermination(logs, journal, attempt, "generation", previousFailure);
                 draftFailureStreak.remember(previousFailure);
@@ -1422,6 +1456,10 @@ public class AgentService {
                     snapshot = sourceSnapshot(sourceDir, previousFailure);
                     continue;
                 }
+                // `operations` here is the merged accumulated draft (post TaskOperationsMergePolicy.merge
+                // at the top of this attempt), not just the latest correction's re-sent files. The local
+                // guard's declaration resolution depends on seeing every file the merge will write - keep
+                // this call after the merge so a caller-only correction does not trigger phantom hints.
                 LocalGuardResult preflight = reviewOperationsWithLocalRules(projectId, linkedBuildJobId, snapshot, operations, chinese);
                 appendLocalGuardLog(logs, chinese ? "确定性规则预审" : "Deterministic rule preflight", preflight);
                 if (shouldRetryFromLocalGuard(preflight) && preflightRewrites < PREFLIGHT_REWRITE_BUDGET) {

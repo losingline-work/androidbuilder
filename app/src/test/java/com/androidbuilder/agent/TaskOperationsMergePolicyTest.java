@@ -101,6 +101,43 @@ public class TaskOperationsMergePolicyTest {
                 error.getMessage());
     }
 
+    @Test
+    public void salvageMergePreservesUntouchedCalleeFromAccumulatedDraft() {
+        // RC1 invariant: when a generation/stream abort salvages only the caller, merging the
+        // salvage onto the accumulated draft must keep the callee (the DAO with its added method),
+        // so the tree the guard later validates is not internally inconsistent.
+        TaskOperations accumulated = operations("round 1",
+                write("app/src/main/java/com/x/data/dao/TransactionDao.java",
+                        "class TransactionDao { List listInRange(long a, long b) { return null; } }"),
+                write("app/src/main/java/com/x/data/repo/TransactionRepository.java",
+                        "class TransactionRepository { void a() {} }"));
+        TaskOperations callerOnlySalvage = operations("partial draft salvaged from aborted stream",
+                write("app/src/main/java/com/x/data/repo/TransactionRepository.java",
+                        "class TransactionRepository { void a() { dao.listInRange(0, 1); } }"));
+
+        TaskOperations merged = TaskOperationsMergePolicy.merge(accumulated, callerOnlySalvage);
+
+        assertEquals(2, merged.operations.size());
+        assertEquals("app/src/main/java/com/x/data/dao/TransactionDao.java", merged.operations.get(0).path);
+        org.junit.Assert.assertTrue("DAO method must survive a caller-only salvage",
+                merged.operations.get(0).content.contains("listInRange"));
+        org.junit.Assert.assertTrue(merged.operations.get(1).content.contains("dao.listInRange(0, 1)"));
+    }
+
+    @Test
+    public void salvageMergeStillHonorsIntentionalDrop() {
+        // A salvage that explicitly drops a file must still drop it (no resurrection from the draft).
+        TaskOperations accumulated = operations("round 1",
+                write("app/src/main/java/com/x/Foo.java", "class Foo {}"),
+                write("app/src/main/java/com/x/Bar.java", "class Bar {}"));
+        TaskOperations salvage = operations("partial", drop("app/src/main/java/com/x/Bar.java"));
+
+        TaskOperations merged = TaskOperationsMergePolicy.merge(accumulated, salvage);
+
+        assertEquals(1, merged.operations.size());
+        assertEquals("app/src/main/java/com/x/Foo.java", merged.operations.get(0).path);
+    }
+
     private static TaskOperations operations(String summary, FileOperation... operations) {
         return new TaskOperations(summary, Arrays.asList(operations));
     }

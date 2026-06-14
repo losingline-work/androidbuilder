@@ -21,7 +21,6 @@ final class LocalGuardHeuristics {
     private static final Pattern MISSING_XML_RESOURCE = Pattern.compile("missing XML resource reference:\\s*@([a-z]+)/([A-Za-z_][A-Za-z0-9_.]*)\\s+in\\s+([A-Za-z0-9_.$-]+\\.xml)", Pattern.CASE_INSENSITIVE);
     private static final Pattern XML_RESOURCE_REFERENCE = Pattern.compile("@(layout|string|color|drawable|mipmap|style)/([A-Za-z_][A-Za-z0-9_.]*)");
     private static final Pattern NAMED_VALUE_RESOURCE = Pattern.compile("<\\s*(string|color|style)\\b[^>]*\\bname\\s*=\\s*[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
-    private static final Pattern LAMBDA_FILE = Pattern.compile("Java lambda syntax in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
     private static final Pattern MISSING_METHOD = Pattern.compile("missing method:\\s*([A-Z][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(([^)]*)\\)\\s+in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
     private static final Pattern MISSING_CLASS_FIELD = Pattern.compile("missing class field:\\s*([A-Z][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\s+in\\s+([A-Za-z0-9_.$-]+\\.java)", Pattern.CASE_INSENSITIVE);
 
@@ -39,10 +38,10 @@ final class LocalGuardHeuristics {
             }
             String path = operation.path;
             String content = operation.content;
-            if (path.endsWith(".java") && content.contains("->")) {
-                appendHint(hints, "Remove every -> token from " + simpleName(path)
-                        + ", including comments, Javadocs, string examples, listeners, and callbacks. Use anonymous inner classes or plain text without arrow examples.");
-            }
+            // No arrow/lambda hint here: this scans RAW content, so it flagged '->' inside comments,
+            // Javadocs and string literals - an unsatisfiable "delete the arrow from your comment"
+            // demand. The merge-time AndroidSourceGuard already enforces the lambda policy on
+            // comment/string-stripped code (its sole authority), so a real lambda is still caught.
             if (path.endsWith(".xml")) {
                 appendMissingXmlResourceHints(hints, sourceSnapshot, operations, path, content);
             }
@@ -59,11 +58,6 @@ final class LocalGuardHeuristics {
     static LocalGuardResult rewritePolicyFailure(String policyError) {
         String message = policyError == null ? "" : policyError;
         StringBuilder hints = new StringBuilder();
-        Matcher lambda = LAMBDA_FILE.matcher(message);
-        if (lambda.find()) {
-            appendHint(hints, "Remove every -> token from " + lambda.group(1)
-                    + " and every generated Java file, including comments, Javadocs, string examples, listeners, and callbacks. Use anonymous inner classes or rewrite comments without arrow examples.");
-        }
         Matcher drawable = MISSING_DRAWABLE.matcher(message);
         if (drawable.find()) {
             String name = drawable.group(1);
@@ -153,9 +147,69 @@ final class LocalGuardHeuristics {
             if (!seen.add(field) || hasClassField(sourceSnapshot, operations, "DBHelper", field)) {
                 continue;
             }
+            // Same positive-evidence rule as the DAO check: only flag a missing DBHelper field when
+            // DBHelper is conclusively visible (in operations, or a full-text snapshot section), so a
+            // stale/truncated DBHelper section never produces a phantom rewrite.
+            if (!declarationIsConclusive(sourceSnapshot, operations, "DBHelper")) {
+                continue;
+            }
             appendHint(hints, simpleName(path) + " references DBHelper." + field
                     + " but DBHelper does not declare it. Add that exact constant or update the caller to an existing DBHelper field.");
         }
+    }
+
+    /**
+     * Whether a class's declarations are conclusively visible - enough to prove a member is ABSENT.
+     * True when the class file is among the operations being written (full content this round) or it
+     * appears as a full-text, non-truncated snapshot section. False when it is known only from the
+     * budgeted Java-API digest tail or a truncated section, where absence cannot be proven.
+     */
+    private static boolean declarationIsConclusive(String snapshot, TaskOperations operations, String className) {
+        if (operationsContainClass(operations, className)) {
+            return true;
+        }
+        return hasFullTextSnapshotSection(snapshot, className);
+    }
+
+    private static boolean operationsContainClass(TaskOperations operations, String className) {
+        if (operations == null) {
+            return false;
+        }
+        for (FileOperation operation : operations.operations) {
+            if (operation != null && operation.path != null && operation.content != null
+                    && operation.path.endsWith("/" + className + ".java")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasFullTextSnapshotSection(String snapshot, String className) {
+        if (snapshot == null || snapshot.length() == 0) {
+            return false;
+        }
+        for (String section : snapshot.split("(?m)^--- ")) {
+            int newline = section.indexOf('\n');
+            if (newline < 0) {
+                continue;
+            }
+            String header = section.substring(0, newline).trim();
+            if (!header.endsWith("---")) {
+                continue;
+            }
+            String headerPath = header.substring(0, header.length() - 3).trim();
+            boolean focusedFile = headerPath.endsWith("/" + className + ".java") || headerPath.equals(className + ".java");
+            if (!focusedFile) {
+                continue;
+            }
+            // A full-text section cut off by the snapshot budget ends with the truncation marker; its
+            // declarations may be incomplete, so it cannot prove a member is absent.
+            if (section.contains(SourceSnapshotComposer.TRUNCATED.trim())) {
+                continue;
+            }
+            return true;
+        }
+        return false;
     }
 
     private static void appendMissingDaoMethodHints(StringBuilder hints, String sourceSnapshot, TaskOperations operations, String path, String content) {
@@ -165,6 +219,8 @@ final class LocalGuardHeuristics {
         }
         Matcher matcher = METHOD_CALL.matcher(content);
         Set<String> seen = new HashSet<>();
+        Map<String, String> declarationsByClass = new HashMap<>();
+        Map<String, Boolean> conclusiveByClass = new HashMap<>();
         while (matcher.find()) {
             String receiver = matcher.group(1);
             String method = matcher.group(2);
@@ -173,7 +229,28 @@ final class LocalGuardHeuristics {
                 continue;
             }
             String key = daoClass + "." + method;
-            if (!seen.add(key) || hasMethod(sourceSnapshot, operations, daoClass, method)) {
+            if (!seen.add(key)) {
+                continue;
+            }
+            String declarations = declarationsByClass.get(daoClass);
+            if (declarations == null) {
+                declarations = declarationsForClass(sourceSnapshot, operations, daoClass);
+                declarationsByClass.put(daoClass, declarations);
+                conclusiveByClass.put(daoClass, declarationIsConclusive(sourceSnapshot, operations, daoClass));
+            }
+            // Only adjudicate "method not declared" when the DAO's full declarations are actually
+            // visible: it is among the operations being written (full content this round), or it
+            // appears as a full-text, non-truncated snapshot section. A DAO known only from a
+            // truncated section or the budgeted Java-API digest cannot prove the method is missing -
+            // e.g. a stale on-disk DAO from a sibling task that this (never-committed) task has
+            // already superseded in its draft. Flagging there is the phantom "listInRange not
+            // declared" seen in project-82. A genuinely absent method on a conclusively-visible DAO
+            // is still flagged below, and the merge-time AndroidSourceGuard remains the authority on
+            // the full assembled tree regardless.
+            if (!Boolean.TRUE.equals(conclusiveByClass.get(daoClass))) {
+                continue;
+            }
+            if (declaresMethod(declarations, method)) {
                 continue;
             }
             appendHint(hints, simpleName(path) + " calls " + daoClass + "." + method
@@ -295,8 +372,7 @@ final class LocalGuardHeuristics {
         return Pattern.compile("\\b" + Pattern.quote(field) + "\\b").matcher(declarations).find();
     }
 
-    private static boolean hasMethod(String sourceSnapshot, TaskOperations operations, String className, String method) {
-        String declarations = declarationsForClass(sourceSnapshot, operations, className);
+    private static boolean declaresMethod(String declarations, String method) {
         return Pattern.compile("\\b" + Pattern.quote(method) + "\\s*\\(").matcher(declarations).find();
     }
 
