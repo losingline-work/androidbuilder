@@ -356,7 +356,8 @@ public class AgentService {
             boolean buildRequiredAfter = false;
             int batchIndex = 0;
 
-            FileUtils.writeText(logs, chinese ? "开始执行计划任务。\n" : "Starting plan execution.\n");
+            FileUtils.writeText(logs, (chinese ? "构建版本：" : "Build: ") + com.androidbuilder.BuildStamp.text() + "\n"
+                    + (chinese ? "开始执行计划任务。\n" : "Starting plan execution.\n"));
             repository.updateBuildJob(job.id, "generating", "cloud_spec", logs.getAbsolutePath(), null, null, 0);
 
             while (true) {

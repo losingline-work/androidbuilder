@@ -68,6 +68,23 @@ public class ProjectLogExportPolicyTest {
         assertTrue(text.startsWith("app 制造机项目日志\n记录数：1"));
     }
 
+    @Test
+    public void headerIncludesBuildStampWhenProvided() {
+        String text = ProjectLogExportPolicy.projectLogsExportText(Arrays.asList(
+                entry(ProjectLogEntry.Kind.MESSAGE, 1, "m", "s", "c")), true, "v0.2.1 · 21d4542 · built 2026-06-14 09:00");
+
+        assertTrue(text.contains("构建版本：v0.2.1 · 21d4542 · built 2026-06-14 09:00"));
+    }
+
+    @Test
+    public void headerOmitsBuildStampWhenEmpty() {
+        String text = ProjectLogExportPolicy.projectLogsExportText(Arrays.asList(
+                entry(ProjectLogEntry.Kind.MESSAGE, 1, "m", "s", "c")), false, "");
+
+        assertTrue(text.startsWith("Android Builder Project Logs\nEntries: 1"));
+        assertTrue(!text.contains("Build:"));
+    }
+
     private static ProjectLogEntry entry(ProjectLogEntry.Kind kind, long id, String title, String subtitle, String copyText) {
         return new ProjectLogEntry(kind, id, id * 1000, id * 1000, title, subtitle, "body", copyText, "status");
     }

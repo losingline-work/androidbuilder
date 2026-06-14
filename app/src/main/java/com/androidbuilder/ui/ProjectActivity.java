@@ -605,7 +605,8 @@ public class ProjectActivity extends BaseActivity {
     private File prepareProjectLogsExportFile() throws Exception {
         File exportDir = exportLogCacheDir();
         File exportFile = new File(exportDir, ProjectLogExportPolicy.projectLogExportName(projectId));
-        FileUtils.writeText(exportFile, ProjectLogExportPolicy.projectLogsExportText(logResults, AppSettings.isChinese(this)));
+        FileUtils.writeText(exportFile, ProjectLogExportPolicy.projectLogsExportText(
+                logResults, AppSettings.isChinese(this), com.androidbuilder.BuildStamp.text()));
         return exportFile;
     }
 

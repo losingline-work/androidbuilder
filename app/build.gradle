@@ -13,6 +13,9 @@ android {
         targetSdk 28
         versionCode 3
         versionName "0.2.1"
+        // Build stamp so an exported log identifies exactly which code is running.
+        buildConfigField "String", "GIT_SHA", "\"${resolveGitSha()}\""
+        buildConfigField "String", "BUILD_TIME", "\"${new Date().format('yyyy-MM-dd HH:mm')}\""
     }
 
     compileOptions {
@@ -36,4 +39,20 @@ dependencies {
     implementation "com.google.android.material:material:1.12.0"
     testImplementation "org.json:json:20240303"
     testImplementation "junit:junit:4.13.2"
+}
+
+// Resolve the current git short SHA at build time; falls back to "unknown" if git is unavailable.
+def resolveGitSha() {
+    try {
+        def stdout = new ByteArrayOutputStream()
+        exec {
+            commandLine 'git', 'rev-parse', '--short', 'HEAD'
+            standardOutput = stdout
+            ignoreExitValue = true
+        }
+        def sha = stdout.toString().trim()
+        return sha ? sha : 'unknown'
+    } catch (Exception ignored) {
+        return 'unknown'
+    }
 }
