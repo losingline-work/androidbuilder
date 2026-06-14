@@ -85,6 +85,29 @@ public class ProjectLogExportPolicyTest {
         assertTrue(!text.contains("Build:"));
     }
 
+    @Test
+    public void streamingWriterMatchesStringOutputAndBoundsMemory() throws Exception {
+        // Large bodies must stream entry-by-entry; the streamed text equals the string builder.
+        java.util.List<ProjectLogEntry> entries = new java.util.ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            entries.add(entry(ProjectLogEntry.Kind.MESSAGE, i, "t" + i, "s" + i, repeat("x", 2000)));
+        }
+        StringBuilder streamed = new StringBuilder();
+        ProjectLogExportPolicy.writeProjectLogs(streamed, entries, true, "v0.2.1 · abc1234");
+
+        assertEquals(ProjectLogExportPolicy.projectLogsExportText(entries, true, "v0.2.1 · abc1234"),
+                streamed.toString());
+        assertTrue(streamed.toString().startsWith("app 制造机项目日志\n记录数：50"));
+    }
+
+    private static String repeat(String value, int count) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            builder.append(value);
+        }
+        return builder.toString();
+    }
+
     private static ProjectLogEntry entry(ProjectLogEntry.Kind kind, long id, String title, String subtitle, String copyText) {
         return new ProjectLogEntry(kind, id, id * 1000, id * 1000, title, subtitle, "body", copyText, "status");
     }

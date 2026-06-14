@@ -4,6 +4,7 @@ import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ProjectLogEntry;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.List;
 
 final class ProjectLogExportPolicy {
@@ -41,30 +42,50 @@ final class ProjectLogExportPolicy {
     }
 
     static String projectLogsExportText(List<ProjectLogEntry> entries, boolean chinese, String buildStamp) {
+        StringBuilder text = new StringBuilder();
+        try {
+            writeProjectLogs(text, entries, chinese, buildStamp);
+        } catch (IOException ignored) {
+            // StringBuilder never throws; the checked signature is for the streaming file case.
+        }
+        return text.toString();
+    }
+
+    /**
+     * Streams the export entry-by-entry into {@code out} instead of building the whole log in a
+     * single in-memory String. A large project's logs (hundreds of AI records, each carrying a full
+     * request/response body) total tens of megabytes; materializing them as one String OOM-crashed
+     * the app. Peak memory here is bounded by a single entry, not the sum.
+     */
+    static void writeProjectLogs(Appendable out, List<ProjectLogEntry> entries, boolean chinese, String buildStamp) throws IOException {
         int count = entries == null ? 0 : entries.size();
-        StringBuilder text = new StringBuilder(chinese ? "app 制造机项目日志\n记录数：" : "Android Builder Project Logs\nEntries: ")
-                .append(count);
+        out.append(chinese ? "app 制造机项目日志\n记录数：" : "Android Builder Project Logs\nEntries: ")
+                .append(Integer.toString(count));
         if (buildStamp != null && !buildStamp.trim().isEmpty()) {
-            text.append(chinese ? "\n构建版本：" : "\nBuild: ").append(buildStamp.trim());
+            out.append(chinese ? "\n构建版本：" : "\nBuild: ").append(buildStamp.trim());
         }
         if (entries == null) {
-            return text.toString();
+            return;
         }
         for (ProjectLogEntry entry : entries) {
             if (entry == null) {
                 continue;
             }
-            text.append("\n\n---\n")
+            out.append("\n\n---\n")
                     .append(entry.kind.name())
                     .append(" #")
-                    .append(entry.sourceId)
+                    .append(Long.toString(entry.sourceId))
                     .append("\n")
-                    .append(entry.title)
+                    .append(nullToEmpty(entry.title))
                     .append("\n")
-                    .append(entry.subtitle)
+                    .append(nullToEmpty(entry.subtitle))
                     .append("\n\n")
-                    .append(entry.copyText == null || entry.copyText.trim().isEmpty() ? entry.body : entry.copyText);
+                    .append(entry.copyText == null || entry.copyText.trim().isEmpty()
+                            ? nullToEmpty(entry.body) : entry.copyText);
         }
-        return text.toString();
+    }
+
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value;
     }
 }

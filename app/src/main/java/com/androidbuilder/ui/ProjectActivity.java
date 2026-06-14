@@ -49,9 +49,14 @@ import com.androidbuilder.util.FileUtils;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -604,8 +609,12 @@ public class ProjectActivity extends BaseActivity {
     private File prepareProjectLogsExportFile() throws Exception {
         File exportDir = exportLogCacheDir();
         File exportFile = new File(exportDir, ProjectLogExportPolicy.projectLogExportName(projectId));
-        FileUtils.writeText(exportFile, ProjectLogExportPolicy.projectLogsExportText(
-                logResults, AppSettings.isChinese(this), com.androidbuilder.BuildStamp.text()));
+        // Stream the log to disk; a large project's logs are tens of megabytes and building them as
+        // one in-memory String OOM-crashed the export.
+        try (Writer writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(exportFile), StandardCharsets.UTF_8))) {
+            ProjectLogExportPolicy.writeProjectLogs(
+                    writer, logResults, AppSettings.isChinese(this), com.androidbuilder.BuildStamp.text());
+        }
         return exportFile;
     }
 
