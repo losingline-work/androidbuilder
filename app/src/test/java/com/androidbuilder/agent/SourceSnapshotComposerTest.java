@@ -91,6 +91,27 @@ public class SourceSnapshotComposerTest {
     }
 
     @Test
+    public void fullJavaApiDigestSurvivesWhenFullTextOverflows() {
+        // Stage 1: every callee signature in the digest must reach the model even when the full-text
+        // layer overflows. The digest is part of the tail, appended in full after the squeezed
+        // full-text - so a large focused file can never crowd out a callee's API the model needs.
+        String digest = "--- A.java API ---\nclass A { void a1(); void a2(); }\n"
+                + "--- B.java API ---\nclass B { long b1(int); }\n"
+                + "--- C.java API ---\nclass C { String c1(long, long); }";
+        String snapshot = SourceSnapshotComposer.assemble(
+                Arrays.asList(SourceSnapshotComposer.textSection("Huge.java", repeat("x", 5000))),
+                digest,
+                "R.id: title",
+                "",
+                14000,
+                2000);
+
+        assertTrue(snapshot.contains(digest));
+        assertTrue(snapshot.contains("...[truncated]"));
+        assertTrue(snapshot.indexOf("...[truncated]") < snapshot.indexOf(digest));
+    }
+
+    @Test
     public void appendContextNoteTrimsOnlyTheNote() {
         String composed = "--- resource index (complete, authoritative) ---\nR.id: " + repeat("a", 120) + "_last\n";
         String withNote = SourceSnapshotComposer.appendContextNote(

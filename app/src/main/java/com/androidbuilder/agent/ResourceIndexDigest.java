@@ -39,8 +39,15 @@ final class ResourceIndexDigest {
         return index;
     }
 
+    // Authoritative warning against the project-83 F3 failure: MineFragment used R.id.mine_account etc.
+    // where mine_account exists ONLY as an R.string (a menu label), because the layout is a single list
+    // (mine_menu_list), not per-item views. This RULE is always emitted (critical) so the model never
+    // confuses a string-label name for a view id.
+    static final String ID_KIND_RULE = "RULE: a name listed under R.string/R.color/R.dimen/R.style is NOT a view id - never write R.id.<that name>. Valid view ids exist ONLY as listed under 'R.id by layout' below; to wire a menu/list, bind rows through the listed container id, not per-item ids.";
+
     private static String render(ResourceIndex index, int maxChars) {
         List<String> sections = new ArrayList<>();
+        sections.add(ID_KIND_RULE);
         appendResourceSection(sections, index.resources, "id");
         appendResourceSection(sections, index.resources, "layout");
         appendResourceSection(sections, index.resources, "string");
@@ -51,7 +58,8 @@ final class ResourceIndexDigest {
         appendResourceSection(sections, index.resources, "color");
         appendResourceSection(sections, index.resources, "dimen");
         appendResourceSection(sections, index.resources, "style");
-        if (sections.isEmpty()) {
+        if (sections.size() <= 1) {
+            // Only the RULE is present - the project has no resources yet.
             return "(no Android resources found)";
         }
         if (maxChars <= 0) {
@@ -118,9 +126,11 @@ final class ResourceIndexDigest {
     }
 
     private static boolean isCriticalSection(String section) {
-        return section.startsWith("R.id: ") ||
+        return section.startsWith("RULE: ") ||
+                section.startsWith("R.id: ") ||
                 section.startsWith("R.layout: ") ||
-                section.startsWith("R.string: ");
+                section.startsWith("R.string: ") ||
+                section.startsWith("R.id by layout: ");
     }
 
     private static File resolveResDir(File sourceDir) {

@@ -40,7 +40,7 @@ public class ResourceIndexDigestTest {
 
         String digest = ResourceIndexDigest.digest(root);
 
-        assertEquals("R.id: action_settings, root, save_button, title | R.layout: activity_main | R.string: app_name, save | R.id by layout: activity_main[root, save_button, title] | R.menu: menu_main | R.drawable: ic_add | R.color: chip_tint, primary | R.dimen: space_m | R.style: Theme_Demo", digest);
+        assertEquals(ResourceIndexDigest.ID_KIND_RULE + " | R.id: action_settings, root, save_button, title | R.layout: activity_main | R.string: app_name, save | R.id by layout: activity_main[root, save_button, title] | R.menu: menu_main | R.drawable: ic_add | R.color: chip_tint, primary | R.dimen: space_m | R.style: Theme_Demo", digest);
     }
 
     @Test
@@ -57,11 +57,22 @@ public class ResourceIndexDigestTest {
 
         String digest = ResourceIndexDigest.digest(root, 80);
 
+        // The id/layout/string sections, the id-by-layout grouping, and the id-vs-string RULE are all
+        // critical: they survive even under a tiny budget while bulky drawable lists get truncated.
+        assertTrue(digest.contains("RULE: "));
         assertTrue(digest.contains("R.id: critical_title"));
         assertTrue(digest.contains("R.layout: activity_main"));
         assertTrue(digest.contains("R.string: critical_label"));
-        assertFalse(digest.contains("R.id by layout"));
+        assertTrue(digest.contains("R.id by layout"));
         assertTrue(digest.contains("...[truncated]"));
+    }
+
+    @Test
+    public void idKindRuleAlwaysPresentEvenUnderTightBudget() {
+        // Stage 1 / F3: the warning that R.string label names are not view ids must always reach the
+        // model, regardless of how tight the resource-index budget is.
+        assertTrue(ResourceIndexDigest.ID_KIND_RULE.contains("NOT a view id"));
+        assertTrue(ResourceIndexDigest.ID_KIND_RULE.contains("R.id by layout"));
     }
 
     @Test
@@ -85,7 +96,9 @@ public class ResourceIndexDigestTest {
 
         String digest = ResourceIndexDigest.digest(root);
 
-        assertFalse(digest.contains("R.id by layout"));
+        // No per-layout id SECTION is emitted (the id-vs-string RULE mentions the phrase, so check the
+        // section prefix with its colon).
+        assertFalse(digest.contains("R.id by layout: "));
     }
 
     private static void write(File root, String path, String content) throws Exception {

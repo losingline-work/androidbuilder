@@ -44,7 +44,14 @@ import java.util.regex.Pattern;
 public class AgentService {
     private static final int SOURCE_SNAPSHOT_LIMIT = 24000;
     private static final int SOURCE_FULL_TEXT_LAYER_LIMIT = 14000;
-    private static final int SOURCE_API_DIGEST_LIMIT = 6000;
+    // Stage 1: the Java API digest carries the signatures of every non-focused class - the model's
+    // only window onto what methods a callee actually declares. At 6000 chars a 24+ file app's digest
+    // was truncated, so callers invented method names that did not exist (the project-83 method web:
+    // BudgetCalculator.calculate, TransactionRepository.sumExpenseByCategory, ...). The digest is
+    // appended in full after full-text in SourceSnapshotComposer.compose (never squeezed by full-text);
+    // raising this cap lets ~35 classes' complete signatures through, and the total snapshot stays
+    // bounded by SOURCE_SNAPSHOT_LIMIT because full-text absorbs the shift.
+    private static final int SOURCE_API_DIGEST_LIMIT = 14000;
     private static final int SOURCE_RESOURCE_INDEX_LIMIT = 3000;
     private static final int SOURCE_CONTEXT_NOTE_RESERVE = 2500;
     private static final int SOURCE_FILE_PREVIEW_LIMIT = 3500;
