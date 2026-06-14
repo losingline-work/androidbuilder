@@ -187,6 +187,12 @@
     <string name="task_done">Done</string>
     <string name="task_failed">Failed. Execute next step again to retry.</string>
     <string name="task_running_log">Waiting for the model to return file operations...</string>
+    <string name="task_detail_about">What this task does</string>
+    <string name="task_detail_outputs">Will produce</string>
+    <string name="task_detail_checks">Acceptance</string>
+    <string name="task_detail_depends">Depends on</string>
+    <string name="task_detail_result">Result</string>
+    <string name="task_detail_no_result">No result yet</string>
     <string name="task_substeps">Substeps</string>
     <string name="elapsed_time">%1$s elapsed</string>
     <string name="updated_at">Updated %1$s</string>

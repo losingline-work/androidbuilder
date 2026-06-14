@@ -61,7 +61,7 @@ public final class HermesTaskContractCodec {
         }
     }
 
-    static String stripFromInstruction(String instruction) {
+    public static String stripFromInstruction(String instruction) {
         String text = instruction == null ? "" : instruction.trim();
         if (text.isEmpty()) {
             return "";

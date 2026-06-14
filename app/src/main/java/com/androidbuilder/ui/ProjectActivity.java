@@ -80,7 +80,6 @@ public class ProjectActivity extends BaseActivity {
     private final List<ProjectLogEntry> logEntries = new ArrayList<>();
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedPlanMessageIds = new HashSet<>();
-    private final Set<Long> expandedDecisionTaskIds = new HashSet<>();
     private final Set<Long> expandedTaskDetailIds = new HashSet<>();
     private boolean tasksCollapsed = ProjectTaskListDisplayPolicy.defaultCollapsed();
     private TimelineAdapter adapter;
@@ -1617,10 +1616,10 @@ public class ProjectActivity extends BaseActivity {
             boolean running = "running".equals(status)
                     || TaskRunningDisplayPolicy.shouldShowPredictedRunning(autoExecutingPlan, index, status, taskItems);
             boolean detailOpen = !tasksCollapsed || expandedTaskDetailIds.contains(task.id);
-            String stepsText = taskStepsText(task.instruction);
-            String decisionsText = taskDecisionsText(task);
-            String logText = taskLogText(task, index);
-            boolean hasDetail = !stepsText.isEmpty() || !decisionsText.isEmpty() || !logText.isEmpty();
+            TaskDetailPolicy.Detail detail = TaskDetailPolicy.of(task);
+            String resultText = taskResultText(task, index);
+            boolean hasDetail = !detail.description.isEmpty() || !detail.outputs.isEmpty()
+                    || !detail.acceptanceChecks.isEmpty() || !resultText.isEmpty();
 
             LinearLayout row = new LinearLayout(ProjectActivity.this);
             row.setOrientation(LinearLayout.VERTICAL);
@@ -1678,13 +1677,20 @@ public class ProjectActivity extends BaseActivity {
             }
 
             if (detailOpen) {
-                addTaskBodyLine(body, stepsText, R.color.colorOnSurfaceVariant, 13);
-                if (!decisionsText.isEmpty()) {
-                    addTaskLogBlock(body, decisionsText, getString(R.string.hermes_decisions));
+                if (!detail.description.isEmpty()) {
+                    addTaskSection(body, getString(R.string.task_detail_about), detail.description);
                 }
-                if (!logText.isEmpty()) {
-                    addTaskLogBlock(body, logText, getString(R.string.copy_log));
+                if (!detail.outputs.isEmpty()) {
+                    addTaskSection(body, getString(R.string.task_detail_outputs), bullets(detail.outputs));
                 }
+                if (!detail.acceptanceChecks.isEmpty()) {
+                    addTaskSection(body, getString(R.string.task_detail_checks), bullets(detail.acceptanceChecks));
+                }
+                if (!detail.dependsOn.isEmpty()) {
+                    addTaskSection(body, getString(R.string.task_detail_depends), android.text.TextUtils.join("、", detail.dependsOn));
+                }
+                addTaskSection(body, getString(R.string.task_detail_result),
+                        resultText.isEmpty() ? getString(R.string.task_detail_no_result) : resultText);
             }
 
             if (hasDetail) {
@@ -1702,6 +1708,48 @@ public class ProjectActivity extends BaseActivity {
             return row;
         }
 
+        private String taskResultText(ProjectTaskRecord task, int index) {
+            String status = task.status == null ? "pending" : task.status;
+            if ("running".equals(status)
+                    || TaskRunningDisplayPolicy.shouldShowPredictedRunning(autoExecutingPlan, index, status, taskItems)) {
+                // The running task's situation is shown live above (progress + narration); no result yet.
+                return "";
+            }
+            return task.resultSummary == null ? "" : task.resultSummary.trim();
+        }
+
+        private void addTaskSection(LinearLayout body, String label, String content) {
+            if (content == null || content.trim().isEmpty()) {
+                return;
+            }
+            TextView labelView = new TextView(ProjectActivity.this);
+            labelView.setText(label);
+            labelView.setTextSize(11);
+            labelView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            labelView.setTextColor(getResources().getColor(R.color.colorPrimary));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(0, dp(8), 0, 0);
+            body.addView(labelView, lp);
+            TextView contentView = new TextView(ProjectActivity.this);
+            contentView.setText(content.trim());
+            contentView.setTextSize(13);
+            contentView.setTextColor(getResources().getColor(R.color.colorOnSurface));
+            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            cp.setMargins(0, dp(2), 0, 0);
+            body.addView(contentView, cp);
+        }
+
+        private static String bullets(List<String> items) {
+            StringBuilder sb = new StringBuilder();
+            for (String item : items) {
+                if (sb.length() > 0) {
+                    sb.append('\n');
+                }
+                sb.append("• ").append(item);
+            }
+            return sb.toString();
+        }
+
         private void addTaskBodyLine(LinearLayout body, String text, int colorRes, int sizeSp) {
             if (text == null || text.isEmpty()) {
                 return;
@@ -1713,47 +1761,6 @@ public class ProjectActivity extends BaseActivity {
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             p.setMargins(0, dp(3), 0, 0);
             body.addView(tv, p);
-        }
-
-        private void addTaskLogBlock(LinearLayout body, String text, String copyLabel) {
-            TextView tv = new TextView(ProjectActivity.this);
-            tv.setText(text);
-            tv.setTextSize(12);
-            tv.setTypeface(android.graphics.Typeface.MONOSPACE);
-            tv.setPadding(dp(8), dp(6), dp(8), dp(6));
-            tv.setBackgroundResource(R.drawable.bg_log_md3);
-            tv.setTextColor(getResources().getColor(R.color.colorInverseOnSurface));
-            tv.setOnLongClickListener(v -> {
-                copyText(copyLabel, text);
-                return true;
-            });
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            p.setMargins(0, dp(6), 0, 0);
-            body.addView(tv, p);
-        }
-
-        private String taskDecisionsText(ProjectTaskRecord task) {
-            if (task == null || !expandedDecisionTaskIds.contains(task.id)) {
-                return "";
-            }
-            List<HermesDecisionTimelineItem> items = HermesDecisionTimelinePolicy.forTask(repository.listAiConversations(projectId), task.id);
-            if (items.isEmpty()) {
-                return AppSettings.isChinese(ProjectActivity.this) ? "暂无任务决策记录" : "No task decisions yet";
-            }
-            StringBuilder builder = new StringBuilder(AppSettings.isChinese(ProjectActivity.this) ? "决策轨迹" : "Decision trail");
-            SimpleDateFormat format = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
-            for (HermesDecisionTimelineItem item : items) {
-                builder.append('\n')
-                        .append(format.format(new Date(item.createdAt)))
-                        .append(" · ")
-                        .append(item.role.isEmpty() ? "Hermes" : item.role)
-                        .append(" · ")
-                        .append(item.decision.isEmpty() ? "event" : item.decision);
-                if (!item.summary.isEmpty()) {
-                    builder.append(" · ").append(item.summary);
-                }
-            }
-            return builder.toString();
         }
 
         private String taskProgressText(ProjectTaskRecord task) {
@@ -1894,18 +1901,6 @@ public class ProjectActivity extends BaseActivity {
             return getString(R.string.task_pending);
         }
 
-        private String taskLogText(ProjectTaskRecord task, int index) {
-            String status = task.status == null ? "pending" : task.status;
-            if (TaskRunningDisplayPolicy.shouldShowPredictedRunning(autoExecutingPlan, index, status, taskItems)) {
-                return getString(R.string.task_running_log);
-            }
-            String summary = task.resultSummary == null ? "" : task.resultSummary.trim();
-            if ("running".equals(status) && summary.isEmpty()) {
-                return getString(R.string.task_running_log);
-            }
-            return summary;
-        }
-
         private String messageTimeText(ChatMessage message) {
             String time = timeFormat.format(new Date(message.createdAt));
             if (message.linkedBuildJobId == null) {
@@ -2019,59 +2014,6 @@ public class ProjectActivity extends BaseActivity {
                 log.setText(text);
                 log.setVisibility(View.VISIBLE);
             }
-        }
-
-        private void setTaskSteps(TextView steps, String instruction) {
-            String text = taskStepsText(instruction);
-            if (text.isEmpty()) {
-                steps.setVisibility(View.GONE);
-                return;
-            }
-            steps.setText(text);
-            steps.setVisibility(View.VISIBLE);
-        }
-
-        private String taskStepsText(String instruction) {
-            String raw = instruction == null ? "" : instruction.trim().replace("\r", "");
-            if (raw.isEmpty()) {
-                return "";
-            }
-            List<String> parts = new ArrayList<>();
-            for (String line : raw.split("\n")) {
-                addTaskStep(parts, line);
-            }
-            if (parts.size() <= 1) {
-                parts.clear();
-                for (String part : raw.split("[。；;]\\s*")) {
-                    addTaskStep(parts, part);
-                }
-            }
-            if (parts.isEmpty()) {
-                return "";
-            }
-            StringBuilder text = new StringBuilder(getString(R.string.task_substeps)).append(":\n");
-            int count = Math.min(parts.size(), 6);
-            for (int i = 0; i < count; i++) {
-                text.append("• ").append(parts.get(i)).append("\n");
-            }
-            if (parts.size() > count) {
-                text.append("• ...");
-            }
-            return text.toString().trim();
-        }
-
-        private void addTaskStep(List<String> parts, String value) {
-            String text = value == null ? "" : value.trim()
-                    .replaceFirst("^(?:[-*•]+|\\d+[.)、])\\s*", "")
-                    .replaceFirst("^(Instruction|步骤|子步骤)[:：]\\s*", "")
-                    .trim();
-            if (text.isEmpty()) {
-                return;
-            }
-            if (text.length() > 180) {
-                text = text.substring(0, 180).trim() + "...";
-            }
-            parts.add(text);
         }
 
         private void configureTaskLogCopy(View copyLog, String value) {

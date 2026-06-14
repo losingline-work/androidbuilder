@@ -185,6 +185,12 @@
     <string name="task_done">已完成</string>
     <string name="task_failed">失败，可再次点击执行下一步重试</string>
     <string name="task_running_log">正在请求模型生成本步骤文件操作...</string>
+    <string name="task_detail_about">任务说明</string>
+    <string name="task_detail_outputs">将产出</string>
+    <string name="task_detail_checks">验收标准</string>
+    <string name="task_detail_depends">依赖</string>
+    <string name="task_detail_result">结果</string>
+    <string name="task_detail_no_result">暂无结果</string>
     <string name="task_substeps">子步骤</string>
     <string name="elapsed_time">用时 %1$s</string>
     <string name="updated_at">更新于 %1$s</string>
