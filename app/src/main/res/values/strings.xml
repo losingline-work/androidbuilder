@@ -191,6 +191,8 @@
     <string name="task_detail_outputs">Will produce</string>
     <string name="task_detail_checks">Acceptance</string>
     <string name="task_detail_depends">Depends on</string>
+    <string name="task_detail_flow">Execution log</string>
+    <string name="task_detail_no_flow">Not run yet</string>
     <string name="task_detail_result">Result</string>
     <string name="task_detail_no_result">No result yet</string>
     <string name="task_substeps">Substeps</string>

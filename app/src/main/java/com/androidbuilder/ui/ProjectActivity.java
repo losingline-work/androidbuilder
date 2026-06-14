@@ -1729,8 +1729,9 @@ public class ProjectActivity extends BaseActivity {
                 if (!detail.acceptanceChecks.isEmpty()) {
                     addTaskSection(body, getString(R.string.task_detail_checks), bullets(detail.acceptanceChecks));
                 }
-                if (!detail.dependsOn.isEmpty()) {
-                    addTaskSection(body, getString(R.string.task_detail_depends), android.text.TextUtils.join("、", detail.dependsOn));
+                String flow = taskExecutionLogText(task);
+                if (!flow.isEmpty()) {
+                    addTaskSection(body, getString(R.string.task_detail_flow), flow);
                 }
                 addTaskSection(body, getString(R.string.task_detail_result),
                         resultText.isEmpty() ? getString(R.string.task_detail_no_result) : resultText);
@@ -1820,6 +1821,17 @@ public class ProjectActivity extends BaseActivity {
                 return "";
             }
             return agentService.taskNarration("task:" + task.id);
+        }
+
+        /** The persistent execution-flow log for a task: its cloud generations, preflights, reviews and
+         * the merge outcome, rendered compactly. Queried lazily (only for an expanded task's detail). */
+        private String taskExecutionLogText(ProjectTaskRecord task) {
+            if (task == null || task.id <= 0 || repository == null) {
+                return "";
+            }
+            return TaskExecutionLogPolicy.render(
+                    repository.listAiConversationStepsForTask(projectId, task.id),
+                    AppSettings.isChinese(ProjectActivity.this));
         }
 
         private String agentRunText(ProjectTaskRecord task) {

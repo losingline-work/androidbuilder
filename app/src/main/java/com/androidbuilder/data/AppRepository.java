@@ -172,6 +172,34 @@ public class AppRepository {
     }
 
     /**
+     * The execution STEPS of a single plan task - the AI calls (cloud generation, deterministic
+     * preflight, reviews) whose metadata carries {@code taskId=<taskId>}. Bodies are NOT loaded (the
+     * step log only needs title + status + time), so this stays cheap to query lazily when a task's
+     * detail is expanded. The metadata LIKE is a coarse pre-filter; the exact taskId line is verified in
+     * code so taskId=7 never matches taskId=70.
+     */
+    public synchronized List<AiConversationRecord> listAiConversationStepsForTask(long projectId, long taskId) {
+        String[] columns = {
+                "id", "project_id", "source", "title",
+                "'' AS request_text", "'' AS response_text",
+                "status", "metadata", "linked_build_job_id", "created_at"
+        };
+        java.util.regex.Pattern marker = java.util.regex.Pattern.compile("(?m)^taskId=" + taskId + "$");
+        List<AiConversationRecord> rows = new ArrayList<>();
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_AI_CONVERSATIONS, columns,
+                "project_id = ? AND metadata LIKE ?",
+                new String[]{String.valueOf(projectId), "%taskId=" + taskId + "%"}, null, null, "created_at ASC")) {
+            while (cursor.moveToNext()) {
+                AiConversationRecord record = readAiConversation(cursor);
+                if (marker.matcher(record.metadata).find()) {
+                    rows.add(record);
+                }
+            }
+        }
+        return rows;
+    }
+
+    /**
      * AI-conversation rows LINKED to a single build job. The failure-context copy only summarizes the
      * handful of records tied to the failed job, so it must not load every record for the project: a
      * full project-wide query pulls EVERY row (full request/response text) and OOM-crashed the copy
