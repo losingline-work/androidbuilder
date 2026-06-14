@@ -1994,7 +1994,9 @@ public class ProjectActivity extends BaseActivity {
                             job,
                             readBuildLogText(job),
                             new ArrayList<>(messages),
-                            repository.listAiConversations(projectId),
+                            job == null
+                                    ? new ArrayList<>()
+                                    : repository.listAiConversationsForJob(projectId, job.id),
                             AppSettings.isChinese(ProjectActivity.this))));
             actionButton.setVisibility(controls.showCardAction ? View.VISIBLE : View.GONE);
             actionButton.setText(cardAction == ProjectBuildCardActionPolicy.Action.REPAIR ? R.string.repair_build : R.string.install);

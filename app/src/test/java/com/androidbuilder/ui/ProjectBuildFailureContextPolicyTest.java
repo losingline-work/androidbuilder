@@ -6,9 +6,11 @@ import com.androidbuilder.model.ChatMessage;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -118,6 +120,42 @@ public class ProjectBuildFailureContextPolicyTest {
         assertFalse(context.contains("other job chatter"));
         assertFalse(context.contains("Other request"));
         assertFalse(context.contains("unlinked user note"));
+    }
+
+    @Test
+    public void fullFailureContextDependsOnlyOnJobLinkedAiRecords() {
+        // Guards the OOM fix: the copy action now loads only the failed job's linked AI records
+        // (AppRepository.listAiConversationsForJob) instead of every record for the project. That
+        // narrowing is only safe if copyText already ignores records linked to other jobs - so the
+        // output from the job-linked subset must be byte-identical to the output from the full list.
+        BuildJobRecord job = new BuildJobRecord(
+                20, 1, "failed", "coding_failed", "", null,
+                "Task 637/2 agent failed", 0, 1000, 9000);
+        List<ChatMessage> messages = Arrays.asList(
+                new ChatMessage(1, 1, "assistant", "linked job chatter", 2000, 20L),
+                new ChatMessage(2, 1, "assistant", "other job chatter", 2500, 21L));
+
+        AiConversationRecord linked = new AiConversationRecord(
+                10, 1, "cloud", "云端 AI · 文件操作生成 #1",
+                "Request:\nApproved engineering plan",
+                "Response:\n{\"summary\":\"draft\"}",
+                "success", "provider=openai\ntaskId=637", 20L, 4000);
+        AiConversationRecord otherJob = new AiConversationRecord(
+                12, 1, "cloud", "Other job", "Other request", "Other response",
+                "success", "", 21L, 6000);
+
+        // What the project-wide query used to return (every record), vs. what the job-scoped query
+        // returns (only records linked to job #20).
+        List<AiConversationRecord> allRecords = new ArrayList<>(Arrays.asList(linked, otherJob));
+        List<AiConversationRecord> jobLinkedOnly = new ArrayList<>(Arrays.asList(linked));
+
+        String fromAll = ProjectBuildFailureContextPolicy.copyText(job, "build log tail", messages, allRecords, true);
+        String fromJobLinked = ProjectBuildFailureContextPolicy.copyText(job, "build log tail", messages, jobLinkedOnly, true);
+
+        assertEquals(fromAll, fromJobLinked);
+        assertTrue(fromJobLinked.contains("Approved engineering plan"));
+        assertFalse(fromJobLinked.contains("Other request"));
+        assertFalse(fromJobLinked.contains("other job chatter"));
     }
 
     @Test

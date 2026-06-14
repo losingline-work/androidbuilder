@@ -147,16 +147,6 @@ public class AppRepository {
         return getAiConversation(id);
     }
 
-    public synchronized List<AiConversationRecord> listAiConversations(long projectId) {
-        List<AiConversationRecord> rows = new ArrayList<>();
-        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_AI_CONVERSATIONS, null, "project_id = ?", new String[]{String.valueOf(projectId)}, null, null, "created_at ASC")) {
-            while (cursor.moveToNext()) {
-                rows.add(readAiConversation(cursor));
-            }
-        }
-        return rows;
-    }
-
     /**
      * Lightweight AI-conversation rows for the log LIST: request/response text is truncated at the SQL
      * level to {@code previewChars} so a project with hundreds of multi-megabyte records can be listed
@@ -174,6 +164,28 @@ public class AppRepository {
         };
         List<AiConversationRecord> rows = new ArrayList<>();
         try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_AI_CONVERSATIONS, columns, "project_id = ?", new String[]{String.valueOf(projectId)}, null, null, "created_at ASC")) {
+            while (cursor.moveToNext()) {
+                rows.add(readAiConversation(cursor));
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * AI-conversation rows LINKED to a single build job. The failure-context copy only summarizes the
+     * handful of records tied to the failed job, so it must not load every record for the project: a
+     * full project-wide query pulls EVERY row (full request/response text) and OOM-crashed the copy
+     * action on large projects (project-83: 503 records, 22 MB+). Scoping to linked_build_job_id loads
+     * only that job's records, keeping peak memory bounded.
+     */
+    public synchronized List<AiConversationRecord> listAiConversationsForJob(long projectId, long jobId) {
+        List<AiConversationRecord> rows = new ArrayList<>();
+        try (Cursor cursor = helper.getReadableDatabase().query(
+                DatabaseHelper.TABLE_AI_CONVERSATIONS,
+                null,
+                "project_id = ? AND linked_build_job_id = ?",
+                new String[]{String.valueOf(projectId), String.valueOf(jobId)},
+                null, null, "created_at ASC")) {
             while (cursor.moveToNext()) {
                 rows.add(readAiConversation(cursor));
             }
