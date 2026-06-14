@@ -49,12 +49,19 @@ public class AndroidSourceGuard {
         collectResourceFileNames(resDir, "drawable", symbols.drawables);
         collectResourceFileNames(resDir, "mipmap", symbols.mipmaps);
         collectValueResources(resDir, symbols);
-        JavaApiSymbols javaSymbols = new JavaApiSymbols();
-        collectJavaApiSymbols(sourceDir, javaSymbols);
+        SymbolTable javaSymbols = new SymbolTable();
+        collectSymbolTable(sourceDir, javaSymbols);
         String gradleText = readTextIfExists(new File(sourceDir, "app/build.gradle"));
         List<String> violations = new ArrayList<>();
         validateFiles(sourceDir, symbols, javaSymbols, gradleText, violations);
         throwIfViolations(violations);
+    }
+
+    /** Test seam: the SymbolTable the guard builds from the on-disk .java tree. */
+    SymbolTable collectSymbolTableForTest(File sourceDir) throws Exception {
+        SymbolTable table = new SymbolTable();
+        collectSymbolTable(sourceDir, table);
+        return table;
     }
 
     private String readTextIfExists(File file) {
@@ -228,7 +235,7 @@ public class AndroidSourceGuard {
         }
     }
 
-    private void validateFiles(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols, String gradleText, List<String> violations) throws Exception {
+    private void validateFiles(File file, ResourceSymbols symbols, SymbolTable javaSymbols, String gradleText, List<String> violations) throws Exception {
         if (file == null || !file.exists()) {
             return;
         }
@@ -253,7 +260,7 @@ public class AndroidSourceGuard {
         }
     }
 
-    private void validateSourceFile(File file, ResourceSymbols symbols, JavaApiSymbols javaSymbols, List<String> violations) throws Exception {
+    private void validateSourceFile(File file, ResourceSymbols symbols, SymbolTable javaSymbols, List<String> violations) throws Exception {
         String content = FileUtils.readText(file);
         String scannable = JavaApiDigest.stripJavaCommentsAndStrings(content);
         if (scannable.contains("kotlinx.android.synthetic")) {
@@ -289,13 +296,13 @@ public class AndroidSourceGuard {
         validateCustomMethodCalls(file, sanitized, javaSymbols, violations);
     }
 
-    private void collectJavaApiSymbols(File file, JavaApiSymbols symbols) throws Exception {
+    private void collectSymbolTable(File file, SymbolTable symbols) throws Exception {
         if (file == null || !file.exists()) {
             return;
         }
         if (file.isFile()) {
             if (file.getName().endsWith(".java")) {
-                collectJavaApiSymbolsFromFile(file, symbols);
+                collectSymbolTableFromFile(file, symbols);
             }
             return;
         }
@@ -304,11 +311,11 @@ public class AndroidSourceGuard {
             return;
         }
         for (File child : children) {
-            collectJavaApiSymbols(child, symbols);
+            collectSymbolTable(child, symbols);
         }
     }
 
-    private void collectJavaApiSymbolsFromFile(File file, JavaApiSymbols symbols) throws Exception {
+    private void collectSymbolTableFromFile(File file, SymbolTable symbols) throws Exception {
         String content = stripJavaCommentsAndStrings(FileUtils.readText(file));
         List<ClassSpan> classSpans = new ArrayList<>();
         Matcher classMatcher = JAVA_CLASS.matcher(content);
@@ -405,7 +412,7 @@ public class AndroidSourceGuard {
         return "new".equals(content.substring(cursor + 1, end));
     }
 
-    private void validateCustomFieldAccess(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
+    private void validateCustomFieldAccess(File file, String content, SymbolTable javaSymbols, List<String> violations) {
         Map<String, String> variableTypes = collectVariableTypes(content);
         List<ClassSpan> spans = classSpans(content);
         Matcher matcher = JAVA_FIELD_ACCESS.matcher(content);
@@ -435,7 +442,7 @@ public class AndroidSourceGuard {
         }
     }
 
-    private void validateClassFieldAccess(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
+    private void validateClassFieldAccess(File file, String content, SymbolTable javaSymbols, List<String> violations) {
         Matcher matcher = JAVA_FIELD_ACCESS.matcher(content);
         while (matcher.find()) {
             if (isQualifiedNameSegment(content, matcher.start()) || isMethodCall(content, matcher.end())) {
@@ -507,7 +514,7 @@ public class AndroidSourceGuard {
         return cursor < content.length() && content.charAt(cursor) == '(';
     }
 
-    private void validateConstructorCalls(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
+    private void validateConstructorCalls(File file, String content, SymbolTable javaSymbols, List<String> violations) {
         Map<String, String> variableTypes = collectVariableTypes(content);
         String currentClass = firstClassName(content);
         Matcher matcher = JAVA_NEW_EXPRESSION.matcher(content);
@@ -525,7 +532,7 @@ public class AndroidSourceGuard {
         }
     }
 
-    private void validateCustomMethodCalls(File file, String content, JavaApiSymbols javaSymbols, List<String> violations) {
+    private void validateCustomMethodCalls(File file, String content, SymbolTable javaSymbols, List<String> violations) {
         Map<String, String> variableTypes = collectVariableTypes(content);
         String currentClass = firstClassName(content);
         if (!currentClass.isEmpty()) {
@@ -558,13 +565,13 @@ public class AndroidSourceGuard {
                 addViolation(violations, "Generated source policy blocked missing method: " + type + "." + methodName + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ". Add the method or update the caller to use an existing API.");
                 continue;
             }
-            if (allKnown(argumentTypes) && !javaSymbols.hasMethodSignature(type, methodName, argumentTypes, this)) {
+            if (allKnown(argumentTypes) && !javaSymbols.hasMethodSignature(type, methodName, argumentTypes)) {
                 addViolation(violations, "Generated source policy blocked method argument mismatch: " + type + "." + methodName + "(" + joinTypes(argumentTypes) + ") in " + file.getName() + ". Update the method signature or caller consistently.");
             }
         }
     }
 
-    private boolean isKnownInheritedPlatformMethod(String type, String methodName, JavaApiSymbols javaSymbols) {
+    private boolean isKnownInheritedPlatformMethod(String type, String methodName, SymbolTable javaSymbols) {
         if (isJavaObjectMethod(methodName)) {
             return true;
         }
@@ -778,14 +785,14 @@ public class AndroidSourceGuard {
         return true;
     }
 
-    private boolean matchesAnyConstructor(List<String> argumentTypes, List<List<String>> constructors, JavaApiSymbols javaSymbols) {
+    private boolean matchesAnyConstructor(List<String> argumentTypes, List<List<String>> constructors, SymbolTable javaSymbols) {
         for (List<String> constructor : constructors) {
             if (constructor.size() != argumentTypes.size()) {
                 continue;
             }
             boolean matches = true;
             for (int i = 0; i < constructor.size(); i++) {
-                if (!isAssignable(argumentTypes.get(i), constructor.get(i), javaSymbols)) {
+                if (!javaSymbols.isAssignable(argumentTypes.get(i), constructor.get(i))) {
                     matches = false;
                     break;
                 }
@@ -795,81 +802,6 @@ public class AndroidSourceGuard {
             }
         }
         return false;
-    }
-
-    private boolean isAssignable(String actualType, String expectedType, JavaApiSymbols javaSymbols) {
-        String actual = simpleType(actualType);
-        String expected = simpleType(expectedType);
-        if (actual.isEmpty() || expected.isEmpty()) {
-            return false;
-        }
-        if (actual.equals(expected) || "Object".equals(expected)) {
-            return true;
-        }
-        // Java autoboxing + JLS primitive widening: Long<->long, int->long, etc. are assignable and
-        // must not be reported as argument mismatches (the dominant false positive in data-layer DAOs).
-        if (isPrimitiveOrBoxedAssignable(actual, expected)) {
-            return true;
-        }
-        if ("Context".equals(expected) && (actual.endsWith("Activity") || actual.endsWith("Service") || "Application".equals(actual))) {
-            return true;
-        }
-        String parent = javaSymbols.superClassByClass.get(actual);
-        Set<String> visited = new HashSet<>();
-        while (parent != null && visited.add(parent)) {
-            if (expected.equals(parent)) {
-                return true;
-            }
-            if ("Context".equals(expected) && (parent.endsWith("Activity") || parent.endsWith("Service") || "Application".equals(parent))) {
-                return true;
-            }
-            parent = javaSymbols.superClassByClass.get(parent);
-        }
-        return false;
-    }
-
-    // Numeric widening rank per JLS 5.1.2 (byte<short<int<long<float<double; char widens to int+).
-    private static int numericRank(String primitive) {
-        switch (primitive) {
-            case "byte": return 1;
-            case "short": return 2;
-            case "char": return 2;
-            case "int": return 3;
-            case "long": return 4;
-            case "float": return 5;
-            case "double": return 6;
-            default: return 0;
-        }
-    }
-
-    private static String unbox(String type) {
-        switch (type) {
-            case "Long": case "long": return "long";
-            case "Integer": case "int": return "int";
-            case "Short": case "short": return "short";
-            case "Byte": case "byte": return "byte";
-            case "Character": case "char": return "char";
-            case "Boolean": case "boolean": return "boolean";
-            case "Float": case "float": return "float";
-            case "Double": case "double": return "double";
-            default: return "";
-        }
-    }
-
-    private boolean isPrimitiveOrBoxedAssignable(String actual, String expected) {
-        String a = unbox(actual);
-        String e = unbox(expected);
-        if (a.isEmpty() || e.isEmpty()) {
-            return false;
-        }
-        // Autoboxing/unboxing equivalence (Long<->long), then directional numeric widening (int->long).
-        if (a.equals(e)) {
-            return true;
-        }
-        if ("boolean".equals(a) || "boolean".equals(e)) {
-            return false;
-        }
-        return numericRank(a) > 0 && numericRank(a) <= numericRank(e);
     }
 
     private boolean isLikelyModelType(String type) {
@@ -903,7 +835,7 @@ public class AndroidSourceGuard {
      * positive (itemView, getAdapterPosition, submitList, ...), so those checks are deferred to the
      * real compiler. Constructor checks are unaffected (they concern the class's own constructors).
      */
-    private boolean inheritsExternalApi(String type, JavaApiSymbols javaSymbols) {
+    private boolean inheritsExternalApi(String type, SymbolTable javaSymbols) {
         String current = javaSymbols.superClassByClass.get(simpleType(type));
         Set<String> visited = new HashSet<>();
         while (current != null && !current.isEmpty() && visited.add(current)) {
@@ -961,25 +893,8 @@ public class AndroidSourceGuard {
     }
 
     private String simpleType(String type) {
-        String value = type == null ? "" : type.trim();
-        if (value.isEmpty()) {
-            return "";
-        }
-        value = value.replace("?", "").trim();
-        value = value.replaceAll("\\bextends\\s+", "");
-        value = value.replaceAll("\\bsuper\\s+", "");
-        int generic = value.indexOf('<');
-        if (generic >= 0) {
-            value = value.substring(0, generic);
-        }
-        while (value.endsWith("[]")) {
-            value = value.substring(0, value.length() - 2);
-        }
-        int dot = value.lastIndexOf('.');
-        if (dot >= 0) {
-            value = value.substring(dot + 1);
-        }
-        return value.trim();
+        // Single source of truth shared with the contract linter (Stage 2 SymbolTable).
+        return SymbolTable.simpleType(type);
     }
 
     private boolean isJavaKeyword(String value) {
@@ -1186,122 +1101,4 @@ public class AndroidSourceGuard {
         }
     }
 
-    private static class JavaApiSymbols {
-        final Map<String, Set<String>> fieldsByClass = new HashMap<>();
-        final Map<String, Map<String, List<List<String>>>> methodsByClass = new HashMap<>();
-        final Map<String, List<List<String>>> constructorsByClass = new HashMap<>();
-        final Map<String, String> superClassByClass = new HashMap<>();
-
-        void ensureClass(String className) {
-            if (!fieldsByClass.containsKey(className)) {
-                fieldsByClass.put(className, new HashSet<String>());
-            }
-            if (!methodsByClass.containsKey(className)) {
-                methodsByClass.put(className, new HashMap<String, List<List<String>>>());
-            }
-            if (!constructorsByClass.containsKey(className)) {
-                constructorsByClass.put(className, new ArrayList<List<String>>());
-            }
-        }
-
-        void addMethod(String className, String methodName, List<String> parameterTypes) {
-            ensureClass(className);
-            Map<String, List<List<String>>> methods = methodsByClass.get(className);
-            List<List<String>> signatures = methods.get(methodName);
-            if (signatures == null) {
-                signatures = new ArrayList<>();
-                methods.put(methodName, signatures);
-            }
-            signatures.add(parameterTypes);
-        }
-
-        boolean hasClass(String className) {
-            return fieldsByClass.containsKey(className);
-        }
-
-        boolean hasField(String className, String fieldName) {
-            Set<String> fields = fieldsByClass.get(className);
-            if (fields != null && fields.contains(fieldName)) {
-                return true;
-            }
-            String parent = superClassByClass.get(className);
-            Set<String> visited = new HashSet<>();
-            while (parent != null && visited.add(parent)) {
-                fields = fieldsByClass.get(parent);
-                if (fields != null && fields.contains(fieldName)) {
-                    return true;
-                }
-                parent = superClassByClass.get(parent);
-            }
-            return false;
-        }
-
-        boolean hasMethod(String className, String methodName) {
-            if (methodsByClass.containsKey(className) && methodsByClass.get(className).containsKey(methodName)) {
-                return true;
-            }
-            String parent = superClassByClass.get(className);
-            Set<String> visited = new HashSet<>();
-            while (parent != null && visited.add(parent)) {
-                Map<String, List<List<String>>> methods = methodsByClass.get(parent);
-                if (methods != null && methods.containsKey(methodName)) {
-                    return true;
-                }
-                parent = superClassByClass.get(parent);
-            }
-            return false;
-        }
-
-        boolean hasMethodSignature(String className, String methodName, List<String> argumentTypes, AndroidSourceGuard guard) {
-            if (hasMethodSignatureInClass(className, methodName, argumentTypes, guard)) {
-                return true;
-            }
-            String parent = superClassByClass.get(className);
-            Set<String> visited = new HashSet<>();
-            while (parent != null && visited.add(parent)) {
-                if (hasMethodSignatureInClass(parent, methodName, argumentTypes, guard)) {
-                    return true;
-                }
-                parent = superClassByClass.get(parent);
-            }
-            return false;
-        }
-
-        private boolean hasMethodSignatureInClass(String className, String methodName, List<String> argumentTypes, AndroidSourceGuard guard) {
-            Map<String, List<List<String>>> methods = methodsByClass.get(className);
-            if (methods == null) {
-                return false;
-            }
-            List<List<String>> signatures = methods.get(methodName);
-            if (signatures == null) {
-                return false;
-            }
-            for (List<String> signature : signatures) {
-                if (signature.size() != argumentTypes.size()) {
-                    continue;
-                }
-                boolean matches = true;
-                for (int i = 0; i < signature.size(); i++) {
-                    if (!guard.isAssignable(argumentTypes.get(i), signature.get(i), this)) {
-                        matches = false;
-                        break;
-                    }
-                }
-                if (matches) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        List<List<String>> availableConstructors(String className) {
-            List<List<String>> constructors = constructorsByClass.get(className);
-            if (constructors == null || constructors.isEmpty()) {
-                List<List<String>> defaultConstructor = new ArrayList<>();
-                defaultConstructor.add(new ArrayList<String>());
-                return defaultConstructor;
-            }
-            return constructors;
-        }
-    }
 }
