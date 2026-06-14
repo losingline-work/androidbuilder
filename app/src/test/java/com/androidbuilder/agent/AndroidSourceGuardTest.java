@@ -374,6 +374,47 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void mapEntryGetKeyIsNotFlaggedDespiteGeneratedEntryClass() throws Exception {
+        // project-83 false positive: an adapter declares a nested class Entry; another file iterates a
+        // java.util.Map and calls e.getKey(). simpleType("Map.Entry") collapses to "Entry", colliding
+        // with the generated Entry, so getKey()/getValue() were wrongly reported missing. A Map.Entry
+        // variable must be treated as external.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/BillSectionAdapter.java",
+                "package com.example;\n"
+                        + "class BillSectionAdapter {\n"
+                        + "    static final class Entry { long total; }\n"
+                        + "}");
+        write(root, "app/src/main/java/com/example/StatsCalculator.java",
+                "package com.example;\n"
+                        + "import java.util.Map;\n"
+                        + "class StatsCalculator {\n"
+                        + "    void run(Map<Long, Long> totals) {\n"
+                        + "        for (Map.Entry<Long, Long> e : totals.entrySet()) {\n"
+                        + "            long k = e.getKey().longValue();\n"
+                        + "            long v = e.getValue().longValue();\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void realMissingMethodOnGeneratedEntryClassStillBlocks() throws Exception {
+        // Guardrail: the Map.Entry deferral must NOT mask a real missing method on a generated class
+        // genuinely named Entry when referenced as a plain (unqualified) Entry variable.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/Entry.java",
+                "package com.example;\nclass Entry { long total() { return 0L; } }");
+        write(root, "app/src/main/java/com/example/StatsCalculator.java",
+                "package com.example;\nclass StatsCalculator { void run() { Entry e = new Entry(); e.missingOne(); } }");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+        assertTrue(error.getMessage().contains("missing method: Entry.missingOne"));
+    }
+
+    @Test
     public void recognizesIdsDeclaredViaValuesItemTag() throws Exception {
         // <item type="id" name="X"/> in a values file is a valid R.id source; a Java reference to
         // it must not be blocked as a missing id.

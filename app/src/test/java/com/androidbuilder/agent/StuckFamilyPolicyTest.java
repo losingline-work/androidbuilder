@@ -26,6 +26,21 @@ public class StuckFamilyPolicyTest {
     }
 
     @Test
+    public void detectsStuckFamilyFromMergeTimeMissingMethodOnDomainClass() {
+        // The merge-time AndroidSourceGuard verdict format, on a non-DAO domain class.
+        List<FailureFingerprint> history = history(
+                "Generated source policy blocked missing method: BudgetCalculator.sumByTypeInRange(unknown, unknown, unknown) in BudgetRepository.java. Add the method or update the caller to use an existing API.",
+                "Generated source policy blocked missing method: BudgetCalculator.remainingForCategory(long, long) in BudgetRepository.java. Add the method or update the caller to use an existing API.");
+
+        StuckFamilyPolicy.Family family = StuckFamilyPolicy.detect(history, 2);
+
+        assertNotNull(family);
+        assertEquals("BudgetCalculator", family.className);
+        assertTrue(family.members.contains("sumByTypeInRange"));
+        assertTrue(family.members.contains("remainingForCategory"));
+    }
+
+    @Test
     public void doesNotFireOnASingleFlaggedMethod() {
         List<FailureFingerprint> history = history(
                 "TransactionRepository.java calls TransactionDao.listInRange() but that DAO method is not declared",

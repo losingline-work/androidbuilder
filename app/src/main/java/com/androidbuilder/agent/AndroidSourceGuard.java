@@ -599,8 +599,17 @@ public class AndroidSourceGuard {
         Set<String> ambiguous = new HashSet<>();
         Matcher matcher = JAVA_VARIABLE_DECLARATION.matcher(content);
         while (matcher.find()) {
-            String type = simpleType(matcher.group(1));
             String name = matcher.group(2);
+            if (isExternalQualifiedVariableType(matcher.group(1))) {
+                // java.util.Map.Entry collapses under simpleType() to the simple name "Entry", which
+                // can collide with an unrelated generated nested class also named Entry (e.g. an
+                // adapter's row type). Treat the iteration entry as external so its getKey()/getValue()
+                // calls are never validated against that generated class. Mark the name ambiguous so a
+                // colliding capture elsewhere in the file is also discarded.
+                ambiguous.add(name);
+                continue;
+            }
+            String type = simpleType(matcher.group(1));
             if (type.isEmpty() || isJavaKeyword(name)) {
                 continue;
             }
@@ -618,6 +627,15 @@ public class AndroidSourceGuard {
             variableTypes.remove(name);
         }
         return variableTypes;
+    }
+
+    private boolean isExternalQualifiedVariableType(String rawType) {
+        String type = rawType == null ? "" : rawType.trim();
+        int generic = type.indexOf('<');
+        if (generic >= 0) {
+            type = type.substring(0, generic).trim();
+        }
+        return type.equals("Map.Entry") || type.equals("java.util.Map.Entry");
     }
 
     private String firstClassName(String content) {

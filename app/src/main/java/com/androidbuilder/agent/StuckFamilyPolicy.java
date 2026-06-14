@@ -24,16 +24,24 @@ import java.util.regex.Pattern;
  * tree.
  */
 final class StuckFamilyPolicy {
+    // Pre-merge LocalGuardHeuristics hint: "<Caller>.java calls <Class>.<method>() but that DAO
+    // method is not declared".
     private static final Pattern DAO_NOT_DECLARED = Pattern.compile(
             "calls\\s+([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\s+but that DAO method is not declared",
+            Pattern.CASE_INSENSITIVE);
+    // Merge-time AndroidSourceGuard verdict: "blocked missing method: <Class>.<method>(args) in
+    // <Caller>.java". Covers any callee class (domain calculators, repositories), not just DAOs, so a
+    // BudgetCalculator/StatsCalculator whose callers churn through method names is detected too.
+    private static final Pattern MISSING_METHOD = Pattern.compile(
+            "missing method:\\s*([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(",
             Pattern.CASE_INSENSITIVE);
 
     private StuckFamilyPolicy() {
     }
 
     /**
-     * The first callee class with at least {@code threshold} distinct methods flagged "not declared"
-     * across the failure history, or {@code null} if no family is stuck yet.
+     * The first callee class with at least {@code threshold} distinct methods flagged
+     * undeclared/missing across the failure history, or {@code null} if no family is stuck yet.
      */
     static Family detect(List<FailureFingerprint> history, int threshold) {
         if (history == null || threshold <= 0) {
@@ -44,12 +52,8 @@ final class StuckFamilyPolicy {
             if (fingerprint == null || fingerprint.normalizedMessage == null) {
                 continue;
             }
-            Matcher matcher = DAO_NOT_DECLARED.matcher(fingerprint.normalizedMessage);
-            while (matcher.find()) {
-                membersByClass
-                        .computeIfAbsent(matcher.group(1), key -> new LinkedHashSet<>())
-                        .add(matcher.group(2));
-            }
+            collectMembers(DAO_NOT_DECLARED.matcher(fingerprint.normalizedMessage), membersByClass);
+            collectMembers(MISSING_METHOD.matcher(fingerprint.normalizedMessage), membersByClass);
         }
         for (Map.Entry<String, LinkedHashSet<String>> entry : membersByClass.entrySet()) {
             if (entry.getValue().size() >= threshold) {
@@ -57,6 +61,14 @@ final class StuckFamilyPolicy {
             }
         }
         return null;
+    }
+
+    private static void collectMembers(Matcher matcher, Map<String, LinkedHashSet<String>> membersByClass) {
+        while (matcher.find()) {
+            membersByClass
+                    .computeIfAbsent(matcher.group(1), key -> new LinkedHashSet<>())
+                    .add(matcher.group(2));
+        }
     }
 
     /**
