@@ -415,7 +415,7 @@ public class AndroidSourceGuard {
             }
             String variableName = matcher.group(1);
             String fieldName = matcher.group(2);
-            if (isLikelyNestedTypeReference(fieldName)) {
+            if (isLikelyNestedTypeReference(fieldName) || javaSymbols.hasClass(fieldName)) {
                 continue;
             }
             // "this" must resolve to the smallest enclosing class: inner-class constructors
@@ -424,6 +424,9 @@ public class AndroidSourceGuard {
                     ? enclosingClass(spans, matcher.start())
                     : variableTypes.get(variableName);
             if (type == null || !javaSymbols.hasClass(type) || !isLikelyModelType(type)) {
+                continue;
+            }
+            if (inheritsExternalApi(type, javaSymbols)) {
                 continue;
             }
             if (!javaSymbols.hasField(type, fieldName)) {
@@ -443,10 +446,14 @@ public class AndroidSourceGuard {
             if ("class".equals(fieldName)) {
                 continue;
             }
-            if (isLikelyNestedTypeReference(fieldName)) {
+            // A reference to a nested TYPE (Outer.Inner, e.g. BillRecordAdapter.VH) is not a field.
+            if (isLikelyNestedTypeReference(fieldName) || javaSymbols.hasClass(fieldName)) {
                 continue;
             }
             if (!javaSymbols.hasClass(className) || !isLikelyGeneratedApiClass(className)) {
+                continue;
+            }
+            if (inheritsExternalApi(className, javaSymbols)) {
                 continue;
             }
             if (!javaSymbols.hasField(className, fieldName)) {
@@ -540,6 +547,11 @@ public class AndroidSourceGuard {
             }
             List<String> argumentTypes = inferArgumentTypes(splitArguments(matcher.group(3)), variableTypes, currentClass);
             if (isKnownInheritedPlatformMethod(type, methodName, javaSymbols)) {
+                continue;
+            }
+            // A type that extends an external/platform class inherits methods the guard cannot see
+            // (getAdapterPosition, submitList, ...); defer its method checks to the compiler.
+            if (inheritsExternalApi(type, javaSymbols)) {
                 continue;
             }
             if (!javaSymbols.hasMethod(type, methodName)) {
@@ -864,6 +876,25 @@ public class AndroidSourceGuard {
                 value.endsWith("Button") ||
                 value.endsWith("TextView") ||
                 value.endsWith("ImageView"));
+    }
+
+    /**
+     * A generated class whose superclass chain reaches a non-generated (platform/library) type -
+     * e.g. a ViewHolder extends RecyclerView.ViewHolder, an Adapter extends RecyclerView.Adapter -
+     * inherits an API the guard cannot see. Flagging "missing" members on such a type is a false
+     * positive (itemView, getAdapterPosition, submitList, ...), so those checks are deferred to the
+     * real compiler. Constructor checks are unaffected (they concern the class's own constructors).
+     */
+    private boolean inheritsExternalApi(String type, JavaApiSymbols javaSymbols) {
+        String current = javaSymbols.superClassByClass.get(simpleType(type));
+        Set<String> visited = new HashSet<>();
+        while (current != null && !current.isEmpty() && visited.add(current)) {
+            if (!"Object".equals(current) && !javaSymbols.hasClass(current)) {
+                return true;
+            }
+            current = javaSymbols.superClassByClass.get(current);
+        }
+        return false;
     }
 
     private boolean isLikelyGeneratedApiClass(String type) {

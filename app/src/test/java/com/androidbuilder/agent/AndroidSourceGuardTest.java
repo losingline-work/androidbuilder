@@ -341,6 +341,39 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void nestedViewHolderClassAndInheritedMembersAreNotFlagged() throws Exception {
+        // project-81 false positives: VH is a nested class extending RecyclerView.ViewHolder.
+        // BillRecordAdapter.VH (a type), VH.itemView and VH.getAdapterPosition() (inherited) must
+        // not be reported as missing field/method.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/BillRecordAdapter.java",
+                "package com.example;\n"
+                        + "class BillRecordAdapter {\n"
+                        + "    static class VH extends RecyclerView.ViewHolder {\n"
+                        + "        VH(android.view.View v) { super(v); }\n"
+                        + "        void bind() { int p = getAdapterPosition(); android.view.View v = itemView; }\n"
+                        + "    }\n"
+                        + "    BillRecordAdapter.VH make(android.view.View v) { return new BillRecordAdapter.VH(v); }\n"
+                        + "}");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void missingMethodOnPureGeneratedClassStillBlocks() throws Exception {
+        // Guardrail: the external-API deferral must NOT mask a real missing method on a class that
+        // does not extend anything external.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/Money.java",
+                "package com.example;\nclass Money { public String text() { return \"\"; } }");
+        write(root, "app/src/main/java/com/example/HomeFragmentHelper.java",
+                "package com.example;\nclass HomeFragmentHelper { Money money;\n void run() { money.format(1L); } }");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+        assertTrue(error.getMessage().contains("missing method: Money.format"));
+    }
+
+    @Test
     public void recognizesIdsDeclaredViaValuesItemTag() throws Exception {
         // <item type="id" name="X"/> in a values file is a valid R.id source; a Java reference to
         // it must not be blocked as a missing id.
