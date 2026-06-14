@@ -55,6 +55,7 @@ public class MainActivity extends BaseActivity {
             return false;
         });
         findViewById(R.id.newProjectButton).setOnClickListener(v -> showNewProjectDialog());
+        ((TextView) findViewById(R.id.appVersionText)).setText(com.androidbuilder.BuildStamp.text());
         EditText search = findViewById(R.id.searchInput);
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
