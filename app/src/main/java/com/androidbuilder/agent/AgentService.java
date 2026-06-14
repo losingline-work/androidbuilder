@@ -1256,8 +1256,11 @@ public class AgentService {
             StuckFamilyPolicy.Family stuckFamily = StuckFamilyPolicy.detect(failureFingerprints, STUCK_FAMILY_THRESHOLD);
             String effectiveInstruction = instruction;
             if (stuckFamily != null) {
+                // Stage 5: cite the callee's REAL declared methods (from disk + the in-flight draft) so
+                // the model reconciles against the actual API instead of guessing.
+                List<String> declaredMethods = declaredMethodsForClass(sourceDir, previousDraft, stuckFamily.className);
                 effectiveInstruction = LocalGuardInstructionComposer.forPreflightRewrite(
-                        instruction, StuckFamilyPolicy.reconcileDirective(stuckFamily));
+                        instruction, StuckFamilyPolicy.reconcileDirective(stuckFamily, declaredMethods));
                 snapshot = sourceSnapshot(sourceDir, stuckFamily.className);
             }
             String requestMode = scopeExpandedRetryPending
@@ -1600,6 +1603,27 @@ public class AgentService {
         return draft != null
                 && ((draft.operations != null && !draft.operations.isEmpty())
                 || ManifestResumePolicy.hasManifest(draft));
+    }
+
+    /**
+     * Stage 5: the methods the stuck callee class currently declares, resolved from the on-disk tree
+     * plus the in-flight draft (the callee may be a same-task file not yet written to disk). Best-effort
+     * and read-only - used only to enrich the reconcile directive.
+     */
+    private static List<String> declaredMethodsForClass(File sourceDir, TaskOperations draft, String className) {
+        List<String> javaContents = new ArrayList<>();
+        if (draft != null && draft.operations != null) {
+            for (FileOperation operation : draft.operations) {
+                if (operation != null && operation.path != null && operation.path.endsWith(".java")
+                        && operation.content != null && "write".equals(operation.action)) {
+                    javaContents.add(operation.content);
+                }
+            }
+        }
+        SymbolTable table = new AndroidSourceGuard().symbolTableOf(sourceDir, javaContents);
+        List<String> names = new ArrayList<>(table.declaredMethodNames(className));
+        Collections.sort(names);
+        return names;
     }
 
     private static TaskOperations withExecutionSummary(TaskOperations operations, String executionSummary) {

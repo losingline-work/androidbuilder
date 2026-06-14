@@ -76,6 +76,15 @@ final class StuckFamilyPolicy {
      * declares them all and aligns the call-sites together instead of fixing one method per round.
      */
     static String reconcileDirective(Family family) {
+        return reconcileDirective(family, null);
+    }
+
+    /**
+     * @param declaredMethods the callee's REAL currently-declared method names (from the SymbolTable);
+     *     citing them lets the model reuse an existing method instead of adding a near-duplicate - the
+     *     guard's "missing method" verdict omits this, so the model otherwise reconciles blind.
+     */
+    static String reconcileDirective(Family family, List<String> declaredMethods) {
         StringBuilder calls = new StringBuilder();
         for (String member : family.members) {
             if (calls.length() > 0) {
@@ -83,12 +92,24 @@ final class StuckFamilyPolicy {
             }
             calls.append(family.className).append('.').append(member).append("()");
         }
-        return "These calls on " + family.className + " were reported undeclared across multiple attempts: "
+        String base = "These calls on " + family.className + " were reported undeclared across multiple attempts: "
                 + calls + ". Stop fixing one method at a time - that loop never converges. In THIS response, "
                 + "resend " + family.className + ".java declaring every one of those methods with the exact "
                 + "return type and signature each caller uses, AND resend every file that calls " + family.className
                 + " so each call resolves to a declared method. Reconcile the whole " + family.className
                 + " + callers cluster in a single pass.";
+        if (declaredMethods == null || declaredMethods.isEmpty()) {
+            return base;
+        }
+        StringBuilder declared = new StringBuilder();
+        for (String method : declaredMethods) {
+            if (declared.length() > 0) {
+                declared.append(", ");
+            }
+            declared.append(method).append("()");
+        }
+        return base + " " + family.className + " currently declares: " + declared
+                + ". Reuse one of these where it matches a caller's intent; only add a new method when none fits.";
     }
 
     static final class Family {

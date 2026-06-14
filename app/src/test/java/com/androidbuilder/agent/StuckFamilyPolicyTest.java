@@ -3,9 +3,11 @@ package com.androidbuilder.agent;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -83,6 +85,30 @@ public class StuckFamilyPolicyTest {
         assertTrue(directive.contains("TransactionDao.sumExpenseByCategory()"));
         assertTrue(directive.contains("resend TransactionDao.java"));
         assertTrue(directive.contains("single pass"));
+    }
+
+    @Test
+    public void directiveCitesRealDeclaredMethodsWhenKnown() {
+        // Stage 5: when the callee's real declared methods are known, the directive lists them so the
+        // model can reuse an existing one instead of adding a near-duplicate.
+        StuckFamilyPolicy.Family family = new StuckFamilyPolicy.Family(
+                "TransactionRepository", Arrays.asList("sumExpenseByCategory", "sumByTypeInRange"));
+
+        String directive = StuckFamilyPolicy.reconcileDirective(
+                family, Arrays.asList("sumExpenseByCategoryInRange", "listInRange"));
+
+        assertTrue(directive.contains("currently declares: sumExpenseByCategoryInRange(), listInRange()"));
+        assertTrue(directive.contains("Reuse one of these"));
+        // still names the wanted (undeclared) calls
+        assertTrue(directive.contains("TransactionRepository.sumByTypeInRange()"));
+    }
+
+    @Test
+    public void directiveOmitsDeclaredListWhenUnknown() {
+        StuckFamilyPolicy.Family family = new StuckFamilyPolicy.Family("Foo", Arrays.asList("a", "b"));
+        String directive = StuckFamilyPolicy.reconcileDirective(family, null);
+        assertTrue(directive.contains("single pass"));
+        assertFalse(directive.contains("currently declares"));
     }
 
     private static List<FailureFingerprint> history(String... messages) {

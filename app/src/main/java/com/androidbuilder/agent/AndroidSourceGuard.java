@@ -315,8 +315,38 @@ public class AndroidSourceGuard {
         }
     }
 
+    /**
+     * Production accessor: the SymbolTable for the on-disk tree plus in-flight draft .java contents
+     * (path/content pairs not yet written to disk). Used by the convergence repair to cite a callee's
+     * REAL declared methods. Best-effort: a parse failure on one source is skipped, never thrown.
+     */
+    SymbolTable symbolTableOf(File sourceDir, Iterable<String> extraJavaContents) {
+        SymbolTable table = new SymbolTable();
+        try {
+            collectSymbolTable(sourceDir, table);
+        } catch (Exception ignored) {
+            // best-effort
+        }
+        if (extraJavaContents != null) {
+            for (String content : extraJavaContents) {
+                if (content == null || content.trim().isEmpty()) {
+                    continue;
+                }
+                try {
+                    collectSymbolTableFromContent(stripJavaCommentsAndStrings(content), table);
+                } catch (Exception ignored) {
+                    // best-effort
+                }
+            }
+        }
+        return table;
+    }
+
     private void collectSymbolTableFromFile(File file, SymbolTable symbols) throws Exception {
-        String content = stripJavaCommentsAndStrings(FileUtils.readText(file));
+        collectSymbolTableFromContent(stripJavaCommentsAndStrings(FileUtils.readText(file)), symbols);
+    }
+
+    private void collectSymbolTableFromContent(String content, SymbolTable symbols) {
         List<ClassSpan> classSpans = new ArrayList<>();
         Matcher classMatcher = JAVA_CLASS.matcher(content);
         while (classMatcher.find()) {

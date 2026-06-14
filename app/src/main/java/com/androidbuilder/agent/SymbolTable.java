@@ -127,6 +127,12 @@ final class SymbolTable {
         return false;
     }
 
+    /** The distinct method names declared directly on a class (not inherited), for repair hints. */
+    Set<String> declaredMethodNames(String className) {
+        Map<String, List<List<String>>> methods = methodsByClass.get(className);
+        return methods == null ? new HashSet<String>() : methods.keySet();
+    }
+
     List<List<String>> availableConstructors(String className) {
         List<List<String>> constructors = constructorsByClass.get(className);
         if (constructors == null || constructors.isEmpty()) {
