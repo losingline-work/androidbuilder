@@ -100,6 +100,22 @@ public class ProjectLogExportPolicyTest {
         assertTrue(streamed.toString().startsWith("app 制造机项目日志\n记录数：50"));
     }
 
+    @Test
+    public void writeEntryStreamsSuppliedFullBodyNotThePreview() throws Exception {
+        // The log list now holds only truncated previews; the export must stream each record's FULL
+        // body, fetched on demand, via writeHeader + writeEntry(out, entry, fullBody).
+        ProjectLogEntry previewEntry = entry(ProjectLogEntry.Kind.AI, 5, "Cloud model", "metadata", "PREVIEW-ONLY");
+        StringBuilder out = new StringBuilder();
+
+        ProjectLogExportPolicy.writeHeader(out, 1, false, "v0.2.1 · abc1234");
+        ProjectLogExportPolicy.writeEntry(out, previewEntry, "FULL UNTRUNCATED REQUEST/RESPONSE BODY");
+
+        String text = out.toString();
+        assertTrue(text.startsWith("Android Builder Project Logs\nEntries: 1\nBuild: v0.2.1 · abc1234"));
+        assertTrue(text.contains("AI #5\nCloud model\nmetadata\n\nFULL UNTRUNCATED REQUEST/RESPONSE BODY"));
+        assertFalse(text.contains("PREVIEW-ONLY"));
+    }
+
     private static String repeat(String value, int count) {
         StringBuilder builder = new StringBuilder();
         for (int i = 0; i < count; i++) {

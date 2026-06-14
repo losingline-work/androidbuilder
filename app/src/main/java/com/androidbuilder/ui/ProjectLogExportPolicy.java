@@ -58,12 +58,7 @@ final class ProjectLogExportPolicy {
      * the app. Peak memory here is bounded by a single entry, not the sum.
      */
     static void writeProjectLogs(Appendable out, List<ProjectLogEntry> entries, boolean chinese, String buildStamp) throws IOException {
-        int count = entries == null ? 0 : entries.size();
-        out.append(chinese ? "app 制造机项目日志\n记录数：" : "Android Builder Project Logs\nEntries: ")
-                .append(Integer.toString(count));
-        if (buildStamp != null && !buildStamp.trim().isEmpty()) {
-            out.append(chinese ? "\n构建版本：" : "\nBuild: ").append(buildStamp.trim());
-        }
+        writeHeader(out, entries == null ? 0 : entries.size(), chinese, buildStamp);
         if (entries == null) {
             return;
         }
@@ -71,18 +66,37 @@ final class ProjectLogExportPolicy {
             if (entry == null) {
                 continue;
             }
-            out.append("\n\n---\n")
-                    .append(entry.kind.name())
-                    .append(" #")
-                    .append(Long.toString(entry.sourceId))
-                    .append("\n")
-                    .append(nullToEmpty(entry.title))
-                    .append("\n")
-                    .append(nullToEmpty(entry.subtitle))
-                    .append("\n\n")
-                    .append(entry.copyText == null || entry.copyText.trim().isEmpty()
-                            ? nullToEmpty(entry.body) : entry.copyText);
+            writeEntry(out, entry, entry.copyText == null || entry.copyText.trim().isEmpty()
+                    ? entry.body : entry.copyText);
         }
+    }
+
+    /** The export header (record count + build stamp). Pair with {@link #writeEntry} to stream a body
+     * fetched per entry, so a full export never holds every record in memory at once. */
+    static void writeHeader(Appendable out, int count, boolean chinese, String buildStamp) throws IOException {
+        out.append(chinese ? "app 制造机项目日志\n记录数：" : "Android Builder Project Logs\nEntries: ")
+                .append(Integer.toString(count));
+        if (buildStamp != null && !buildStamp.trim().isEmpty()) {
+            out.append(chinese ? "\n构建版本：" : "\nBuild: ").append(buildStamp.trim());
+        }
+    }
+
+    /** One entry block, using the supplied {@code body} (the caller may pass the full, on-demand-fetched
+     * text rather than the entry's possibly-truncated preview body). */
+    static void writeEntry(Appendable out, ProjectLogEntry entry, String body) throws IOException {
+        if (entry == null) {
+            return;
+        }
+        out.append("\n\n---\n")
+                .append(entry.kind.name())
+                .append(" #")
+                .append(Long.toString(entry.sourceId))
+                .append("\n")
+                .append(nullToEmpty(entry.title))
+                .append("\n")
+                .append(nullToEmpty(entry.subtitle))
+                .append("\n\n")
+                .append(nullToEmpty(body));
     }
 
     private static String nullToEmpty(String value) {

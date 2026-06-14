@@ -157,6 +157,30 @@ public class AppRepository {
         return rows;
     }
 
+    /**
+     * Lightweight AI-conversation rows for the log LIST: request/response text is truncated at the SQL
+     * level to {@code previewChars} so a project with hundreds of multi-megabyte records can be listed
+     * without loading every full body into memory (which OOM-crashed the log screen on large projects).
+     * Metadata is kept whole (it is small and the duration summary needs it). Fetch full text on demand
+     * with {@link #getAiConversation(long)}.
+     */
+    public synchronized List<AiConversationRecord> listAiConversationPreviews(long projectId, int previewChars) {
+        int limit = Math.max(1, previewChars);
+        String[] columns = {
+                "id", "project_id", "source", "title",
+                "substr(request_text, 1, " + limit + ") AS request_text",
+                "substr(response_text, 1, " + limit + ") AS response_text",
+                "status", "metadata", "linked_build_job_id", "created_at"
+        };
+        List<AiConversationRecord> rows = new ArrayList<>();
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_AI_CONVERSATIONS, columns, "project_id = ?", new String[]{String.valueOf(projectId)}, null, null, "created_at ASC")) {
+            while (cursor.moveToNext()) {
+                rows.add(readAiConversation(cursor));
+            }
+        }
+        return rows;
+    }
+
     public synchronized void deleteMessage(long messageId) {
         ChatMessage message = getMessage(messageId);
         helper.getWritableDatabase().delete(DatabaseHelper.TABLE_MESSAGES, "id = ?", new String[]{String.valueOf(messageId)});
@@ -598,9 +622,12 @@ public class AppRepository {
         }
     }
 
-    private AiConversationRecord getAiConversation(long id) {
+    /** The full AI-conversation record (untruncated request/response), or null if it is gone. */
+    public synchronized AiConversationRecord getAiConversation(long id) {
         try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_AI_CONVERSATIONS, null, "id = ?", new String[]{String.valueOf(id)}, null, null, null)) {
-            cursor.moveToFirst();
+            if (!cursor.moveToFirst()) {
+                return null;
+            }
             return readAiConversation(cursor);
         }
     }

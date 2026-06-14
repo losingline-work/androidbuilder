@@ -71,6 +71,11 @@ import java.util.Set;
 public class ProjectActivity extends BaseActivity {
     private static final long MAX_PREVIEW_BYTES = 80 * 1024;
     private static final int LOG_RESULT_PREVIEW_LIMIT = 420;
+    // The log LIST only ever shows a ~420-char preview, so loading every AI record's full multi-MB
+    // request/response into memory just to truncate it OOM-crashed the log screen on large projects.
+    // We load this many chars per record for the list and fetch the full text on demand for the
+    // detail view / copy / export.
+    private static final int AI_LOG_PREVIEW_CHARS = 2000;
     private static final int REQUEST_SAVE_LOG_FILE = 7101;
 
     private AppRepository repository;
@@ -185,7 +190,7 @@ public class ProjectActivity extends BaseActivity {
         logResultList.setOnItemClickListener((parent, view, position, id) -> showLogEntry(logResults.get(position)));
         logResultList.setOnItemLongClickListener((parent, view, position, id) -> {
             ProjectLogEntry entry = logResults.get(position);
-            copyText(entry.title.isEmpty() ? getString(R.string.log_query) : entry.title, entry.copyText);
+            copyText(entry.title.isEmpty() ? getString(R.string.log_query) : entry.title, entryFullText(entry));
             return true;
         });
         logSearchInput.addTextChangedListener(new TextWatcher() {
@@ -612,8 +617,13 @@ public class ProjectActivity extends BaseActivity {
         // Stream the log to disk; a large project's logs are tens of megabytes and building them as
         // one in-memory String OOM-crashed the export.
         try (Writer writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(exportFile), StandardCharsets.UTF_8))) {
-            ProjectLogExportPolicy.writeProjectLogs(
-                    writer, logResults, AppSettings.isChinese(this), com.androidbuilder.BuildStamp.text());
+            ProjectLogExportPolicy.writeHeader(
+                    writer, logResults.size(), AppSettings.isChinese(this), com.androidbuilder.BuildStamp.text());
+            // Fetch each AI record's full body on demand so the export stays complete while peak memory
+            // is bounded by a single record - the list itself holds only truncated previews now.
+            for (ProjectLogEntry entry : logResults) {
+                ProjectLogExportPolicy.writeEntry(writer, entry, entryFullText(entry));
+            }
         }
         return exportFile;
     }
@@ -625,7 +635,9 @@ public class ProjectActivity extends BaseActivity {
     private void rebuildLogEntries() {
         aiLogRecords.clear();
         logEntries.clear();
-        aiLogRecords.addAll(repository.listAiConversations(projectId));
+        // Previews only - the full request/response is fetched on demand (see entryFullText). The
+        // duration summary keeps working because it reads only metadata, which is loaded whole.
+        aiLogRecords.addAll(repository.listAiConversationPreviews(projectId, AI_LOG_PREVIEW_CHARS));
         for (AiConversationRecord record : aiLogRecords) {
             logEntries.add(aiConversationLogEntry(record));
         }
@@ -702,6 +714,27 @@ public class ProjectActivity extends BaseActivity {
                 record.status);
     }
 
+    /**
+     * The full export/copy text for a log entry. For AI entries the list holds only a truncated
+     * preview, so fetch the untruncated record on demand; messages are already whole. Peak memory is
+     * one record, never the whole project's logs.
+     */
+    private String entryFullText(ProjectLogEntry entry) {
+        if (entry == null) {
+            return "";
+        }
+        ProjectLogEntry source = entry;
+        if (entry.kind == ProjectLogEntry.Kind.AI) {
+            AiConversationRecord full = repository.getAiConversation(entry.sourceId);
+            if (full != null) {
+                source = aiConversationLogEntry(full);
+            }
+        }
+        return source.copyText == null || source.copyText.trim().isEmpty()
+                ? (source.body == null ? "" : source.body)
+                : source.copyText;
+    }
+
     private String joinNonEmpty(String... values) {
         StringBuilder result = new StringBuilder();
         if (values == null) {
@@ -721,8 +754,9 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void showLogEntry(ProjectLogEntry entry) {
+        String fullText = entryFullText(entry);
         TextView preview = new TextView(this);
-        preview.setText(entry.copyText);
+        preview.setText(fullText);
         preview.setTextColor(getResources().getColor(R.color.ink));
         preview.setTextSize(entry.kind == ProjectLogEntry.Kind.AI ? 12 : 14);
         if (entry.kind == ProjectLogEntry.Kind.AI) {
@@ -733,7 +767,7 @@ public class ProjectActivity extends BaseActivity {
         new MaterialAlertDialogBuilder(this)
                 .setTitle(entry.title.isEmpty() ? getString(R.string.view_log_record) : entry.title)
                 .setView(preview)
-                .setPositiveButton(R.string.copy_message, (dialog, which) -> copyText(entry.title, entry.copyText))
+                .setPositiveButton(R.string.copy_message, (dialog, which) -> copyText(entry.title, fullText))
                 .setNegativeButton(R.string.close, null)
                 .show();
     }
@@ -2050,7 +2084,7 @@ public class ProjectActivity extends BaseActivity {
             ((TextView) view.findViewById(R.id.logEntryMeta)).setText(logEntryMeta(entry));
             ((TextView) view.findViewById(R.id.logEntryPreview)).setText(ProjectLogQueryPolicy.preview(entry.body, LOG_RESULT_PREVIEW_LIMIT));
             View copyButton = view.findViewById(R.id.logEntryCopyButton);
-            copyButton.setOnClickListener(v -> copyText(entry.title, entry.copyText));
+            copyButton.setOnClickListener(v -> copyText(entry.title, entryFullText(entry)));
             return view;
         }
 
