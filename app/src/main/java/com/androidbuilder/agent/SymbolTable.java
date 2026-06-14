@@ -133,6 +133,12 @@ final class SymbolTable {
         return methods == null ? new HashSet<String>() : methods.keySet();
     }
 
+    /** The constructor parameter-type lists actually declared on a class (empty if none / unknown). */
+    List<List<String>> declaredConstructors(String className) {
+        List<List<String>> ctors = constructorsByClass.get(className);
+        return ctors == null ? new ArrayList<List<String>>() : ctors;
+    }
+
     List<List<String>> availableConstructors(String className) {
         List<List<String>> constructors = constructorsByClass.get(className);
         if (constructors == null || constructors.isEmpty()) {

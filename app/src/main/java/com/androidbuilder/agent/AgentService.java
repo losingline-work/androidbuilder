@@ -1570,6 +1570,17 @@ public class AgentService {
                 retryContext = mergeRetryContext(retryContext,
                         rememberFailure(failureFingerprints, FailureFingerprintPolicy.fromPolicyError(policyError.getMessage())));
                 String policyInstruction = PolicyRewriteInstruction.create(instruction, policyError.getMessage(), attempt + 1);
+                // Inject the REAL API of every class the merge guard named, built from disk + the
+                // in-flight draft. The guard says "missing method: RecurringDao.findById" but not what
+                // RecurringDao actually declares; the model keeps re-inventing the same call from the
+                // digest it has demonstrably ignored. Listing the authoritative members lets it
+                // reconcile against the truth. Advisory only - the merge guard stays the authority.
+                String calleeApi = CalleeApiHintPolicy.hint(
+                        policyError.getMessage(),
+                        new AndroidSourceGuard().symbolTableOf(sourceDir, draftJavaContents(previousDraft)));
+                if (!calleeApi.isEmpty()) {
+                    policyInstruction = policyInstruction + "\n\n" + calleeApi;
+                }
                 LocalGuardResult rewriteHint = rewritePolicyFailureWithLocalRules(projectId, linkedBuildJobId, policyError.getMessage(), chinese);
                 appendLocalGuardLog(logs, chinese ? "本地规则策略错误提示" : "Local rule policy-error hint", rewriteHint);
                 instruction = rewriteHint.usable && rewriteHint.decision == LocalGuardResult.Decision.REWRITE
@@ -1611,6 +1622,14 @@ public class AgentService {
      * and read-only - used only to enrich the reconcile directive.
      */
     private static List<String> declaredMethodsForClass(File sourceDir, TaskOperations draft, String className) {
+        SymbolTable table = new AndroidSourceGuard().symbolTableOf(sourceDir, draftJavaContents(draft));
+        List<String> names = new ArrayList<>(table.declaredMethodNames(className));
+        Collections.sort(names);
+        return names;
+    }
+
+    /** The .java write contents of a draft, for building a SymbolTable over disk + in-flight work. */
+    private static List<String> draftJavaContents(TaskOperations draft) {
         List<String> javaContents = new ArrayList<>();
         if (draft != null && draft.operations != null) {
             for (FileOperation operation : draft.operations) {
@@ -1620,10 +1639,7 @@ public class AgentService {
                 }
             }
         }
-        SymbolTable table = new AndroidSourceGuard().symbolTableOf(sourceDir, javaContents);
-        List<String> names = new ArrayList<>(table.declaredMethodNames(className));
-        Collections.sort(names);
-        return names;
+        return javaContents;
     }
 
     private static TaskOperations withExecutionSummary(TaskOperations operations, String executionSummary) {
