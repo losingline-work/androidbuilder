@@ -9,6 +9,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -398,6 +399,68 @@ public class AndroidSourceGuardTest {
                         + "}");
 
         new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void argMismatchDefersWhenDeclaredParamIsLibrarySupertype() throws Exception {
+        // project-9 false positive: ChartConfig.apply(Context, Chart) called with PieChart/BarChart.
+        // PieChart IS-A Chart (MPAndroidChart), so it compiles; but the guard can't see library
+        // hierarchies, so it must defer the arg check rather than assert a mismatch.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/ChartConfig.java",
+                "package com.example;\nclass ChartConfig { void apply(Context c, Chart chart) {} }");
+        write(root, "app/src/main/java/com/example/CategoryPieBuilder.java",
+                "package com.example;\n"
+                        + "class CategoryPieBuilder {\n"
+                        + "    void build(Context c, PieChart pie) {\n"
+                        + "        ChartConfig cfg = new ChartConfig();\n"
+                        + "        cfg.apply(c, pie);\n"
+                        + "    }\n"
+                        + "}");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void argMismatchOnGeneratedParamTypeStillBlocks() throws Exception {
+        // Guardrail: the library-type deferral must NOT mask a mismatch where the declared param is a
+        // generated class the guard CAN resolve.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/Money.java", "package com.example;\nclass Money {}");
+        write(root, "app/src/main/java/com/example/Account.java", "package com.example;\nclass Account {}");
+        write(root, "app/src/main/java/com/example/Calc.java",
+                "package com.example;\nclass Calc { void apply(Account a) {} }");
+        write(root, "app/src/main/java/com/example/Repo.java",
+                "package com.example;\n"
+                        + "class Repo {\n"
+                        + "    Calc calc;\n"
+                        + "    void run(Money m) { calc.apply(m); }\n"
+                        + "}");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+        assertTrue(error.getMessage().contains("method argument mismatch: Calc.apply"));
+    }
+
+    @Test
+    public void newExpressionsAreNotCountedAsDeclaredMethods() throws Exception {
+        // project-9: the method parser counted `new ContentValues()`, `throw new IllegalArgumentException`,
+        // `return new Record()` as RecordDao "methods", polluting the digest/hint injected into the model.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/RecordDao.java",
+                "package com.example;\n"
+                        + "class RecordDao {\n"
+                        + "    long insert() { ContentValues v = new ContentValues(); return 0L; }\n"
+                        + "    void bad() { throw new IllegalArgumentException(\"x\"); }\n"
+                        + "    Record find() { return new Record(); }\n"
+                        + "    long countByCategory() { return 0L; }\n"
+                        + "}");
+        SymbolTable table = new AndroidSourceGuard().collectSymbolTableForTest(root);
+
+        assertTrue(table.hasMethod("RecordDao", "insert"));
+        assertTrue(table.hasMethod("RecordDao", "countByCategory"));
+        assertFalse(table.hasMethod("RecordDao", "ContentValues"));
+        assertFalse(table.hasMethod("RecordDao", "IllegalArgumentException"));
+        assertFalse(table.hasMethod("RecordDao", "Record"));
     }
 
     @Test

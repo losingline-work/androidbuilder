@@ -132,6 +132,11 @@ final class JavaApiDigest {
             if (owner.name.equals(methodName) || isKeyword(methodName)) {
                 continue;
             }
+            // Skip `new Type(` / `throw new Type(` / `return new Type(`: the regex captures the
+            // constructed type name as a method, polluting the digest the model reads with type names.
+            if (precededByNew(content, methodMatcher.start(3))) {
+                continue;
+            }
             addUnique(owner.methods, simpleType(methodMatcher.group(2)) + " " + methodName + "(" + parameterTypes(methodMatcher.group(4)) + ");");
         }
 
@@ -308,6 +313,20 @@ final class JavaApiDigest {
 
     private static boolean isPrivate(String access) {
         return "private".equals(access);
+    }
+
+    /** True when the identifier starting at {@code nameStart} is immediately preceded by the keyword
+     *  {@code new} (so a "method" match is really a constructor call). */
+    private static boolean precededByNew(String content, int nameStart) {
+        int cursor = nameStart - 1;
+        while (cursor >= 0 && Character.isWhitespace(content.charAt(cursor))) {
+            cursor--;
+        }
+        int end = cursor + 1;
+        while (cursor >= 0 && Character.isJavaIdentifierPart(content.charAt(cursor))) {
+            cursor--;
+        }
+        return end > 0 && "new".equals(content.substring(cursor + 1, end));
     }
 
     private static boolean isKeyword(String value) {

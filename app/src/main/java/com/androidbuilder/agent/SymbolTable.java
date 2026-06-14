@@ -241,7 +241,24 @@ final class SymbolTable {
             }
             parent = superClassByClass.get(parent);
         }
+        // The EXPECTED (declared parameter) type is a library/platform type the guard cannot resolve -
+        // not a generated class, not a primitive/box, not Object/Context. The guard has no view of its
+        // class hierarchy, so it cannot prove `actual` is NOT a subtype (e.g. PieChart passed where the
+        // declared param is MPAndroidChart's Chart: the code compiles, but superClassByClass has no
+        // PieChart->Chart edge). Defer to javac rather than asserting a false mismatch - mirrors the
+        // receiver-side inheritsExternalApi deferral. Zero-bypass: javac remains the authority for
+        // library types, so a genuine library mismatch is still caught at compile time.
+        if (!isResolvableType(expected)) {
+            return true;
+        }
         return false;
+    }
+
+    /** Whether the guard can actually reason about a type: a generated class, a primitive/box, or a
+     *  special-cased platform type. Anything else (Chart, Cursor, View, ...) is a library type it
+     *  cannot resolve, so an argument check against it must defer to the compiler. */
+    private boolean isResolvableType(String type) {
+        return hasClass(type) || !unbox(type).isEmpty() || "Object".equals(type) || "Context".equals(type);
     }
 
     private boolean isPrimitiveOrBoxedAssignable(String actual, String expected) {

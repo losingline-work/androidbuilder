@@ -394,6 +394,13 @@ public class AndroidSourceGuard {
             if (owner.equals(methodName) || isJavaKeyword(methodName)) {
                 continue;
             }
+            // The method-declaration regex also matches `new Type(`, `throw new Type(`, `return new
+            // Type(` - capturing the CONSTRUCTED type name as if it were a declared method (the
+            // constructor loop guards this; the method loop forgot to). Skip new-expressions so a
+            // class's method set is not polluted with type names like ContentValues / Record.
+            if (isNewExpressionReference(content, methodMatcher.start(1))) {
+                continue;
+            }
             symbols.addMethod(owner, methodName, parseParameterTypes(methodMatcher.group(2)));
         }
     }

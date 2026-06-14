@@ -133,9 +133,25 @@ final class JavaApiReconciler {
                     || "catch".equals(name) || className.equals(name)) {
                 continue;
             }
+            // Skip `new Type(` etc.: the constructed type name is not a declared method.
+            if (precededByNew(content, methodMatcher.start(1))) {
+                continue;
+            }
             allDeclaredMethods.add(name);
             methods.computeIfAbsent(name, k -> new HashSet<>()).add(paramArity(methodMatcher.group(2)));
         }
+    }
+
+    private static boolean precededByNew(String content, int nameStart) {
+        int cursor = nameStart - 1;
+        while (cursor >= 0 && Character.isWhitespace(content.charAt(cursor))) {
+            cursor--;
+        }
+        int end = cursor + 1;
+        while (cursor >= 0 && Character.isJavaIdentifierPart(content.charAt(cursor))) {
+            cursor--;
+        }
+        return end > 0 && "new".equals(content.substring(cursor + 1, end));
     }
 
     private static int paramArity(String params) {
