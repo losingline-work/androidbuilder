@@ -137,6 +137,38 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 FileUtils.appendText(log, "Dependency resolution OK.\n");
             }
 
+            // Compile-driven type validation: run the REAL Java compiler (javac with the full resolved
+            // classpath, no dexing) as a fast gate before the full build. This is the type authority -
+            // the merge guard now enforces only policy, so cross-file type errors surface HERE with
+            // precise file:line javac diagnostics (driving repair) instead of being approximated, and
+            // often mis-judged, by the regex guard. Gradle caches the compiled classes, so the
+            // following assembleDebug does not recompile.
+            List<String> compileArgs = new ArrayList<>();
+            compileArgs.add(gradle.getAbsolutePath());
+            if (initScript != null) {
+                compileArgs.add("--init-script");
+                compileArgs.add(initScript.getAbsolutePath());
+            }
+            compileArgs.add("--no-daemon");
+            compileArgs.add("--console=plain");
+            compileArgs.add("compileDebugJavaWithJavac");
+            FileUtils.appendText(log, localized("用真实编译器做类型检查（compileDebugJavaWithJavac）...\n",
+                    "Type-checking with the real compiler (compileDebugJavaWithJavac)...\n"));
+            ProcessResult compile = runCommand(sourceWorkDir, log, listener, job, compileArgs.toArray(new String[0]));
+            if (compile.exitCode != 0) {
+                boolean timeout = compile.exitCode == 124;
+                String error = summarizeFailure(timeout
+                        ? localized("Java 编译超时", "java compile timed out")
+                        : localized("java_compile_failed：跨文件类型错误，见诊断", "java_compile_failed: cross-file type errors - see javac diagnostics"),
+                        compile);
+                FileUtils.appendText(log, error + "\n");
+                repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "java_compile_failed", log.getAbsolutePath(), null, error, job.retryCount);
+                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                listener.onJobChanged(job.projectId, job.id);
+                return;
+            }
+            FileUtils.appendText(log, localized("Java 编译通过。\n", "Java compile OK.\n"));
+
             List<String> buildArgs = new ArrayList<>();
             buildArgs.add(gradle.getAbsolutePath());
             if (initScript != null) {

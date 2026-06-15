@@ -20,6 +20,7 @@ public class FileOperationsWriter {
     private final DependencyGuard dependencyGuard;
     private final AndroidSourceGuard sourceGuard = new AndroidSourceGuard();
     private final boolean stubReconciliation;
+    private final boolean compileDrivenTypes;
     private List<String> lastStubs = new ArrayList<>();
 
     public FileOperationsWriter() {
@@ -27,12 +28,13 @@ public class FileOperationsWriter {
     }
 
     public FileOperationsWriter(DependencyGuard dependencyGuard) {
-        this(dependencyGuard, true);
+        this(dependencyGuard, true, true);
     }
 
-    public FileOperationsWriter(DependencyGuard dependencyGuard, boolean stubReconciliation) {
+    public FileOperationsWriter(DependencyGuard dependencyGuard, boolean stubReconciliation, boolean compileDrivenTypes) {
         this.dependencyGuard = dependencyGuard;
         this.stubReconciliation = stubReconciliation;
+        this.compileDrivenTypes = compileDrivenTypes;
     }
 
     /** The stub members written by the last successful {@link #apply} (each "Class.member -> type"),
@@ -66,7 +68,14 @@ public class FileOperationsWriter {
             lastStubs = stubReconciliation ? StubReconciler.reconcile(tempDir, sourceGuard) : new ArrayList<String>();
             validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {
-                sourceGuard.validate(tempDir);
+                // Compile-driven mode: enforce only POLICY at merge; cross-file TYPE errors are caught
+                // precisely by the real javac at build time (no regex-guard false positives blocking
+                // valid code). Full type-check mode remains available for callers that opt out.
+                if (compileDrivenTypes) {
+                    sourceGuard.validatePolicyOnly(tempDir);
+                } else {
+                    sourceGuard.validate(tempDir);
+                }
             } catch (Exception error) {
                 if (error instanceof IOException) {
                     throw (IOException) error;
