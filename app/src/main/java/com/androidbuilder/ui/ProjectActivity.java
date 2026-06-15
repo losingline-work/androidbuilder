@@ -112,6 +112,11 @@ public class ProjectActivity extends BaseActivity {
     private View fileDrawerScrim;
     private boolean busy;
     private boolean autoExecutingPlan;
+    private static final int MAX_AUTO_REPAIR_ROUNDS = 6;
+    private int autoRepairRounds;
+    private long autoLoopHandledBuildJobId = -1;
+    private boolean autoLoopEnabled;
+    private String lastFailureSignature = "";
     private long repairSourceBuildJobId = -1;
     private long operationStartedAt;
     private long activeTaskStartedAt;
@@ -934,6 +939,13 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void buildLatest() {
+        // A user-initiated build starts a fresh auto-repair budget.
+        autoRepairRounds = 0;
+        lastFailureSignature = "";
+        startBuild();
+    }
+
+    private void startBuild() {
         if (!hasSourceFiles()) {
             Toast.makeText(this, R.string.generate_source_first, Toast.LENGTH_SHORT).show();
             return;
@@ -949,6 +961,9 @@ public class ProjectActivity extends BaseActivity {
         }
         BuildJobRecord job = repository.createBuildJob(projectId);
         BuildBackend backend = BuildBackendFactory.create(this, repository, buildServer);
+        // Only the embedded runtime drives the local auto-repair loop; the external Termux backend
+        // reports its result asynchronously over its own callback channel.
+        autoLoopEnabled = !BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id());
         repairSourceBuildJobId = -1;
         operationStartedAt = System.currentTimeMillis();
         setOperationStatus(getString(BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started));
@@ -956,9 +971,94 @@ public class ProjectActivity extends BaseActivity {
         repository.updateBuildJob(job.id, "building", backend.id() + "_start", logsPath, null, null, 0);
         repository.addMessage(projectId, "assistant", getString(BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started), job.id);
         BuildJobRecord buildJob = repository.getBuildJob(job.id);
-        backend.build(buildJob == null ? job : buildJob, (p, j) -> runOnUiThread(this::refresh));
+        backend.build(buildJob == null ? job : buildJob, (pid, jid) -> runOnUiThread(() -> onBuildJobChanged(jid)));
         refresh();
         Toast.makeText(this, BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started, Toast.LENGTH_SHORT).show();
+    }
+
+    /**
+     * Called on every build job change. When a build reaches a terminal state, automate the otherwise
+     * manual Repair-then-Build loop: a model-repairable failure is repaired from the log and rebuilt,
+     * bounded by {@link #MAX_AUTO_REPAIR_ROUNDS} so a model that cannot fix the error stops and hands
+     * back to the manual Repair button.
+     */
+    private void onBuildJobChanged(long jobId) {
+        refresh();
+        if (!autoLoopEnabled || jobId == autoLoopHandledBuildJobId) {
+            return;
+        }
+        BuildJobRecord job = repository.getBuildJob(jobId);
+        if (job == null) {
+            return;
+        }
+        boolean repairable = "failed".equals(job.status) && isRepairableFailure(job);
+        if ("failed".equals(job.status)) {
+            // Stop early if the last repair changed nothing the compiler noticed (same diagnostics),
+            // instead of burning the remaining rounds on the same wall.
+            String signature = "";
+            try {
+                signature = RepairLoopStallPolicy.signature(FileUtils.readText(new File(job.logsPath)));
+            } catch (Exception ignored) {
+            }
+            if (RepairLoopStallPolicy.stalled(lastFailureSignature, signature)) {
+                repairable = false;
+            }
+            lastFailureSignature = signature;
+        }
+        AutoRepairLoopPolicy.Decision decision =
+                AutoRepairLoopPolicy.decide(job.status, repairable, autoRepairRounds, MAX_AUTO_REPAIR_ROUNDS);
+        switch (decision) {
+            case IN_PROGRESS:
+                return;
+            case SUCCEEDED:
+            case GIVE_UP:
+                autoLoopHandledBuildJobId = jobId;
+                autoRepairRounds = 0;
+                lastFailureSignature = "";
+                return;
+            case AUTO_REPAIR:
+                autoLoopHandledBuildJobId = jobId;
+                autoRepairRounds++;
+                autoRepairFrom(job);
+                return;
+            default:
+                return;
+        }
+    }
+
+    /** Repair the source from a failed build's log, then automatically rebuild (the auto-loop). */
+    private void autoRepairFrom(BuildJobRecord failed) {
+        String logs;
+        try {
+            logs = ProjectBuildFailureContextPolicy.previewText(FileUtils.readText(new File(failed.logsPath)));
+        } catch (Exception error) {
+            autoRepairRounds = 0;
+            return;
+        }
+        repairSourceBuildJobId = failed.id;
+        setBusy(true);
+        setOperationStatus(getString(R.string.repair_build_started));
+        refresh();
+        agentService.repairBuildAsync(projectId, logs, new AgentService.Callback() {
+            @Override
+            public void onComplete(BuildJobRecord job) {
+                runOnUiThread(() -> {
+                    setBusy(false);
+                    refresh();
+                    startBuild();
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                runOnUiThread(() -> {
+                    setBusy(false);
+                    autoRepairRounds = 0;
+                    refresh();
+                    Toast.makeText(ProjectActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
     }
 
     private boolean hasSourceFiles() {

@@ -65,6 +65,43 @@ public class FileOperationsWriterTest {
     }
 
     @Test
+    public void editAppliesPreciselyToAnExistingOnDiskFile() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+        write(root, "app/src/main/java/com/example/MainActivity.java",
+                "package com.example;\nclass MainActivity { int count = 1; }\n");
+
+        TaskOperations operations = new TaskOperations("tweak", Collections.singletonList(
+                new FileOperation("edit", "app/src/main/java/com/example/MainActivity.java", "",
+                        "int count = 1;", "int count = 2;")));
+
+        new FileOperationsWriter().apply(root, operations);
+
+        assertEquals("package com.example;\nclass MainActivity { int count = 2; }\n",
+                FileUtils.readText(new File(root, "app/src/main/java/com/example/MainActivity.java")));
+    }
+
+    @Test
+    public void editFailsClearlyWhenTargetTextIsMissing() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+        write(root, "app/src/main/java/com/example/MainActivity.java",
+                "package com.example;\nclass MainActivity { int count = 1; }\n");
+
+        TaskOperations operations = new TaskOperations("tweak", Collections.singletonList(
+                new FileOperation("edit", "app/src/main/java/com/example/MainActivity.java", "",
+                        "int absent = 9;", "int absent = 0;")));
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                new FileOperationsWriter().apply(root, operations));
+
+        assertEquals("edit target not found in app/src/main/java/com/example/MainActivity.java (the file may have changed); resend the full file with action write",
+                error.getMessage());
+        assertEquals("package com.example;\nclass MainActivity { int count = 1; }\n",
+                FileUtils.readText(new File(root, "app/src/main/java/com/example/MainActivity.java")));
+    }
+
+    @Test
     public void fillsMissingDbHelperColumnConstantsBeforeSourceGuardRuns() throws Exception {
         File root = temporaryFolder.newFolder("source");
         writeRequiredProjectFiles(root);

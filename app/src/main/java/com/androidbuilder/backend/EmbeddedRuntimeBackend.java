@@ -3,6 +3,8 @@ package com.androidbuilder.backend;
 import android.content.Context;
 
 import com.androidbuilder.agent.BuildLogContextExtractor;
+import com.androidbuilder.agent.SyntheticAndroidSymbols;
+import com.androidbuilder.agent.TierCompileVerdict;
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.embeddedruntime.EmbeddedRuntime;
 import com.androidbuilder.model.BuildJobRecord;
@@ -135,6 +137,22 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                     return;
                 }
                 FileUtils.appendText(log, "Dependency resolution OK.\n");
+            }
+
+            // Fast tier type-check: a direct javac over the app sources + synthetic R/BuildConfig against
+            // the just-resolved classpath, before the slower Gradle compile task. Fails high-confidence
+            // cross-file type errors in seconds (feeding the auto-repair loop), and defers anything else
+            // to the authoritative Gradle gate below. Self-skips when no classpath was dumped.
+            String tierDiagnostics = tierTypeCheck(sourceWorkDir, log, listener, job);
+            if (tierDiagnostics != null) {
+                String error = localized("java_compile_failed：分层类型检查发现跨文件类型错误，见诊断\n",
+                        "java_compile_failed: tier type-check found cross-file type errors - see diagnostics\n")
+                        + tierDiagnostics;
+                FileUtils.appendText(log, error + "\n");
+                repository.updateBuildJob(job.id, "failed", "java_compile_failed", log.getAbsolutePath(), null, error, job.retryCount);
+                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                listener.onJobChanged(job.projectId, job.id);
+                return;
             }
 
             // Compile-driven type validation: run the REAL Java compiler (javac with the full resolved
@@ -302,6 +320,13 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                         "            def configuration = project.configurations.findByName('debugRuntimeClasspath')\n" +
                         "            if (configuration != null) {\n" +
                         "                configuration.resolvedConfiguration.rethrowFailure()\n" +
+                        // Dump the resolved third-party classpath so a direct-javac tier type-check can run
+                        // without paying Gradle's compile-task overhead. Best-effort: a write failure never
+                        // breaks resolution.
+                        "                try {\n" +
+                        "                    def files = configuration.resolvedConfiguration.resolvedArtifacts.collect { it.file.absolutePath }\n" +
+                        "                    new File(project.rootProject.projectDir, 'androidbuilder-classpath.txt').text = files.join('\\n')\n" +
+                        "                } catch (Throwable ignored) {}\n" +
                         "            }\n" +
                         "        }\n" +
                         "    }\n" +
@@ -683,6 +708,100 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             }
             listener.onJobChanged(job.projectId, job.id);
             return new ProcessResult(exitCode, head.toString().trim(), failureContext.toString().trim(), tail.toString().trim());
+        }
+    }
+
+    /**
+     * Fast direct-javac type check (see call site). Best-effort: any setup gap returns null = "did not
+     * run", and a failure that is not a clear cross-file error also returns null so the Gradle gate stays
+     * the authority. The javac binary is invoked via {@code sh -c} so it is exec'd (it is an ELF binary,
+     * not a script like the gradle launcher), and an @argfile carries the long classpath/source list.
+     *
+     * @return cross-file javac diagnostics worth failing the build fast on, or null otherwise.
+     */
+    private String tierTypeCheck(File sourceWorkDir, File log, Listener listener, BuildJobRecord job) {
+        try {
+            File classpathFile = new File(sourceWorkDir, "androidbuilder-classpath.txt");
+            File javac = new File(runtime.bin(), "javac");
+            File androidJar = new File(runtime.androidSdk(), "platforms/android-" + runtime.compileSdkApi() + "/android.jar");
+            File javaRoot = new File(sourceWorkDir, "app/src/main/java");
+            if (!classpathFile.isFile() || !javac.exists() || !androidJar.isFile() || !javaRoot.isDirectory()) {
+                return null;
+            }
+            SyntheticAndroidSymbols symbols = SyntheticAndroidSymbols.from(sourceWorkDir);
+            File genDir = new File(sourceWorkDir, "build/androidbuilder-tier-gen");
+            FileUtils.deleteRecursively(genDir);
+            File genPkgDir = symbols.packageName.isEmpty() ? genDir : new File(genDir, symbols.packageName.replace('.', '/'));
+            FileUtils.writeText(new File(genPkgDir, "R.java"), symbols.rJavaSource);
+            FileUtils.writeText(new File(genPkgDir, "BuildConfig.java"), symbols.buildConfigSource);
+
+            List<String> sources = new ArrayList<>();
+            collectJavaFiles(javaRoot, sources);
+            collectJavaFiles(genDir, sources);
+            if (sources.isEmpty()) {
+                return null;
+            }
+
+            StringBuilder classpath = new StringBuilder(androidJar.getAbsolutePath());
+            for (String entry : FileUtils.readText(classpathFile).split("\\R")) {
+                if (!entry.trim().isEmpty()) {
+                    classpath.append(File.pathSeparatorChar).append(entry.trim());
+                }
+            }
+            File outDir = new File(sourceWorkDir, "build/androidbuilder-tier-out");
+            FileUtils.deleteRecursively(outDir);
+            outDir.mkdirs();
+
+            StringBuilder args = new StringBuilder();
+            args.append("-source 8 -target 8 -encoding UTF-8 -proc:none -nowarn -Xlint:none\n");
+            args.append("-classpath \"").append(classpath).append("\"\n");
+            args.append("-d \"").append(outDir.getAbsolutePath()).append("\"\n");
+            for (String source : sources) {
+                args.append('"').append(source).append("\"\n");
+            }
+            File argsFile = new File(sourceWorkDir, "androidbuilder-tier-javac.args");
+            FileUtils.writeText(argsFile, args.toString());
+
+            File tierLog = new File(sourceWorkDir, "androidbuilder-tier.log");
+            FileUtils.writeText(tierLog, "");
+            FileUtils.appendText(log, localized("分层快速类型检查（直驱 javac）...\n", "Fast tier type-check (direct javac)...\n"));
+            String javacCommand = "\"" + javac.getAbsolutePath() + "\" @\"" + argsFile.getAbsolutePath() + "\"";
+            ProcessResult result = runCommand(sourceWorkDir, tierLog, listener, job, "-c", javacCommand);
+            if (result.exitCode == 0) {
+                FileUtils.appendText(log, localized("分层类型检查通过。\n", "Tier type-check OK.\n"));
+                return null;
+            }
+            String output = (result.head == null ? "" : result.head) + "\n"
+                    + (result.context == null ? "" : result.context) + "\n"
+                    + (result.tail == null ? "" : result.tail);
+            if (TierCompileVerdict.isActionableCrossFileError(output)) {
+                String diagnostics = BuildLogContextExtractor.javaCompileDiagnostics(output, 8000);
+                return diagnostics.isEmpty() ? output.trim() : diagnostics;
+            }
+            FileUtils.appendText(log, localized("分层类型检查结果不确定，交由 Gradle 编译门判定。\n",
+                    "Tier type-check inconclusive; deferring to the Gradle compile gate.\n"));
+            return null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void collectJavaFiles(File dir, List<String> out) {
+        if (dir == null || !dir.exists()) {
+            return;
+        }
+        if (dir.isFile()) {
+            if (dir.getName().endsWith(".java")) {
+                out.add(dir.getAbsolutePath());
+            }
+            return;
+        }
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            collectJavaFiles(child, out);
         }
     }
 

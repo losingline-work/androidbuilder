@@ -104,6 +104,13 @@ public class FileOperationsWriter {
                 FileUtils.deleteRecursively(target);
             } else if ("write".equals(operation.action)) {
                 FileUtils.writeText(target, operation.content);
+            } else if ("edit".equals(operation.action)) {
+                // Precise in-place edit against the on-disk file (the file already exists from a prior
+                // task or from earlier in this same operation batch, since operations apply in order).
+                // EditOperationPolicy enforces a unique find-match so an edit can never land in the
+                // wrong place; a missing/ambiguous target throws a clear "resend the full file" message.
+                String existing = target.isFile() ? FileUtils.readText(target) : "";
+                FileUtils.writeText(target, EditOperationPolicy.apply(existing, operation.find, operation.replace, canonicalPath));
             } else {
                 throw new IllegalArgumentException("Unsupported file operation action: " + operation.action);
             }

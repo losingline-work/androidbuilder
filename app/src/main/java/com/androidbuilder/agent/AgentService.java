@@ -2513,6 +2513,8 @@ public class AgentService {
         }
         if (chinese) {
             return "根据下面的构建失败日志修复当前源码。只做最小必要改动，不要重新生成整个项目，不要删除无关功能。"
+                    + "优先使用 edit 操作（find/replace）精确修改 diagnostics 指向的那几行：find 必须是当前文件中唯一出现的片段，包含足够上下文以保证唯一；只有当文件确实需要整体重写时才用 write。"
+                    + "javac 通常已经打印了真实的期望签名（required:/found:，或 symbol/location），请逐字采用它来修正调用，而不是凭空猜测。"
                     + "如果错误来自依赖策略，请改用当前依赖模式允许的 Android SDK/Java/XML 实现。"
                     + "如果日志包含 Could not find <group:artifact:version>，说明该依赖在配置仓库中不存在：删除它，或替换为已验证依赖（" + DependencyCatalog.coordinatesSummary() + "）。"
                     + "如果是 javac 编译错误，必须逐条处理所有 diagnostics，不要只修第一条；"
@@ -2526,6 +2528,8 @@ public class AgentService {
                     + "所有 R.* 代码引用和 XML 中的 @mipmap/@style/@drawable/@string/@color/@layout 引用都必须有对应资源，缺失时补资源或改用已有资源。\n\n构建日志：\n" + log;
         }
         return "Repair the current source based on the build failure log below. Make the smallest necessary changes, do not regenerate the whole project, and do not remove unrelated features. "
+                + "Prefer edit operations (find/replace) that change only the exact lines named by the diagnostics: find must be a snippet that occurs exactly once in the current file, with enough surrounding context to be unique; only use a full write when the file genuinely needs a wholesale rewrite. "
+                + "javac usually already prints the real expected signature (required:/found:, or the symbol and its location); use it verbatim to fix the call instead of guessing. "
                 + "If the log contains 'Could not find <group:artifact:version>', that dependency does not exist in the configured repositories: remove it or replace it with a verified catalog library (" + DependencyCatalog.coordinatesSummary() + "). "
                 + "If the error comes from dependency policy, rewrite the implementation using Android SDK/Java/XML APIs allowed by the active dependency mode. "
                 + "If these are javac diagnostics, fix every diagnostic, not just the first one. Every method call must have an existing declaration with matching argument count and types. Every direct DTO/model field access must actually exist and be visible; for example item.total requires CategorySum to declare total or expose a matching getter. Use getters/setters or adjust DTO field visibility consistently. When changing an Activity or Adapter, update the corresponding DAO, model, and helper APIs in the same repair. "
