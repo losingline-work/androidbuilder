@@ -1535,6 +1535,14 @@ public class AgentService {
                 if (deleteDraftOnApplySuccess) {
                     deleteTaskDraftSafely(projectId, taskId);
                 }
+                List<String> stubs = operationsWriter.lastStubReconciliations();
+                if (stubs != null && !stubs.isEmpty()) {
+                    // Surface the unfinished-behaviour debt: the build succeeds, but these members are
+                    // stubs that throw until filled (greppable via // ANDROIDBUILDER-STUB in the source).
+                    narrate(callTag, logs, (chinese ? "🩹 自动补桩 " : "🩹 auto-stubbed ") + stubs.size()
+                            + (chinese ? " 处以让其编译通过（待回填）：" : " member(s) so it compiles (TODO): ")
+                            + String.join("; ", stubs));
+                }
                 recordAttemptTermination(logs, journal, attempt, "apply", "success");
                 String executionSummary = (chinese ? "执行流摘要：" : "Execution flow: ")
                         + journal.renderSummary("success");

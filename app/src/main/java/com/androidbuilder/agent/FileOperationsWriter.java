@@ -6,6 +6,8 @@ import com.androidbuilder.util.FileUtils;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 public class FileOperationsWriter {
     private static final String[] REQUIRED_PROJECT_FILES = {
@@ -17,13 +19,26 @@ public class FileOperationsWriter {
 
     private final DependencyGuard dependencyGuard;
     private final AndroidSourceGuard sourceGuard = new AndroidSourceGuard();
+    private final boolean stubReconciliation;
+    private List<String> lastStubs = new ArrayList<>();
 
     public FileOperationsWriter() {
         this(null);
     }
 
     public FileOperationsWriter(DependencyGuard dependencyGuard) {
+        this(dependencyGuard, true);
+    }
+
+    public FileOperationsWriter(DependencyGuard dependencyGuard, boolean stubReconciliation) {
         this.dependencyGuard = dependencyGuard;
+        this.stubReconciliation = stubReconciliation;
+    }
+
+    /** The stub members written by the last successful {@link #apply} (each "Class.member -> type"),
+     *  so the caller can surface the unfinished-behaviour debt to the user. */
+    public List<String> lastStubReconciliations() {
+        return lastStubs;
     }
 
     public void apply(File sourceDir, TaskOperations taskOperations) throws IOException {
@@ -45,6 +60,10 @@ public class FileOperationsWriter {
             applyToDirectory(tempDir, taskOperations);
             DatabaseContractNormalizer.normalize(tempDir);
             JavaApiReconciler.reconcile(tempDir);
+            // Last resort: splice compiling stubs for genuinely-missing members the model never closed,
+            // so the tree builds instead of looping. Runs BEFORE the guard, which still validates the
+            // result - a stub never bypasses the guard.
+            lastStubs = stubReconciliation ? StubReconciler.reconcile(tempDir, sourceGuard) : new ArrayList<String>();
             validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {
                 sourceGuard.validate(tempDir);

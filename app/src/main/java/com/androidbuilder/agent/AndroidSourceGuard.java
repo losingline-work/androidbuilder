@@ -42,6 +42,12 @@ public class AndroidSourceGuard {
     private static final Pattern JAVA_NEW_EXPRESSION = Pattern.compile("\\bnew\\s+([A-Z][A-Za-z0-9_]*)\\s*\\(([^()]*)\\)");
 
     public void validate(File sourceDir) throws Exception {
+        throwIfViolations(collectViolations(sourceDir));
+    }
+
+    /** The guard's violation list for a tree, WITHOUT throwing - lets the stub reconciler see exactly
+     *  what would be rejected and splice the missing members deterministically. */
+    List<String> collectViolations(File sourceDir) throws Exception {
         ResourceSymbols symbols = new ResourceSymbols();
         collectXmlIds(sourceDir, symbols.ids);
         File resDir = new File(sourceDir, "app/src/main/res");
@@ -54,7 +60,7 @@ public class AndroidSourceGuard {
         String gradleText = readTextIfExists(new File(sourceDir, "app/build.gradle"));
         List<String> violations = new ArrayList<>();
         validateFiles(sourceDir, symbols, javaSymbols, gradleText, violations);
-        throwIfViolations(violations);
+        return violations;
     }
 
     /** Test seam: the SymbolTable the guard builds from the on-disk .java tree. */
