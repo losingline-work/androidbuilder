@@ -42,12 +42,27 @@ public class AndroidSourceGuard {
     private static final Pattern JAVA_NEW_EXPRESSION = Pattern.compile("\\bnew\\s+([A-Z][A-Za-z0-9_]*)\\s*\\(([^()]*)\\)");
 
     public void validate(File sourceDir) throws Exception {
-        throwIfViolations(collectViolations(sourceDir));
+        throwIfViolations(collectViolations(sourceDir, true));
+    }
+
+    /**
+     * Validate POLICY only - Kotlin/lambda/DataBinding bans, R.* resource existence, synthetic-view
+     * access - and DEFER all cross-file Java type checking (method/field/constructor/argument
+     * resolution) to the real compiler at build time. Used by compile-driven validation: the regex
+     * guard cannot reliably reimplement the type system (the dominant source of false positives), so
+     * type errors are caught precisely by javac instead.
+     */
+    public void validatePolicyOnly(File sourceDir) throws Exception {
+        throwIfViolations(collectViolations(sourceDir, false));
+    }
+
+    List<String> collectViolations(File sourceDir) throws Exception {
+        return collectViolations(sourceDir, true);
     }
 
     /** The guard's violation list for a tree, WITHOUT throwing - lets the stub reconciler see exactly
-     *  what would be rejected and splice the missing members deterministically. */
-    List<String> collectViolations(File sourceDir) throws Exception {
+     *  what would be rejected. {@code includeTypeChecks=false} runs policy checks only. */
+    List<String> collectViolations(File sourceDir, boolean includeTypeChecks) throws Exception {
         ResourceSymbols symbols = new ResourceSymbols();
         collectXmlIds(sourceDir, symbols.ids);
         File resDir = new File(sourceDir, "app/src/main/res");
@@ -59,7 +74,7 @@ public class AndroidSourceGuard {
         collectSymbolTable(sourceDir, javaSymbols);
         String gradleText = readTextIfExists(new File(sourceDir, "app/build.gradle"));
         List<String> violations = new ArrayList<>();
-        validateFiles(sourceDir, symbols, javaSymbols, gradleText, violations);
+        validateFiles(sourceDir, symbols, javaSymbols, gradleText, violations, includeTypeChecks);
         return violations;
     }
 
@@ -241,7 +256,7 @@ public class AndroidSourceGuard {
         }
     }
 
-    private void validateFiles(File file, ResourceSymbols symbols, SymbolTable javaSymbols, String gradleText, List<String> violations) throws Exception {
+    private void validateFiles(File file, ResourceSymbols symbols, SymbolTable javaSymbols, String gradleText, List<String> violations, boolean includeTypeChecks) throws Exception {
         if (file == null || !file.exists()) {
             return;
         }
@@ -251,7 +266,7 @@ public class AndroidSourceGuard {
                 addViolation(violations, "Generated source policy blocked Kotlin source file: " + name + ". Use Java source files (.java) only.");
             }
             if (name.endsWith(".java")) {
-                validateSourceFile(file, symbols, javaSymbols, violations);
+                validateSourceFile(file, symbols, javaSymbols, violations, includeTypeChecks);
             } else if (name.endsWith(".xml")) {
                 validateXmlFile(file, symbols, gradleText, violations);
             }
@@ -262,11 +277,11 @@ public class AndroidSourceGuard {
             return;
         }
         for (File child : children) {
-            validateFiles(child, symbols, javaSymbols, gradleText, violations);
+            validateFiles(child, symbols, javaSymbols, gradleText, violations, includeTypeChecks);
         }
     }
 
-    private void validateSourceFile(File file, ResourceSymbols symbols, SymbolTable javaSymbols, List<String> violations) throws Exception {
+    private void validateSourceFile(File file, ResourceSymbols symbols, SymbolTable javaSymbols, List<String> violations, boolean includeTypeChecks) throws Exception {
         String content = FileUtils.readText(file);
         String scannable = JavaApiDigest.stripJavaCommentsAndStrings(content);
         if (scannable.contains("kotlinx.android.synthetic")) {
@@ -294,6 +309,11 @@ public class AndroidSourceGuard {
         }
         if (!syntheticViewViolation && scannable.contains("->")) {
             addViolation(violations, "Generated source policy blocked Java lambda syntax in " + file.getName() + ". Use anonymous listener classes instead of ->.");
+        }
+        if (!includeTypeChecks) {
+            // Compile-driven mode: cross-file type resolution is the real compiler's job (javac at
+            // build time), not the regex guard's. Everything above is policy and stays.
+            return;
         }
         String sanitized = stripJavaCommentsAndStrings(content);
         validateClassFieldAccess(file, sanitized, javaSymbols, violations);

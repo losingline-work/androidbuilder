@@ -402,6 +402,28 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void policyOnlyValidationDefersTypeCheckingButKeepsPolicy() throws Exception {
+        // Compile-driven mode: a real cross-file type error (a missing method) is NOT blocked at merge
+        // (the compiler will catch it), but a POLICY violation (a Java lambda) still is.
+        File typeError = temporaryFolder.newFolder("type");
+        write(typeError, "app/src/main/java/com/example/Money.java", "package com.example;\nclass Money {}");
+        write(typeError, "app/src/main/java/com/example/Repo.java",
+                "package com.example;\nclass Repo { Money money; void run() { money.missingMethod(); } }");
+        new AndroidSourceGuard().validatePolicyOnly(typeError); // type error deferred - does NOT throw
+
+        IllegalArgumentException stillBlocked = assertThrows(IllegalArgumentException.class,
+                () -> new AndroidSourceGuard().validate(typeError));
+        assertTrue(stillBlocked.getMessage().contains("missing method"));
+
+        File policyError = temporaryFolder.newFolder("policy");
+        write(policyError, "app/src/main/java/com/example/MainActivity.java",
+                "package com.example;\nclass MainActivity { void bind(View b) { b.setOnClickListener(v -> open()); } void open() {} }");
+        IllegalArgumentException lambda = assertThrows(IllegalArgumentException.class,
+                () -> new AndroidSourceGuard().validatePolicyOnly(policyError));
+        assertTrue(lambda.getMessage().contains("Java lambda syntax"));
+    }
+
+    @Test
     public void argMismatchDefersWhenDeclaredParamIsLibrarySupertype() throws Exception {
         // project-9 false positive: ChartConfig.apply(Context, Chart) called with PieChart/BarChart.
         // PieChart IS-A Chart (MPAndroidChart), so it compiles; but the guard can't see library
