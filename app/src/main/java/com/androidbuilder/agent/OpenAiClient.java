@@ -136,7 +136,7 @@ public class OpenAiClient {
         return completeChat(
                 taskManifestSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
-                taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, ""),
+                taskOperationsUserPrompt(plan, taskTitle, instructionWithGraphicsPolicy(taskInstruction, chinese), sourceSnapshot, recentRequirements, retryContext, ""),
                 0.1,
                 chinese,
                 CODING_READ_TIMEOUT_MS,
@@ -164,7 +164,7 @@ public class OpenAiClient {
         return completeChat(
                 taskOperationsSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
-                taskOperationsUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, previousDraftSection),
+                taskOperationsUserPrompt(plan, taskTitle, instructionWithGraphicsPolicy(taskInstruction, chinese), sourceSnapshot, recentRequirements, retryContext, previousDraftSection),
                 0.2,
                 chinese,
                 CODING_READ_TIMEOUT_MS,
@@ -177,7 +177,7 @@ public class OpenAiClient {
         return completeChat(
                 taskOperationsSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
-                taskOperationsBatchUserPrompt(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, batchFiles, completedFilesContext),
+                taskOperationsBatchUserPrompt(plan, taskTitle, instructionWithGraphicsPolicy(taskInstruction, chinese), sourceSnapshot, recentRequirements, retryContext, batchFiles, completedFilesContext),
                 0.2,
                 chinese,
                 CODING_READ_TIMEOUT_MS,
@@ -827,6 +827,13 @@ public class OpenAiClient {
                 "Do not combine Gradle configuration with Java source wiring in the same task. " +
                 "If the approved plan requires a version upgrade, include an implementation task that updates app/build.gradle versionCode and versionName according to that plan. " +
                 "Do not include build or install tasks. " + language;
+    }
+
+    /** Appends the graphics restriction to the task instruction (the user prompt) for restricted models;
+     *  a weak model follows the concrete task instruction more reliably than the system prompt. */
+    private String instructionWithGraphicsPolicy(String taskInstruction, boolean chinese) {
+        return (taskInstruction == null ? "" : taskInstruction)
+                + graphicsRestrictionClause(currentProvider(), currentModel(), chinese);
     }
 
     private String taskOperationsSystemPrompt(boolean chinese) {

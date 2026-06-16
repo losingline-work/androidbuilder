@@ -181,7 +181,7 @@ final class ImplementationTaskNormalizer {
 
     private static ProjectTaskRecord drawableLayoutTask() {
         return task("drawable and layout XML",
-                "Write drawable XML resources such as vector icons, selectors, and shape drawables together with related layout XML such as activity_main.xml. Include every drawable referenced by these layouts and declare all view ids used by later Java wiring. Do not write Gradle files, values XML, menu XML, or Java files.");
+                "Write drawable XML resources (shape drawables, color selectors, and simple icons) together with related layout XML such as activity_main.xml. Prefer built-in @android:drawable icons and simple <shape> drawables over hand-drawn vector paths. Include every drawable referenced by these layouts and declare all view ids used by later Java wiring. Do not write Gradle files, values XML, menu XML, or Java files.");
     }
 
     private static ProjectTaskRecord task(String title, String instruction) {
