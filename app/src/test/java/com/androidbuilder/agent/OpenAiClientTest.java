@@ -101,6 +101,22 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void restrictedModelGetsGraphicsRestrictionClause() {
+        String clause = OpenAiClient.graphicsRestrictionClause(
+                OpenAiClient.PROVIDER_DEEPSEEK, OpenAiClient.DEEPSEEK_MODEL_FLASH, false);
+        assertTrue(clause.contains("android:pathData"));
+        assertTrue(clause.toLowerCase(java.util.Locale.ROOT).contains("shape"));
+    }
+
+    @Test
+    public void graphicsCapableModelGetsNoRestrictionClause() {
+        assertEquals("", OpenAiClient.graphicsRestrictionClause(
+                OpenAiClient.PROVIDER_OPENAI, OpenAiClient.OPENAI_MODEL_GPT_55, false));
+        assertEquals("", OpenAiClient.graphicsRestrictionClause(
+                OpenAiClient.PROVIDER_OPENAI, OpenAiClient.OPENAI_MODEL_GPT_55, true));
+    }
+
+    @Test
     public void requestBodyCapsOutputTokensSoLargeResponsesDoNotTruncate() throws Exception {
         JSONObject body = OpenAiClient.chatRequestBodyForTest(
                 OpenAiClient.PROVIDER_DEEPSEEK,

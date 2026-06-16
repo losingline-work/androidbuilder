@@ -830,11 +830,13 @@ public class OpenAiClient {
     }
 
     private String taskOperationsSystemPrompt(boolean chinese) {
-        return taskOperationsSystemPromptText(chinese, dependencyPolicyPrompt());
+        return taskOperationsSystemPromptText(chinese, dependencyPolicyPrompt())
+                + graphicsRestrictionClause(currentProvider(), currentModel(), chinese);
     }
 
     private String taskManifestSystemPrompt(boolean chinese) {
-        return taskManifestSystemPromptText(chinese);
+        return taskManifestSystemPromptText(chinese)
+                + graphicsRestrictionClause(currentProvider(), currentModel(), chinese);
     }
 
     static String taskManifestSystemPromptForTest(boolean chinese) {
@@ -843,6 +845,26 @@ public class OpenAiClient {
 
     static String taskOperationsSystemPromptForTest(boolean chinese) {
         return taskOperationsSystemPromptText(chinese, "Dependency mode is offline safe.");
+    }
+
+    /**
+     * When the model is not graphics-capable, forbid blind hand-authored vector drawables and steer to
+     * simple, reliable, low-token alternatives. Empty for allow-listed multimodal models.
+     */
+    static String graphicsRestrictionClause(String provider, String model, boolean chinese) {
+        if (ModelGraphicsCapabilityPolicy.supportsGraphicsGeneration(provider, model)) {
+            return "";
+        }
+        if (chinese) {
+            return " 本模型为纯文本模型（非多模态），无法预览渲染结果：禁止手写 <vector> 矢量图（android:pathData）——盲画既不准又浪费输出。"
+                    + "即使任务说明提到 vector icon，也改用以下方式（按优先级）：(1) 系统内置 drawable，如 @android:drawable/ic_menu_add、ic_input_add、ic_menu_search 等；"
+                    + "(2) 简单 <shape> drawable（rectangle/oval + solid/gradient 颜色 + corners）用于背景、分隔线、按钮/卡片底；(3) 实在需要图标处用纯色 <shape> 占位。"
+                    + "绝不输出复杂 android:pathData，每个 drawable 控制在数行内。";
+        }
+        return " This is a text-only (non-multimodal) model that cannot preview rendered output: do NOT hand-author <vector> drawables (android:pathData) — drawing blind is both wrong and wasteful. "
+                + "Even if a task says \"vector icon\", use instead, in order: (1) built-in framework drawables like @android:drawable/ic_menu_add, ic_input_add, ic_menu_search; "
+                + "(2) simple <shape> drawables (rectangle/oval, solid/gradient color, corners) for backgrounds, dividers, button/card surfaces; (3) a plain colored <shape> placeholder where a decorative icon would go. "
+                + "Never emit complex android:pathData, and keep each drawable a few lines.";
     }
 
     static String taskOperationsUserPromptForTest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext) {
