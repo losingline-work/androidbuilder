@@ -541,6 +541,18 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void explicitNullContentDeltasDoNotPolluteAnswerWithLiteralNull() throws Exception {
+        // Providers send content:null while streaming reasoning-only deltas; org.json's optString turns
+        // JSONObject.NULL into the literal string "null", which used to corrupt the answer.
+        String sse = "data: {\"choices\":[{\"delta\":{\"content\":null,\"reasoning_content\":\"thinking\"}}]}\n"
+                + "data: {\"choices\":[{\"delta\":{\"content\":null}}]}\n"
+                + "data: {\"choices\":[{\"delta\":{\"content\":\"# Plan\"}}]}\n"
+                + "data: [DONE]\n";
+
+        assertEquals("# Plan", OpenAiClient.readChatContentForTest(sse));
+    }
+
+    @Test
     public void rejectsMiniMaxBaseRespErrorsEvenWhenHttpSucceeded() throws Exception {
         JSONObject response = new JSONObject()
                 .put("choices", new org.json.JSONArray())

@@ -394,8 +394,16 @@ public class OpenAiClient {
                             delta = choice.optJSONObject("message");
                         }
                         if (delta != null) {
-                            answer.append(delta.optString("content", ""));
-                            reasoningChars += delta.optString("reasoning_content", "").length();
+                            // Guard against explicit JSON null: org.json's optString returns the literal
+                            // string "null" (not the fallback) for a value of JSONObject.NULL, which a
+                            // provider sends for content during reasoning-only deltas. Appending that
+                            // pollutes the answer with runs of "null" (seen corrupting generated plans).
+                            if (!delta.isNull("content")) {
+                                answer.append(delta.optString("content", ""));
+                            }
+                            if (!delta.isNull("reasoning_content")) {
+                                reasoningChars += delta.optString("reasoning_content", "").length();
+                            }
                         }
                     }
                 } catch (Exception ignored) {
