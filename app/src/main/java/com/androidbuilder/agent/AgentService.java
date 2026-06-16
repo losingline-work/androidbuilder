@@ -1279,7 +1279,7 @@ public class AgentService {
             TaskOperations generatedOperations;
             TaskOperations batchedDraftForResume = null;
             try {
-                if (shouldUseBatchedGeneration(previousDraft, attemptCorrectionMode)) {
+                if (shouldUseBatchedGeneration(previousDraft, attemptCorrectionMode, taskTitle)) {
                     generatedOperations = createTaskOperationsInBatches(
                             projectId,
                             linkedBuildJobId,
@@ -1608,11 +1608,18 @@ public class AgentService {
         throw lastPolicyError == null ? new IllegalStateException(finalFailure) : lastPolicyError;
     }
 
-    private boolean shouldUseBatchedGeneration(TaskOperations previousDraft, boolean correctionMode) {
+    private boolean shouldUseBatchedGeneration(TaskOperations previousDraft, boolean correctionMode, String taskTitle) {
         if (!OpenAiClient.batchedGenerationEnabled(context.getSharedPreferences(OpenAiClient.PREFS, Context.MODE_PRIVATE))) {
             return false;
         }
         if (ManifestResumePolicy.shouldResume(previousDraft)) {
+            return true;
+        }
+        // High-volume canned phases (all drawables+layouts, the whole values set, the whole Java wiring
+        // layer) overflow a single response's output budget and truncate mid-array; always batch them so
+        // no single request is oversized, even on a correction/retry pass that would otherwise fall back
+        // to one giant request.
+        if (HighVolumeTaskPolicy.isHighVolume(taskTitle)) {
             return true;
         }
         return previousDraft == null && !correctionMode;
