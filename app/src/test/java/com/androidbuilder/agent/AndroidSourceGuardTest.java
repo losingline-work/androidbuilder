@@ -31,6 +31,33 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void allowsColorSelectorFileReferences() throws Exception {
+        // A res/color/*.xml ColorStateList selector is a valid @color/ target, just like a drawable file.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/color/bottom_nav_item_state.xml",
+                "<selector xmlns:android=\"http://schemas.android.com/apk/res/android\">"
+                        + "<item android:color=\"#FFEF5350\"/></selector>");
+        write(root, "app/src/main/res/layout/activity_main.xml",
+                "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" "
+                        + "android:textColor=\"@color/bottom_nav_item_state\" />");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
+    public void stillBlocksGenuinelyMissingColorReferences() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/layout/activity_main.xml",
+                "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" "
+                        + "android:textColor=\"@color/not_declared_anywhere\" />");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> new AndroidSourceGuard().validate(root));
+
+        assertTrue(error.getMessage().contains("missing XML resource reference: @color/not_declared_anywhere"));
+    }
+
+    @Test
     public void blocksBareCamelCaseViewIdAccess() throws Exception {
         File root = temporaryFolder.newFolder("source");
         write(root, "app/src/main/res/layout/activity_main.xml",

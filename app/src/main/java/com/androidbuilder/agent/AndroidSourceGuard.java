@@ -69,6 +69,10 @@ public class AndroidSourceGuard {
         collectNamedXmlFiles(resDir, "layout", symbols.layouts);
         collectResourceFileNames(resDir, "drawable", symbols.drawables);
         collectResourceFileNames(resDir, "mipmap", symbols.mipmaps);
+        // File-based color resources (res/color/*.xml ColorStateList selectors) are valid @color/ targets
+        // just like drawables; without this a layout/values reference to a selector file is a false
+        // "missing @color" rejection that loops the task to exhaustion.
+        collectResourceFileNames(resDir, "color", symbols.colors);
         collectValueResources(resDir, symbols);
         SymbolTable javaSymbols = new SymbolTable();
         collectSymbolTable(sourceDir, javaSymbols);
