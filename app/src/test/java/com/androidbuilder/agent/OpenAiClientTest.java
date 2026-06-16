@@ -101,6 +101,20 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void requestBodyCapsOutputTokensSoLargeResponsesDoNotTruncate() throws Exception {
+        JSONObject body = OpenAiClient.chatRequestBodyForTest(
+                OpenAiClient.PROVIDER_DEEPSEEK,
+                "deepseek-v4-flash",
+                "system",
+                Collections.emptyList(),
+                "latest",
+                0.2,
+                true);
+
+        assertEquals(OpenAiClient.MAX_OUTPUT_TOKENS, body.getInt("max_tokens"));
+    }
+
+    @Test
     public void nonOpenAiModelsKeepConfiguredTemperature() throws Exception {
         JSONObject body = OpenAiClient.chatRequestBodyForTest(
                 OpenAiClient.PROVIDER_DEEPSEEK,

@@ -286,10 +286,18 @@ public class OpenAiClient {
         throw new IllegalStateException(chinese ? "模型请求失败，请重试。" : "Model request failed. Please retry.");
     }
 
+    // Cap the response so a large generation actually fits. Left unset, OpenAI-compatible providers fall
+    // back to a small default (~4K tokens), which truncated big task responses mid-array ("Unterminated
+    // array") and looped the task to exhaustion. 8192 is the standard max output for the supported models
+    // (DeepSeek 8K; OpenAI/MiniMax allow more), so it raises the budget without exceeding any model's
+    // limit, and also bounds runaway repetition.
+    static final int MAX_OUTPUT_TOKENS = 8192;
+
     private static JSONObject chatRequestBody(String provider, String model, String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean thinkingEnabled) throws Exception {
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("stream", true);
+        body.put("max_tokens", MAX_OUTPUT_TOKENS);
         if (!usesDefaultSamplingParameters(provider, model)) {
             body.put("temperature", temperature);
         }
