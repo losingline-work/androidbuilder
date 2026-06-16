@@ -902,7 +902,7 @@ public class OpenAiClient {
         String contractSection = contractContext.isEmpty()
                 ? ""
                 : "\n\n" + contractContext;
-        return "Approved engineering plan:\n\n" + plan
+        return "Approved engineering plan:\n\n" + PlanContentSanitizer.clean(plan)
                 + requirementsSection
                 + retrySection
                 + draftSection
