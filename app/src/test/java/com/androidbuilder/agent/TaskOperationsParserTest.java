@@ -110,6 +110,28 @@ public class TaskOperationsParserTest {
     }
 
     @Test
+    public void fromJson_salvagesCompleteOperationsFromTruncatedResponse() throws Exception {
+        // An oversized response cut off mid-array ("Unterminated array") must not discard the whole
+        // batch: the complete files before the cut are recovered so partial progress survives.
+        String truncated = "{\"summary\":\"big drawable+layout batch\",\"operations\":["
+                + "{\"action\":\"write\",\"path\":\"app/src/main/res/drawable/ic_a.xml\",\"content\":\"<vector/>\"},"
+                + "{\"action\":\"write\",\"path\":\"app/src/main/res/drawable/ic_b.xml\",\"content\":\"<vector/>\"},"
+                + "{\"action\":\"write\",\"path\":\"app/src/main/res/layout/activity_main.xml\",\"content\":\"<Linear";
+
+        TaskOperations operations = TaskOperationsParser.fromJson(truncated);
+
+        assertEquals(2, operations.operations.size());
+        assertEquals("app/src/main/res/drawable/ic_a.xml", operations.operations.get(0).path);
+        assertEquals("app/src/main/res/drawable/ic_b.xml", operations.operations.get(1).path);
+    }
+
+    @Test
+    public void fromJson_stillThrowsWhenNothingSalvageable() {
+        assertThrows(IllegalArgumentException.class,
+                () -> TaskOperationsParser.fromJson("not json at all, no operations here"));
+    }
+
+    @Test
     public void completedOperationsReturnsOnlyFullyClosedOperationObjects() {
         String partial = "{\"summary\":\"x\",\"operations\":["
                 + "{\"action\":\"write\",\"path\":\"app/src/main/java/A.java\",\"content\":\"class A { String json() { return \\\"{done}\\\"; } }\"},"

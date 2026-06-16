@@ -106,21 +106,25 @@ public final class TaskOperationsParser {
     }
 
     private static TaskOperations fromLenientJson(String jsonText, Exception parseError) throws Exception {
-        if (!QUOTED_OPERATION_OBJECT_PATTERN.matcher(jsonText).find()) {
-            throw parseException(parseError);
+        if (QUOTED_OPERATION_OBJECT_PATTERN.matcher(jsonText).find()) {
+            List<JSONObject> operationObjects = operationObjectsFromMalformedArray(jsonText);
+            List<FileOperation> operations = new ArrayList<>();
+            for (JSONObject operationObject : operationObjects) {
+                operations.add(operationFromJson(operationObject));
+            }
+            if (!operations.isEmpty()) {
+                return new TaskOperations(summaryFromText(jsonText), operations);
+            }
         }
-        List<JSONObject> operationObjects = operationObjectsFromMalformedArray(jsonText);
-        if (operationObjects.isEmpty()) {
-            throw parseException(parseError);
+        // Defense in depth: salvage the operations that arrived before a truncation point (the common
+        // "Unterminated array" when an oversized response is cut off). Returning the complete files lets
+        // partial progress survive and the correction pass fill the rest, instead of discarding the whole
+        // batch and looping to retry-exhaustion.
+        List<FileOperation> salvaged = completedOperations(jsonText);
+        if (!salvaged.isEmpty()) {
+            return new TaskOperations(summaryFromText(jsonText), salvaged);
         }
-        List<FileOperation> operations = new ArrayList<>();
-        for (JSONObject operationObject : operationObjects) {
-            operations.add(operationFromJson(operationObject));
-        }
-        if (operations.isEmpty()) {
-            throw new IllegalArgumentException("Task operation list is empty.");
-        }
-        return new TaskOperations(summaryFromText(jsonText), operations);
+        throw parseException(parseError);
     }
 
     private static IllegalArgumentException parseException(Exception parseError) {
