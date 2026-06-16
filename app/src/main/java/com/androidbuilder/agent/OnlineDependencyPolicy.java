@@ -29,7 +29,13 @@ public final class OnlineDependencyPolicy {
             "org.apache.commons",
             "commons-io",
             "commons-codec",
-            "joda-time"
+            "joda-time",
+            // Standard JUnit 4 test dependency (testImplementation): every Android template ships it and
+            // the prompts tell the model to keep it, but it was not approved, so a task that added it
+            // looped on rejection. It is test-scoped and never affects the assembled APK. AndroidX Test
+            // and Espresso are already covered by the androidx group.
+            "junit",
+            "org.junit"
     );
 
     // Blocked even under a trusted group: these need Kotlin, the Compose plugin, or annotation processors,

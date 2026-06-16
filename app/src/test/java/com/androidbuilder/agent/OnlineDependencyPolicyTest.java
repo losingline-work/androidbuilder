@@ -30,6 +30,13 @@ public class OnlineDependencyPolicyTest {
     }
 
     @Test
+    public void standardTestDependenciesAreApproved() {
+        assertTrue(OnlineDependencyPolicy.isApproved("junit", "junit", "4.13.2"));
+        assertTrue(OnlineDependencyPolicy.isApproved("androidx.test.ext", "junit", "1.2.1"));
+        assertTrue(OnlineDependencyPolicy.isApproved("androidx.test.espresso", "espresso-core", "3.6.1"));
+    }
+
+    @Test
     public void untrustedGroupsRejected() {
         // Untrusted group, not cataloged.
         assertFalse(OnlineDependencyPolicy.isApproved("com.jakewharton.timber", "timber", "5.0.1"));
