@@ -31,6 +31,21 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void policyOnlyValidationDefersMissingResourceExistenceToAapt() throws Exception {
+        // Root-fix: the merge-time policy gate no longer adjudicates resource existence (a regex can
+        // never know app + library + framework resources); aapt is the authority at build. The full
+        // validate() path keeps the check.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/layout/activity_main.xml",
+                "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" "
+                        + "android:textColor=\"@color/not_declared_anywhere\" />");
+
+        new AndroidSourceGuard().validatePolicyOnly(root);
+
+        assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+    }
+
+    @Test
     public void allowsMaterialLibraryStyleReferences() throws Exception {
         // Widget.Material3.* styles are provided by the Material dependency, not declared by the app.
         File root = temporaryFolder.newFolder("source");

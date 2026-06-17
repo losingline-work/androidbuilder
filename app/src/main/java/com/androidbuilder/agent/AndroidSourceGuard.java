@@ -272,7 +272,7 @@ public class AndroidSourceGuard {
             if (name.endsWith(".java")) {
                 validateSourceFile(file, symbols, javaSymbols, violations, includeTypeChecks);
             } else if (name.endsWith(".xml")) {
-                validateXmlFile(file, symbols, gradleText, violations);
+                validateXmlFile(file, symbols, gradleText, violations, includeTypeChecks);
             }
             return;
         }
@@ -1038,15 +1038,22 @@ public class AndroidSourceGuard {
         return builder.toString();
     }
 
-    private void validateXmlFile(File file, ResourceSymbols symbols, String gradleText, List<String> violations) throws Exception {
+    private void validateXmlFile(File file, ResourceSymbols symbols, String gradleText, List<String> violations, boolean includeTypeChecks) throws Exception {
         String content = FileUtils.readText(file);
-        Matcher matcher = XML_RESOURCE_REFERENCE.matcher(content);
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            String name = matcher.group(2);
-            if (!knownXmlResources(symbols, type).contains(name)
-                    && !FrameworkResourcePolicy.isLibraryProvided(type, name)) {
-                addViolation(violations, "Generated source policy blocked missing XML resource reference: @" + type + "/" + name + " in " + file.getName() + ".");
+        // Resource-existence is aapt's authority at build time (resource linking knows app + library +
+        // framework resources, which a regex never can - the source of recurring false positives on
+        // library styles, color/state-list selectors, and not-yet-merged cross-task resources). Demote
+        // it from the policy gate; the build's resource linking catches a genuinely missing resource and
+        // feeds the repair loop with a precise diagnostic. The full validate() path keeps the check.
+        if (includeTypeChecks) {
+            Matcher matcher = XML_RESOURCE_REFERENCE.matcher(content);
+            while (matcher.find()) {
+                String type = matcher.group(1);
+                String name = matcher.group(2);
+                if (!knownXmlResources(symbols, type).contains(name)
+                        && !FrameworkResourcePolicy.isLibraryProvided(type, name)) {
+                    addViolation(violations, "Generated source policy blocked missing XML resource reference: @" + type + "/" + name + " in " + file.getName() + ".");
+                }
             }
         }
         for (String widget : WidgetDependencyPolicy.missingWidgetDependencies(content, gradleText)) {
