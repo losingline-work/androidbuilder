@@ -297,13 +297,20 @@ public class AndroidSourceGuard {
         if (FRAGMENT_CLASS.matcher(scannable).find() && NAKED_FIND_VIEW.matcher(scannable).find()) {
             addViolation(violations, "Generated source policy blocked Fragment findViewById usage in " + file.getName() + ". Use rootView.findViewById or requireView().findViewById.");
         }
-        rejectMissingResource(R_ID, symbols.ids, "Generated source policy blocked missing XML id: R.id.%s in %s.", scannable, file, violations);
-        rejectMissingResource(R_LAYOUT, symbols.layouts, "Generated source policy blocked missing layout resource: R.layout.%s in %s.", scannable, file, violations);
-        rejectMissingResource(R_STRING, symbols.strings, "Generated source policy blocked missing string resource: R.string.%s in %s.", scannable, file, violations);
-        rejectMissingResource(R_COLOR, symbols.colors, "Generated source policy blocked missing color resource: R.color.%s in %s.", scannable, file, violations);
-        rejectMissingResource(R_DRAWABLE, symbols.drawables, "Generated source policy blocked missing drawable resource: R.drawable.%s in %s.", scannable, file, violations);
-        rejectMissingResource(R_MIPMAP, symbols.mipmaps, "Generated source policy blocked missing mipmap resource: R.mipmap.%s in %s.", scannable, file, violations);
-        rejectMissingResource(R_STYLE, symbols.styles, "Generated source policy blocked missing style resource: R.style.%s in %s.", scannable, file, violations);
+        if (includeTypeChecks) {
+            // Java R.* resource existence is aapt's authority at build time, same as the XML @type/name
+            // refs: the regex can't see cross-task resources (the Java wiring tier references R.id /
+            // R.layout owned by the layout tier) or the real generated R.java, so it false-rejected them
+            // and looped the wiring task. Demote out of the merge gate; javac on the real R.java catches a
+            // genuinely missing R.* member and feeds the repair loop. The full validate() path keeps it.
+            rejectMissingResource(R_ID, symbols.ids, "Generated source policy blocked missing XML id: R.id.%s in %s.", scannable, file, violations);
+            rejectMissingResource(R_LAYOUT, symbols.layouts, "Generated source policy blocked missing layout resource: R.layout.%s in %s.", scannable, file, violations);
+            rejectMissingResource(R_STRING, symbols.strings, "Generated source policy blocked missing string resource: R.string.%s in %s.", scannable, file, violations);
+            rejectMissingResource(R_COLOR, symbols.colors, "Generated source policy blocked missing color resource: R.color.%s in %s.", scannable, file, violations);
+            rejectMissingResource(R_DRAWABLE, symbols.drawables, "Generated source policy blocked missing drawable resource: R.drawable.%s in %s.", scannable, file, violations);
+            rejectMissingResource(R_MIPMAP, symbols.mipmaps, "Generated source policy blocked missing mipmap resource: R.mipmap.%s in %s.", scannable, file, violations);
+            rejectMissingResource(R_STYLE, symbols.styles, "Generated source policy blocked missing style resource: R.style.%s in %s.", scannable, file, violations);
+        }
         boolean syntheticViewViolation = false;
         for (String id : symbols.ids) {
             if (isLikelySyntheticViewId(id) && usesLikelySyntheticView(scannable, id) && !declaresVariable(scannable, id)) {

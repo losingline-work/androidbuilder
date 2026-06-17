@@ -31,6 +31,19 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void policyOnlyValidationDefersMissingJavaRResourcesToJavac() throws Exception {
+        // Java R.id/R.layout/... existence is the same cross-task class as XML refs; the merge gate no
+        // longer adjudicates it (javac on the real R.java is the authority). Full validate() still flags it.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/example/MainActivity.java",
+                "package com.example;\nclass MainActivity { int f() { int a = R.layout.activity_main; return R.id.nav_host_fragment; } }\n");
+
+        new AndroidSourceGuard().validatePolicyOnly(root);
+
+        assertThrows(IllegalArgumentException.class, () -> new AndroidSourceGuard().validate(root));
+    }
+
+    @Test
     public void policyOnlyValidationDefersMissingResourceExistenceToAapt() throws Exception {
         // Root-fix: the merge-time policy gate no longer adjudicates resource existence (a regex can
         // never know app + library + framework resources); aapt is the authority at build. The full
