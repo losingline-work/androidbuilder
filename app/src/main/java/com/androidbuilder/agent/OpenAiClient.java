@@ -1035,9 +1035,9 @@ public class OpenAiClient {
                 + "Review the generated operations against the task, source snapshot, and Context Scout notes. "
                 + "Return only compact JSON with keys decision, summary, and rewriteInstruction. "
                 + "decision must be one of ok, rewrite, or fallback. "
-                + "Use ok when the patch is focused and cross-file APIs look consistent. "
-                + "Use rewrite when the patch is too broad, recreates the project, omits a needed paired file, or creates obvious API/resource mismatches. "
-                + "Do not suggest inline literal workarounds for missing Android resources; require a real matching resource file/value or a reference to an existing indexed resource. "
+                + "Use ok when the patch is focused and cross-file Java APIs look consistent. "
+                + "Use rewrite ONLY when the patch is too broad or recreates the whole project, or when there is an obvious cross-file Java API mismatch - a call to a method, constructor, or field that no class in scope declares. "
+                + "Do NOT flag missing Android resources: @drawable/@color/@dimen/@string/@style/@menu/@id/@layout references or R.* references are verified by the build's resource linker (aapt), and a referenced resource may legitimately be provided by another task or by a library, so never request creating, inlining, or 'declaring all referenced resources'. "
                 + "Use fallback only if the input is insufficient to review. Do not return markdown. " + language;
     }
 
