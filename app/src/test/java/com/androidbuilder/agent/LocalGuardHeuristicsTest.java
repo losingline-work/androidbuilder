@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class LocalGuardHeuristicsTest {
@@ -31,25 +32,11 @@ public class LocalGuardHeuristicsTest {
     }
 
     @Test
-    public void preflightCatchesMissingDrawableReferenceBeforeWrite() {
-        TaskOperations operations = new TaskOperations(
-                "Add icon resolver",
-                Collections.singletonList(new FileOperation(
-                        "write",
-                        "app/src/main/java/com/example/IconRes.java",
-                        "class IconRes { int id() { return R.drawable.ic_food; } }")));
-
-        LocalGuardResult result = LocalGuardHeuristics.reviewOperations("", operations);
-
-        assertTrue(result.usable);
-        assertEquals(LocalGuardResult.Decision.REWRITE, result.decision);
-        assertTrue(result.additionalInstruction.contains("R.drawable.ic_food"));
-        assertTrue(result.additionalInstruction.contains("app/src/main/res/drawable/ic_food.xml"));
-    }
-
-    @Test
-    public void preflightCatchesMissingXmlValueResourceBeforeWrite() {
-        TaskOperations operations = new TaskOperations(
+    public void preflightDefersResourceExistenceToAapt() {
+        // The preflight only sees this one task plus a digested snapshot, so it cannot know about
+        // cross-task / library / framework resources; resource existence is aapt's authority at build.
+        // A missing @color or R.drawable here must NOT produce a (false) rewrite.
+        TaskOperations xml = new TaskOperations(
                 "Add tab indicator",
                 Collections.singletonList(new FileOperation(
                         "write",
@@ -57,14 +44,15 @@ public class LocalGuardHeuristicsTest {
                         "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\">"
                                 + "<solid android:color=\"@color/tab_selected\"/>"
                                 + "</shape>")));
+        TaskOperations java = new TaskOperations(
+                "Add icon resolver",
+                Collections.singletonList(new FileOperation(
+                        "write",
+                        "app/src/main/java/com/example/IconRes.java",
+                        "class IconRes { int id() { return R.drawable.ic_food; } }")));
 
-        LocalGuardResult result = LocalGuardHeuristics.reviewOperations("", operations);
-
-        assertTrue(result.usable);
-        assertEquals(LocalGuardResult.Decision.REWRITE, result.decision);
-        assertTrue(result.additionalInstruction.contains("@color/tab_selected"));
-        assertTrue(result.additionalInstruction.contains("tab_indicator.xml"));
-        assertTrue(result.additionalInstruction.contains("app/src/main/res/values/colors.xml"));
+        assertFalse(LocalGuardHeuristics.reviewOperations("", xml).usable);
+        assertFalse(LocalGuardHeuristics.reviewOperations("", java).usable);
     }
 
     @Test
@@ -86,24 +74,6 @@ public class LocalGuardHeuristicsTest {
         LocalGuardResult result = LocalGuardHeuristics.reviewOperations("", operations);
 
         assertTrue(result.summary, !result.usable);
-    }
-
-    @Test
-    public void preflightGroupsManyMissingDrawablesIntoOneShortHint() {
-        TaskOperations operations = new TaskOperations(
-                "Add icon resolver",
-                Collections.singletonList(new FileOperation(
-                        "write",
-                        "app/src/main/java/com/example/IconRes.java",
-                        "class IconRes { int food() { return R.drawable.ic_food; } int traffic() { return R.drawable.ic_traffic; } int other() { return R.drawable.ic_other; } }")));
-
-        LocalGuardResult result = LocalGuardHeuristics.reviewOperations("", operations);
-
-        assertTrue(result.usable);
-        assertTrue(result.additionalInstruction.contains("IconRes.java references missing drawable resources"));
-        assertTrue(result.additionalInstruction.contains("ic_food, ic_traffic, ic_other"));
-        assertTrue(result.additionalInstruction.contains("getIdentifier"));
-        assertEquals(1, count(result.additionalInstruction, "IconRes.java references"));
     }
 
     @Test

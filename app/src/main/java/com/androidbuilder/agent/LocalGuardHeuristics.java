@@ -42,10 +42,12 @@ final class LocalGuardHeuristics {
             // Javadocs and string literals - an unsatisfiable "delete the arrow from your comment"
             // demand. The merge-time AndroidSourceGuard already enforces the lambda policy on
             // comment/string-stripped code (its sole authority), so a real lambda is still caught.
-            if (path.endsWith(".xml")) {
-                appendMissingXmlResourceHints(hints, sourceSnapshot, operations, path, content);
-            }
-            appendMissingDrawableHints(hints, sourceSnapshot, operations, path, content);
+            //
+            // No resource-existence hint either (XML @type/name or Java R.drawable.*): the preflight only
+            // sees this one task's operations plus a DIGESTED snapshot, so it cannot see resources owned
+            // by another task (colors/styles/strings/mipmaps declared in the values task, the launcher
+            // icon, the app theme) and falsely flagged them as missing, looping the task. Resource
+            // existence is aapt's authority at build time; a genuinely missing resource is caught there.
             appendMissingDbHelperFieldHints(hints, sourceSnapshot, operations, path, content);
             appendMissingDaoMethodHints(hints, sourceSnapshot, operations, path, content);
         }
