@@ -1044,7 +1044,8 @@ public class AndroidSourceGuard {
         while (matcher.find()) {
             String type = matcher.group(1);
             String name = matcher.group(2);
-            if (!knownXmlResources(symbols, type).contains(name)) {
+            if (!knownXmlResources(symbols, type).contains(name)
+                    && !FrameworkResourcePolicy.isLibraryProvided(type, name)) {
                 addViolation(violations, "Generated source policy blocked missing XML resource reference: @" + type + "/" + name + " in " + file.getName() + ".");
             }
         }

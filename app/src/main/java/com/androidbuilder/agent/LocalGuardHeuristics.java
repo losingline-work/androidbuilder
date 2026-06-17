@@ -100,7 +100,8 @@ final class LocalGuardHeuristics {
             String type = matcher.group(1);
             String name = matcher.group(2);
             String key = type + "/" + name;
-            if (!seen.add(key) || hasXmlResource(sourceSnapshot, operations, type, name)) {
+            if (!seen.add(key) || hasXmlResource(sourceSnapshot, operations, type, name)
+                    || FrameworkResourcePolicy.isLibraryProvided(type, name)) {
                 continue;
             }
             appendHint(hints, simpleName(path) + " references @" + type + "/" + name

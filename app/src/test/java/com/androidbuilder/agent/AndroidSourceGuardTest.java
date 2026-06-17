@@ -31,6 +31,17 @@ public class AndroidSourceGuardTest {
     }
 
     @Test
+    public void allowsMaterialLibraryStyleReferences() throws Exception {
+        // Widget.Material3.* styles are provided by the Material dependency, not declared by the app.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/layout/dialog_add_account.xml",
+                "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\" "
+                        + "style=\"@style/Widget.Material3.Button.TextButton\" />");
+
+        new AndroidSourceGuard().validate(root);
+    }
+
+    @Test
     public void allowsColorSelectorFileReferences() throws Exception {
         // A res/color/*.xml ColorStateList selector is a valid @color/ target, just like a drawable file.
         File root = temporaryFolder.newFolder("source");
