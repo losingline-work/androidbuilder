@@ -84,18 +84,38 @@ public class ImplementationTaskNormalizerTest {
 
         boolean anySuffixed = false;
         for (ProjectTaskRecord task : normalized) {
-            // Every split phase still resolves to a canonical phase despite the display suffix, so the
-            // downstream policies (tiers, high-volume batching) keep working.
-            boolean recognized = CanonicalTaskPhase.is(task.title, CanonicalTaskPhase.GRADLE)
-                    || CanonicalTaskPhase.is(task.title, CanonicalTaskPhase.RESOURCES)
-                    || CanonicalTaskPhase.is(task.title, CanonicalTaskPhase.DRAWABLE_LAYOUT)
-                    || CanonicalTaskPhase.is(task.title, CanonicalTaskPhase.JAVA);
-            assertTrue("phase not recognized: " + task.title, recognized);
+            assertTrue("phase not recognized: " + task.title, isCanonicalPhase(task.title));
             if (task.title.contains(CanonicalTaskPhase.SEPARATOR + "首页与余额卡片")) {
                 anySuffixed = true;
             }
         }
         assertTrue("at least one phase should carry the feature suffix", anySuffixed);
+    }
+
+    @Test
+    public void phaseTitlesAreLocalizedToChineseWhenChinese() {
+        ProjectTaskRecord broad = task("首页",
+                "更新 app/build.gradle 依赖，写 activity_main.xml 布局，实现 MainActivity 与 HomeFragment。");
+
+        List<ProjectTaskRecord> normalized = ImplementationTaskNormalizer.normalize(Collections.singletonList(broad), true);
+
+        boolean anyChineseTitle = false;
+        for (ProjectTaskRecord task : normalized) {
+            // Localized titles are STILL recognized as their canonical phase by the matcher.
+            assertTrue("phase not recognized: " + task.title, isCanonicalPhase(task.title));
+            if (task.title.contains("Java 源码接线") || task.title.contains("图形与布局 XML")
+                    || task.title.contains("Gradle 配置与依赖")) {
+                anyChineseTitle = true;
+            }
+        }
+        assertTrue("phase titles should be localized to Chinese", anyChineseTitle);
+    }
+
+    private static boolean isCanonicalPhase(String title) {
+        return CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.GRADLE)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.RESOURCES)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.DRAWABLE_LAYOUT)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.JAVA);
     }
 
     private static ProjectTaskRecord task(String title, String instruction) {

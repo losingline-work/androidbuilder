@@ -36,4 +36,11 @@ public class HighVolumeTaskPolicyTest {
         // A model title that merely mentions the words is NOT a canned phase.
         assertFalse(HighVolumeTaskPolicy.isHighVolume("Write the Java source for the home screen"));
     }
+
+    @Test
+    public void recognizesLocalizedChinesePhaseTitles() {
+        assertTrue(HighVolumeTaskPolicy.isHighVolume("Java 源码接线"));
+        assertTrue(HighVolumeTaskPolicy.isHighVolume("Java 源码接线 · 首页"));
+        assertTrue(HighVolumeTaskPolicy.isHighVolume("图形与布局 XML · 图表"));
+    }
 }

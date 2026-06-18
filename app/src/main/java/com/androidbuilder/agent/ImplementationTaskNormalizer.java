@@ -11,12 +11,16 @@ final class ImplementationTaskNormalizer {
     }
 
     static List<ProjectTaskRecord> normalize(List<ProjectTaskRecord> tasks) {
+        return normalize(tasks, false);
+    }
+
+    static List<ProjectTaskRecord> normalize(List<ProjectTaskRecord> tasks, boolean chinese) {
         List<ProjectTaskRecord> normalized = new ArrayList<>();
         if (tasks == null) {
             return normalized;
         }
-        for (ProjectTaskRecord task : mergeFineResourceTasks(tasks)) {
-            List<ProjectTaskRecord> split = splitIfBroad(task);
+        for (ProjectTaskRecord task : mergeFineResourceTasks(tasks, chinese)) {
+            List<ProjectTaskRecord> split = splitIfBroad(task, chinese);
             if (split.isEmpty()) {
                 normalized.add(task);
             } else {
@@ -69,7 +73,7 @@ final class ImplementationTaskNormalizer {
         return false;
     }
 
-    private static List<ProjectTaskRecord> mergeFineResourceTasks(List<ProjectTaskRecord> tasks) {
+    private static List<ProjectTaskRecord> mergeFineResourceTasks(List<ProjectTaskRecord> tasks, boolean chinese) {
         List<ProjectTaskRecord> merged = new ArrayList<>();
         boolean addedResourcePhase = false;
         boolean addedDrawableLayoutPhase = false;
@@ -77,12 +81,12 @@ final class ImplementationTaskNormalizer {
             FinePhase phase = finePhase(task);
             if (phase == FinePhase.RESOURCE) {
                 if (!addedResourcePhase) {
-                    merged.add(resourceTask());
+                    merged.add(resourceTask("", chinese));
                     addedResourcePhase = true;
                 }
             } else if (phase == FinePhase.DRAWABLE_LAYOUT) {
                 if (!addedDrawableLayoutPhase) {
-                    merged.add(drawableLayoutTask());
+                    merged.add(drawableLayoutTask("", chinese));
                     addedDrawableLayoutPhase = true;
                 }
             } else {
@@ -103,7 +107,7 @@ final class ImplementationTaskNormalizer {
         return FinePhase.NONE;
     }
 
-    private static List<ProjectTaskRecord> splitIfBroad(ProjectTaskRecord task) {
+    private static List<ProjectTaskRecord> splitIfBroad(ProjectTaskRecord task, boolean chinese) {
         if (isNormalizedPhase(task)) {
             return java.util.Collections.emptyList();
         }
@@ -117,17 +121,17 @@ final class ImplementationTaskNormalizer {
         String feature = featureHint(task);
         List<ProjectTaskRecord> split = new ArrayList<>();
         if (flags.gradle) {
-            split.add(task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.GRADLE, feature),
+            split.add(task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.Phase.GRADLE, feature, chinese),
                     "Update only Gradle/build configuration files such as app/build.gradle. Keep namespace, applicationId, SDK levels, versionCode/versionName, and allowed dependencies consistent. Do not write values XML, menu XML, drawable XML, layout XML, or Java files."));
         }
         if (flags.values || flags.themes || flags.menu) {
-            split.add(resourceTask(feature));
+            split.add(resourceTask(feature, chinese));
         }
         if (flags.drawable || flags.layout) {
-            split.add(drawableLayoutTask(feature));
+            split.add(drawableLayoutTask(feature, chinese));
         }
         if (flags.javaSource) {
-            split.add(task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.JAVA, feature),
+            split.add(task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.Phase.JAVA, feature, chinese),
                     "Write only Java source files such as package placeholders, MainActivity, DBHelper, DAO, Repository, Fragment, or Adapter classes needed for this phase. Use existing layouts and resources; if a referenced resource is missing, stop and keep this task focused instead of writing new XML here."));
         }
         return split;
@@ -144,10 +148,10 @@ final class ImplementationTaskNormalizer {
 
     private static boolean isNormalizedPhase(ProjectTaskRecord task) {
         String title = task == null || task.title == null ? "" : task.title;
-        return CanonicalTaskPhase.is(title, CanonicalTaskPhase.GRADLE)
-                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.RESOURCES)
-                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.DRAWABLE_LAYOUT)
-                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.JAVA);
+        return CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.GRADLE)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.RESOURCES)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.DRAWABLE_LAYOUT)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.JAVA);
     }
 
     private static CategoryFlags categories(ProjectTaskRecord task) {
@@ -186,21 +190,13 @@ final class ImplementationTaskNormalizer {
         return index >= 0 ? sentence.substring(0, index) : sentence;
     }
 
-    private static ProjectTaskRecord resourceTask() {
-        return resourceTask("");
-    }
-
-    private static ProjectTaskRecord resourceTask(String feature) {
-        return task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.RESOURCES, feature),
+    private static ProjectTaskRecord resourceTask(String feature, boolean chinese) {
+        return task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.Phase.RESOURCES, feature, chinese),
                 "Write app/src/main/res/values resource XML such as colors.xml, strings.xml, dimens.xml, arrays.xml, app/src/main/res/values/themes.xml, matching values-night/themes.xml variants, and menu XML such as menu_bottom_nav.xml when needed. Keep XML well-formed and reference only resources that exist or are written in this task. Do not write Gradle files, layout XML, or Java files.");
     }
 
-    private static ProjectTaskRecord drawableLayoutTask() {
-        return drawableLayoutTask("");
-    }
-
-    private static ProjectTaskRecord drawableLayoutTask(String feature) {
-        return task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.DRAWABLE_LAYOUT, feature),
+    private static ProjectTaskRecord drawableLayoutTask(String feature, boolean chinese) {
+        return task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.Phase.DRAWABLE_LAYOUT, feature, chinese),
                 "Write drawable XML resources (shape drawables, color selectors, and simple icons) together with related layout XML such as activity_main.xml. Prefer built-in @android:drawable icons and simple <shape> drawables over hand-drawn vector paths. Include every drawable referenced by these layouts and declare all view ids used by later Java wiring. Do not write Gradle files, values XML, menu XML, or Java files.");
     }
 

@@ -68,6 +68,14 @@ public class TierValidationPolicyTest {
                 TierValidationPolicy.tierOf("Java source wiring · 账户管理"));
     }
 
+    @Test
+    public void tierOfRecognizesLocalizedChinesePhaseTitles() {
+        assertEquals(TierValidationPolicy.Tier.GRADLE, TierValidationPolicy.tierOf("Gradle 配置与依赖 · 首页"));
+        assertEquals(TierValidationPolicy.Tier.RESOURCE, TierValidationPolicy.tierOf("图形与布局 XML · 图表"));
+        assertEquals(TierValidationPolicy.Tier.RESOURCE, TierValidationPolicy.tierOf("资源：values / 主题 / 菜单"));
+        assertEquals(TierValidationPolicy.Tier.CODE, TierValidationPolicy.tierOf("Java 源码接线 · 账户管理"));
+    }
+
     private static ProjectTaskRecord task(String title, String status) {
         return new ProjectTaskRecord(0, 0, 0, title, "instruction", status, "", 0, 0, 0, 0);
     }

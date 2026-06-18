@@ -20,8 +20,8 @@ final class HighVolumeTaskPolicy {
             return false;
         }
         String title = taskTitle.trim();
-        return CanonicalTaskPhase.is(title, CanonicalTaskPhase.DRAWABLE_LAYOUT)
-                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.RESOURCES)
-                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.JAVA);
+        return CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.DRAWABLE_LAYOUT)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.RESOURCES)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.Phase.JAVA);
     }
 }

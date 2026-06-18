@@ -2784,7 +2784,7 @@ public class AgentService {
     private void ensureImplementationTasks(long projectId, Long linkedBuildJobId, ProjectPlanRecord plan, boolean chinese) throws Exception {
         List<ProjectTaskRecord> existingTasks = repository.listProjectTasks(projectId);
         if (!existingTasks.isEmpty()) {
-            List<ProjectTaskRecord> normalizedExisting = ImplementationTaskNormalizer.normalize(existingTasks);
+            List<ProjectTaskRecord> normalizedExisting = ImplementationTaskNormalizer.normalize(existingTasks, chinese);
             if (ImplementationTaskNormalizer.canReplaceExistingTasks(existingTasks)
                     && ImplementationTaskNormalizer.changed(existingTasks, normalizedExisting)) {
                 repository.replaceProjectTasks(projectId, normalizedExisting);
@@ -2799,7 +2799,7 @@ public class AgentService {
                 chinese ? "云端 AI · 执行任务拆分" : "Cloud AI · implementation task split",
                 "Approved engineering plan:\n\n" + plan.content,
                 () -> openAiClient.createImplementationTasks(plan.content, chinese));
-        List<ProjectTaskRecord> tasks = ImplementationTaskNormalizer.normalize(ImplementationTaskParser.fromJson(tasksJson));
+        List<ProjectTaskRecord> tasks = ImplementationTaskNormalizer.normalize(ImplementationTaskParser.fromJson(tasksJson), chinese);
         repository.replaceProjectTasks(projectId, tasks);
         deleteAllTaskDraftsSafely(projectId);
         repository.addMessage(projectId, "assistant", taskListMessage(tasks, chinese), null);
