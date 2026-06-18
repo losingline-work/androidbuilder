@@ -84,6 +84,13 @@ public class FileOperationsWriter {
             // so the tree builds instead of looping. Runs BEFORE the guard, which still validates the
             // result - a stub never bypasses the guard.
             lastStubs = stubReconciliation ? StubReconciler.reconcile(tempDir, sourceGuard) : new ArrayList<String>();
+            // Seed minimal valid producers for resources/classes the source references but never declares
+            // (a missing colour, menu, launcher icon, or Intent-target Activity), so the build reaches a
+            // shallower hole instead of looping aapt/javac repairs to dig it out. Additive + self-validating;
+            // a no-op when the tree is already whole.
+            if (stubReconciliation) {
+                lastStubs.addAll(CrossReferenceReconciler.reconcile(tempDir));
+            }
             validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {
                 // Compile-driven mode: enforce only POLICY at merge; cross-file TYPE errors are caught
