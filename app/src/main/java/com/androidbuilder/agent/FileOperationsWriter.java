@@ -94,6 +94,9 @@ public class FileOperationsWriter {
                 // the classpath) but the applied theme is a framework Theme.Material*, rewrite the theme
                 // parent to an AppCompat/Material descendant so onCreate doesn't throw at runtime.
                 lastStubs.addAll(ThemeCompatibilityReconciler.reconcile(tempDir));
+                // Declare every started Activity (else ActivityNotFoundException) and ensure the app has a
+                // launcher; the started classes were just stubbed-into-existence by CrossReferenceReconciler.
+                lastStubs.addAll(ManifestCompletenessPolicy.reconcile(tempDir));
             }
             validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {
