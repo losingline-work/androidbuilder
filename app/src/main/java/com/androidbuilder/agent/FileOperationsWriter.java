@@ -90,6 +90,10 @@ public class FileOperationsWriter {
             // a no-op when the tree is already whole.
             if (stubReconciliation) {
                 lastStubs.addAll(CrossReferenceReconciler.reconcile(tempDir));
+                // Prevent the #1 launch crash: if the code uses AppCompat/Material (and the dependency is on
+                // the classpath) but the applied theme is a framework Theme.Material*, rewrite the theme
+                // parent to an AppCompat/Material descendant so onCreate doesn't throw at runtime.
+                lastStubs.addAll(ThemeCompatibilityReconciler.reconcile(tempDir));
             }
             validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {
