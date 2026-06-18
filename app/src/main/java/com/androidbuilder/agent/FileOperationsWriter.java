@@ -97,6 +97,9 @@ public class FileOperationsWriter {
                 // Declare every started Activity (else ActivityNotFoundException) and ensure the app has a
                 // launcher; the started classes were just stubbed-into-existence by CrossReferenceReconciler.
                 lastStubs.addAll(ManifestCompletenessPolicy.reconcile(tempDir));
+                // Strip a color-only attribute pointing at a @drawable (e.g. app:cardBackgroundColor) — a
+                // guaranteed "Can't convert to ComplexColor" inflate crash that aapt cannot see.
+                lastStubs.addAll(LayoutColorAttributeReconciler.reconcile(tempDir));
             }
             validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {

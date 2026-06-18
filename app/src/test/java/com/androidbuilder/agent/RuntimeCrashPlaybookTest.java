@@ -29,6 +29,17 @@ public class RuntimeCrashPlaybookTest {
     }
 
     @Test
+    public void routesComplexColorCrashToColorAttributeHint() {
+        String instruction = RuntimeCrashPlaybook.instruction(
+                "android.view.InflateException: ... Error inflating class androidx.cardview.widget.CardView\n"
+                        + "Caused by: java.lang.UnsupportedOperationException: Can't convert to ComplexColor: type=0x1",
+                false, false);
+        assertTrue(instruction.contains("COLOR attribute points at a non-color"));
+        assertTrue(instruction.contains("cardBackgroundColor"));
+        assertTrue(instruction.contains("android:background for a drawable"));
+    }
+
+    @Test
     public void routesStubCrashToImplementHint() {
         String instruction = RuntimeCrashPlaybook.instruction(
                 "java.lang.UnsupportedOperationException\n at Repo.load // ANDROIDBUILDER-STUB invoked stub", false, false);
