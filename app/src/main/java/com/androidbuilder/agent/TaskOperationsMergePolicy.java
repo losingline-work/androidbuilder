@@ -45,7 +45,18 @@ final class TaskOperationsMergePolicy {
         }
         String correctionSummary = correction.summary == null ? "" : correction.summary.trim();
         String previousSummary = previousDraft.summary == null ? "" : previousDraft.summary.trim();
-        return new TaskOperations(correctionSummary.isEmpty() ? previousSummary : correctionSummary, new ArrayList<>(byPath.values()));
+        // Preserve the batch manifest + accepted paths across the merge. Without this the merged draft
+        // dropped them, so a partial-batch draft carried by a BatchGenerationException could never RESUME
+        // its manifest on the next attempt (hasManifest() was false) - it re-rolled a fresh manifest and
+        // discarded the accepted foundation, defeating carry-forward/resume entirely. byPath's keys are
+        // the surviving (non-dropped) canonical paths, i.e. exactly the accepted set.
+        String manifestJson = !correction.manifestJson.isEmpty() ? correction.manifestJson : previousDraft.manifestJson;
+        return new TaskOperations(
+                correctionSummary.isEmpty() ? previousSummary : correctionSummary,
+                new ArrayList<>(byPath.values()),
+                false, "", "",
+                manifestJson,
+                new ArrayList<>(byPath.keySet()));
     }
 
     static TaskOperations stripDrops(TaskOperations operations) {
@@ -81,7 +92,13 @@ final class TaskOperationsMergePolicy {
                 normalized.add(item);
             }
         }
-        return new TaskOperations(operations.summary == null ? "" : operations.summary.trim(), normalized);
+        // Preserve manifest + accepted paths here too (single-input copy), so resume survives.
+        List<String> acceptedPaths = new ArrayList<>();
+        for (FileOperation item : normalized) {
+            acceptedPaths.add(item.path);
+        }
+        return new TaskOperations(operations.summary == null ? "" : operations.summary.trim(), normalized,
+                false, "", "", operations.manifestJson, acceptedPaths);
     }
 
     private static FileOperation normalized(FileOperation operation) {

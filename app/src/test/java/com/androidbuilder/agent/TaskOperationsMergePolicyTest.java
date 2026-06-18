@@ -8,8 +8,29 @@ import org.junit.Test;
 import java.util.Arrays;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class TaskOperationsMergePolicyTest {
+    @Test
+    public void mergePreservesManifestAndAcceptedPathsSoResumeSurvives() {
+        // A partial-batch draft carried by a BatchGenerationException must keep its manifest + accepted
+        // paths through the merge, or the next attempt cannot RESUME (hasManifest fails) and re-rolls a
+        // fresh manifest, discarding the carry-forward foundation.
+        TaskOperations previous = new TaskOperations("round 1",
+                Arrays.asList(write("app/src/main/java/Foo.java", "class Foo {}")),
+                false, "", "",
+                "{\"files\":[{\"path\":\"app/src/main/java/Foo.java\"}]}",
+                Arrays.asList("app/src/main/java/Foo.java"));
+        TaskOperations correction = operations("round 2",
+                write("app/src/main/java/Bar.java", "class Bar {}"));
+
+        TaskOperations merged = TaskOperationsMergePolicy.merge(previous, correction);
+
+        assertEquals("{\"files\":[{\"path\":\"app/src/main/java/Foo.java\"}]}", merged.manifestJson);
+        assertTrue(merged.acceptedPaths.contains("app/src/main/java/Foo.java"));
+        assertTrue(merged.acceptedPaths.contains("app/src/main/java/Bar.java"));
+    }
+
     @Test
     public void mergeOverridesByNormalizedPathAndPreservesPreviousOrder() {
         TaskOperations previous = operations("previous",

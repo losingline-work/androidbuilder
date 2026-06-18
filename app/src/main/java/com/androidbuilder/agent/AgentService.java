@@ -57,6 +57,7 @@ public class AgentService {
     private static final int SOURCE_FILE_PREVIEW_LIMIT = 3500;
     private static final int BUILD_LOG_PREVIEW_LIMIT = 7000;
     private static final int POLICY_REWRITE_ATTEMPTS = 5;
+    private static final int MAX_CARRY_FORWARD_ROUNDS = 3;
     // Pre-apply structural rewrites are capped separately so
     // they cannot starve the policy-error retry budget; after this many they yield to the real guard.
     private static final int PREFLIGHT_REWRITE_BUDGET = 2;
@@ -1699,7 +1700,7 @@ public class AgentService {
         if (ManifestResumePolicy.hasManifest(previousDraft)) {
             manifestJson = previousDraft.manifestJson;
             manifest = ManifestResumePolicy.manifest(previousDraft);
-            accepted.addAll(ManifestResumePolicy.acceptedOperations(previousDraft));
+            acceptByCanonicalPath(accepted, ManifestResumePolicy.acceptedOperations(previousDraft));
             FileUtils.appendText(logs, chinese
                     ? "复用任务清单草稿，继续剩余批次。\n"
                     : "Resuming task manifest draft for remaining batches.\n");
@@ -1736,6 +1737,14 @@ public class AgentService {
                 + batches.size() + "\n");
         narrate(callTag, logs, BatchNarrationPolicy.manifestLine(
                 manifest.summary, manifest.files.size(), allBatches.size(), chinese));
+        // Carry-forward rounds: a batch that omits some planned files is accepted with what it produced,
+        // and the still-missing files (manifest minus accepted) are regenerated as fresh, smaller batches.
+        // This converges the "weak model keeps dropping a few files" / "salvaged-from-truncation partial"
+        // cases instead of all-or-nothing rejecting the whole batch to exhaustion. Bounded by rounds and a
+        // no-progress guard; whatever is still missing after that is left for the build (javac/aapt).
+        int carryRound = 0;
+        int previousRemainingCount = Integer.MAX_VALUE;
+        while (true) {
         for (int i = 0; i < batches.size(); i++) {
             List<TaskManifest.Entry> batch = batches.get(i);
             int batchNumber = completedBeforeResume + i + 1;
@@ -1791,7 +1800,7 @@ public class AgentService {
                             manifestPaths(batch),
                             taskContract);
                     if (validationError == null) {
-                        accepted.addAll(batchOperations.operations);
+                        acceptByCanonicalPath(accepted, batchOperations.operations);
                         saveTaskDraftSafely(projectId, taskId, partialBatchDraft(accepted, null, manifestJson));
                         if (journal != null) {
                             journal.recordBatchProgress(batchNumber, allBatches.size());
@@ -1816,6 +1825,36 @@ public class AgentService {
                         partialBatchDraft(accepted, null, manifestJson));
             }
         }
+        List<List<TaskManifest.Entry>> stillRemaining =
+                ManifestResumePolicy.remainingBatches(manifest, ManifestResumePolicy.acceptedPathsFor(accepted));
+        if (stillRemaining.isEmpty()) {
+            break;
+        }
+        int remainingCount = 0;
+        for (List<TaskManifest.Entry> remainingBatch : stillRemaining) {
+            remainingCount += remainingBatch.size();
+        }
+        carryRound++;
+        if (carryRound >= MAX_CARRY_FORWARD_ROUNDS || remainingCount >= previousRemainingCount) {
+            // Carry-forward could not converge (out of rounds, or a round produced no NEW planned file -
+            // progress is measured on the DISTINCT remaining manifest files, not the raw accepted list,
+            // so additive res/** or a re-emitted already-accepted file cannot fake progress). Do NOT
+            // silently accept the partial: an unreferenced dropped file (e.g. a manifest-declared Activity
+            // whose class was never produced) is invisible to the build's javac/aapt, so a 'done' task
+            // would ship a permanent runtime gap. Fail with the partial draft instead, so the outer attempt
+            // resumes and regenerates only the missing files; a genuinely unproducible file then surfaces
+            // as a visible task failure rather than a broken APK.
+            throw new BatchGenerationException(
+                    (chinese ? "结转重产未能产出计划文件：" : "Carry-forward could not produce planned files: ")
+                            + remainingPathsForLog(stillRemaining),
+                    partialBatchDraft(accepted, null, manifestJson));
+        }
+        FileUtils.appendText(logs, (chinese
+                ? "结转重产：重新生成 " + remainingCount + " 个漏产文件。\n"
+                : "Carry-forward: regenerating " + remainingCount + " missing file(s).\n"));
+        previousRemainingCount = remainingCount;
+        batches = stillRemaining;
+        }
         // Carry the manifest + accepted paths so that, if the whole-tree merge guard later rejects
         // a caller, the next attempt can RESUME this manifest and regenerate only the rejected files
         // against the frozen, already-accepted foundation - instead of re-emitting all 30 files in
@@ -1828,6 +1867,42 @@ public class AgentService {
                 "",
                 manifestJson,
                 ManifestResumePolicy.acceptedPathsFor(accepted));
+    }
+
+    /** Append accepted operations deduped by canonical path with last-writer-wins, so a carry-forward
+     *  round that re-emits an already-accepted file replaces it instead of duplicating, and a later
+     *  {@code delete} cleanly supersedes an earlier {@code write} of the same path (rather than both
+     *  surviving and being applied write-then-delete in list order, which would lose the file). */
+    private static void acceptByCanonicalPath(List<FileOperation> accepted, List<FileOperation> operations) {
+        if (operations == null) {
+            return;
+        }
+        for (FileOperation operation : operations) {
+            if (operation == null || operation.path == null) {
+                continue;
+            }
+            String canonical = CanonicalPathPolicy.canonicalize(operation.path);
+            accepted.removeIf(existing -> existing != null && existing.path != null
+                    && CanonicalPathPolicy.canonicalize(existing.path).equals(canonical));
+            accepted.add(operation);
+        }
+    }
+
+    private static String remainingPathsForLog(List<List<TaskManifest.Entry>> remaining) {
+        List<String> paths = new ArrayList<>();
+        if (remaining != null) {
+            for (List<TaskManifest.Entry> batch : remaining) {
+                if (batch == null) {
+                    continue;
+                }
+                for (TaskManifest.Entry entry : batch) {
+                    if (entry != null && entry.path != null) {
+                        paths.add(entry.path);
+                    }
+                }
+            }
+        }
+        return String.join(", ", paths);
     }
 
     private TaskOperations partialBatchDraft(List<FileOperation> accepted, TaskOperations currentPartial, String manifestJson) {
