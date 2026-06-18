@@ -35,6 +35,7 @@ public class SettingsActivity extends BaseActivity {
     private static final int REQUEST_TERMUX_RUN_COMMAND = 8001;
     private static final int REQUEST_OFFLINE_MAVEN_ZIP = 8002;
     private String[] providerLabels;
+    private String[] providerOrder;
     private String[] languageLabels;
     private String[] backendLabels;
     private String[] dependencyModeLabels;
@@ -134,7 +135,21 @@ public class SettingsActivity extends BaseActivity {
     }
 
     private void configureSpinners() {
-        providerLabels = new String[]{getString(R.string.provider_openai), getString(R.string.provider_deepseek), getString(R.string.provider_minimax), getString(R.string.provider_custom)};
+        // Provider order is data-driven so adding a provider never desyncs an index switch. openai/deepseek/
+        // minimax keep their curated model spinners; the rest use the free-text model field (default auto-filled).
+        java.util.List<String> order = new java.util.ArrayList<>();
+        order.add(OpenAiClient.PROVIDER_OPENAI);
+        order.add(OpenAiClient.PROVIDER_DEEPSEEK);
+        order.add(OpenAiClient.PROVIDER_MINIMAX);
+        order.addAll(java.util.Arrays.asList(OpenAiClient.mainstreamCompatibleProviders()));
+        order.add(OpenAiClient.PROVIDER_ANTHROPIC);
+        order.add(OpenAiClient.PROVIDER_GEMINI);
+        order.add(OpenAiClient.PROVIDER_CUSTOM);
+        providerOrder = order.toArray(new String[0]);
+        providerLabels = new String[providerOrder.length];
+        for (int i = 0; i < providerOrder.length; i++) {
+            providerLabels[i] = getString(providerLabelRes(providerOrder[i]));
+        }
         languageLabels = new String[]{getString(R.string.language_system), "English", "中文"};
         backendLabels = new String[]{getString(R.string.backend_embedded), getString(R.string.backend_external_termux)};
         dependencyModeLabels = new String[]{getString(R.string.dependency_mode_offline_safe), getString(R.string.dependency_mode_local_cache), getString(R.string.dependency_mode_online)};
@@ -243,7 +258,10 @@ public class SettingsActivity extends BaseActivity {
         boolean supportsThinking = OpenAiClient.supportsThinkingToggle(provider);
         thinkingModeSwitch.setVisibility(supportsThinking ? View.VISIBLE : View.GONE);
         thinkingModeHint.setVisibility(supportsThinking ? View.VISIBLE : View.GONE);
-        modelInputLayout.setVisibility(OpenAiClient.PROVIDER_CUSTOM.equals(provider) ? View.VISIBLE : View.GONE);
+        // Providers without a curated model spinner (the new presets, the natives, and custom) edit the
+        // model in the free-text field, pre-filled with the registry default.
+        boolean usesFreeTextModel = !isOpenAI && !isDeepSeek && !isMiniMax;
+        modelInputLayout.setVisibility(usesFreeTextModel ? View.VISIBLE : View.GONE);
     }
 
     private void updateEndpointPreset(String provider, String endpointValue) {
@@ -686,29 +704,50 @@ public class SettingsActivity extends BaseActivity {
     }
 
     private int providerIndex(String provider) {
-        if (OpenAiClient.PROVIDER_DEEPSEEK.equals(provider)) {
-            return 1;
-        }
-        if (OpenAiClient.PROVIDER_MINIMAX.equals(provider)) {
-            return 2;
-        }
-        if (OpenAiClient.PROVIDER_CUSTOM.equals(provider)) {
-            return 3;
+        if (providerOrder != null) {
+            for (int i = 0; i < providerOrder.length; i++) {
+                if (providerOrder[i].equals(provider)) {
+                    return i;
+                }
+            }
         }
         return 0;
     }
 
     private String providerAt(int position) {
-        if (position == 1) {
-            return OpenAiClient.PROVIDER_DEEPSEEK;
-        }
-        if (position == 2) {
-            return OpenAiClient.PROVIDER_MINIMAX;
-        }
-        if (position == 3) {
-            return OpenAiClient.PROVIDER_CUSTOM;
+        if (providerOrder != null && position >= 0 && position < providerOrder.length) {
+            return providerOrder[position];
         }
         return OpenAiClient.PROVIDER_OPENAI;
+    }
+
+    private int providerLabelRes(String provider) {
+        switch (provider) {
+            case OpenAiClient.PROVIDER_DEEPSEEK:
+                return R.string.provider_deepseek;
+            case OpenAiClient.PROVIDER_MINIMAX:
+                return R.string.provider_minimax;
+            case OpenAiClient.PROVIDER_ZHIPU:
+                return R.string.provider_zhipu;
+            case OpenAiClient.PROVIDER_MOONSHOT:
+                return R.string.provider_moonshot;
+            case OpenAiClient.PROVIDER_QWEN:
+                return R.string.provider_qwen;
+            case OpenAiClient.PROVIDER_DOUBAO:
+                return R.string.provider_doubao;
+            case OpenAiClient.PROVIDER_OPENROUTER:
+                return R.string.provider_openrouter;
+            case OpenAiClient.PROVIDER_GROQ:
+                return R.string.provider_groq;
+            case OpenAiClient.PROVIDER_ANTHROPIC:
+                return R.string.provider_anthropic;
+            case OpenAiClient.PROVIDER_GEMINI:
+                return R.string.provider_gemini;
+            case OpenAiClient.PROVIDER_CUSTOM:
+                return R.string.provider_custom;
+            default:
+                return R.string.provider_openai;
+        }
     }
 
     private int openaiModelIndex(String model) {

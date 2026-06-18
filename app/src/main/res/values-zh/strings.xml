@@ -59,6 +59,14 @@
     <string name="provider_openai">OpenAI</string>
     <string name="provider_deepseek">DeepSeek</string>
     <string name="provider_minimax">MiniMax</string>
+    <string name="provider_zhipu">智谱 GLM</string>
+    <string name="provider_moonshot">月之暗面 Kimi</string>
+    <string name="provider_qwen">通义千问</string>
+    <string name="provider_doubao">豆包</string>
+    <string name="provider_openrouter">OpenRouter</string>
+    <string name="provider_groq">Groq</string>
+    <string name="provider_anthropic">Anthropic Claude</string>
+    <string name="provider_gemini">Google Gemini</string>
     <string name="provider_custom">自定义</string>
     <string name="build_backend">构建后端</string>
     <string name="backend_embedded">内置运行环境</string>
