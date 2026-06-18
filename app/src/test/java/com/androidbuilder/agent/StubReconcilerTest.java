@@ -100,6 +100,39 @@ public class StubReconcilerTest {
         FileUtils.writeText(new File(root, path), content);
     }
 
+    @Test
+    public void softStubDefaultsAreCompileSafeByType() {
+        assertEquals("false", StubReconciler.defaultValueExpr("boolean"));
+        assertEquals("0", StubReconciler.defaultValueExpr("int"));
+        assertEquals("0L", StubReconciler.defaultValueExpr("long"));
+        assertEquals("0f", StubReconciler.defaultValueExpr("float"));
+        assertEquals("0d", StubReconciler.defaultValueExpr("double"));
+        assertEquals("'\\u0000'", StubReconciler.defaultValueExpr("char"));
+        // Every reference / array / generic type returns null (assignable everywhere -> always compiles).
+        assertEquals("null", StubReconciler.defaultValueExpr("String"));
+        assertEquals("null", StubReconciler.defaultValueExpr("Integer"));
+        assertEquals("null", StubReconciler.defaultValueExpr("java.util.List<Foo>"));
+        assertEquals("null", StubReconciler.defaultValueExpr("int[]"));
+        assertEquals("null", StubReconciler.defaultValueExpr("String[][]"));
+    }
+
+    @Test
+    public void softStubReturnStatementIsEmptyForVoid() {
+        assertEquals("", StubReconciler.returnStatement("void"));
+        assertTrue(StubReconciler.returnStatement("String").contains("return null;"));
+        // Void (boxed) is a reference type -> returns null, not a no-op.
+        assertTrue(StubReconciler.returnStatement("Void").contains("return null;"));
+    }
+
+    @Test
+    public void softStubBodyFailsSoftNotThrows() {
+        String body = StubReconciler.safeStubBody("Repo", "load", "java.util.List<Item>");
+        assertFalse("a stub on the launch path must not crash the app", body.contains("UnsupportedOperationException"));
+        assertTrue(body.contains("return null;"));
+        assertTrue(body.contains(StubReconciler.STUB_TAG));
+        assertTrue("the debt should be visible at runtime", body.contains("Log.w"));
+    }
+
     private static String read(File root, String path) throws Exception {
         return FileUtils.readText(new File(root, path));
     }

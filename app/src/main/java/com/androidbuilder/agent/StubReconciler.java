@@ -115,14 +115,64 @@ final class StubReconciler {
             return null; // cannot prove a compiling return type - leave it for the guard to report
         }
         String signature = signature(returnType, methodName, paramTypes);
-        String body = "void".equals(returnType)
-                ? "        " + STUB_TAG + ": " + className + "." + methodName + "\n        throw new UnsupportedOperationException(\"stub\");\n"
-                : "        " + STUB_TAG + ": " + className + "." + methodName + "\n        throw new UnsupportedOperationException(\"stub\");\n";
+        String body = safeStubBody(className, methodName, returnType);
         String member = "\n    public " + signature + " {\n" + body + "    }\n";
         if (!spliceIntoClass(classFile, classContent, className, member)) {
             return null;
         }
         return className + "." + methodName + "(" + String.join(", ", paramTypes) + ") -> " + returnType;
+    }
+
+    /**
+     * A stub method body that FAILS SOFT instead of throwing. A method the model never implemented can sit
+     * on the launch path; a {@code throw new UnsupportedOperationException} there compiles but crashes the
+     * app at runtime (闪退). Returning a safe default by type lets the app run so the real behaviour can be
+     * repaired from a runtime signal rather than a hard crash. The {@link #STUB_TAG} marker keeps it
+     * greppable, and a runtime {@code Log.w} surfaces the debt in logcat.
+     */
+    static String safeStubBody(String className, String methodName, String returnType) {
+        String marker = "        " + STUB_TAG + ": " + className + "." + methodName + "\n";
+        String log = "        android.util.Log.w(\"ANDROIDBUILDER\", \"stub invoked: "
+                + className + "." + methodName + "\");\n";
+        return marker + log + returnStatement(returnType);
+    }
+
+    /** "" for void, else {@code return <default>;}. */
+    static String returnStatement(String returnType) {
+        String type = returnType == null ? "" : returnType.trim();
+        if (type.isEmpty() || "void".equals(type)) {
+            return "";
+        }
+        return "        return " + defaultValueExpr(type) + ";\n";
+    }
+
+    /**
+     * Provably compile-safe default by return type. Only the eight lowercase primitive keywords map to
+     * literals; EVERYTHING else (boxed types, String, arrays of any dimensionality, generics, qualified
+     * names, collections) returns {@code null} — which is assignable to every reference and array type, so
+     * the stub always compiles. (The regex guard does NOT validate compilability, so the body must be safe
+     * by construction, not by a later check.)
+     */
+    static String defaultValueExpr(String returnType) {
+        String type = returnType == null ? "" : returnType.trim();
+        switch (type) {
+            case "boolean":
+                return "false";
+            case "char":
+                return "'\\u0000'";
+            case "byte":
+            case "short":
+            case "int":
+                return "0";
+            case "long":
+                return "0L";
+            case "float":
+                return "0f";
+            case "double":
+                return "0d";
+            default:
+                return "null";
+        }
     }
 
     private static String stubField(File tempDir, String className, String fieldName, Set<String> done) {
