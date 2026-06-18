@@ -725,6 +725,89 @@ public class OpenAiClientTest {
                 OpenAiClient.PROVIDER_GROQ, "llama-3.1-8b-instant", false).isEmpty());
     }
 
+    @Test
+    public void nativeProvidersResolveEndpointsModelsAndFlag() {
+        assertTrue(OpenAiClient.isNativeProvider(OpenAiClient.PROVIDER_ANTHROPIC));
+        assertTrue(OpenAiClient.isNativeProvider(OpenAiClient.PROVIDER_GEMINI));
+        assertFalse(OpenAiClient.isNativeProvider(OpenAiClient.PROVIDER_OPENAI));
+        assertFalse(OpenAiClient.isNativeProvider(OpenAiClient.PROVIDER_OPENROUTER));
+        assertEquals("https://api.anthropic.com/v1/messages",
+                OpenAiClient.defaultEndpoint(OpenAiClient.PROVIDER_ANTHROPIC));
+        assertEquals(OpenAiClient.ANTHROPIC_MODEL_OPUS, OpenAiClient.defaultModel(OpenAiClient.PROVIDER_ANTHROPIC));
+        assertEquals("https://generativelanguage.googleapis.com/v1beta",
+                OpenAiClient.defaultEndpoint(OpenAiClient.PROVIDER_GEMINI));
+        assertEquals(OpenAiClient.GEMINI_MODEL_FLASH, OpenAiClient.defaultModel(OpenAiClient.PROVIDER_GEMINI));
+        // Anthropic normalizes a bare base by appending /v1/messages; Gemini keeps the bare base.
+        assertEquals("https://api.anthropic.com/v1/messages",
+                OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_ANTHROPIC, "https://api.anthropic.com"));
+        assertEquals("https://generativelanguage.googleapis.com/v1beta",
+                OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_GEMINI, "https://generativelanguage.googleapis.com/v1beta/"));
+    }
+
+    @Test
+    public void anthropicRequestBodyUsesMessagesApiShape() throws Exception {
+        JSONObject body = OpenAiClient.anthropicRequestBodyForTest("claude-opus-4-8", "sys",
+                java.util.Arrays.asList(msg("user", "hi"), msg("assistant", "yo")), "now");
+        assertEquals("claude-opus-4-8", body.getString("model"));
+        assertEquals(OpenAiClient.MAX_OUTPUT_TOKENS, body.getInt("max_tokens"));
+        assertTrue(body.getBoolean("stream"));
+        assertEquals("sys", body.getString("system")); // top-level string, not a message
+        assertFalse(body.has("temperature"));
+        org.json.JSONArray msgs = body.getJSONArray("messages");
+        assertEquals(3, msgs.length());
+        assertEquals("user", msgs.getJSONObject(0).getString("role"));
+        assertEquals("assistant", msgs.getJSONObject(1).getString("role"));
+        assertEquals("now", msgs.getJSONObject(2).getString("content"));
+    }
+
+    @Test
+    public void geminiRequestBodyMapsRolesAndPutsModelInUrl() throws Exception {
+        JSONObject body = OpenAiClient.geminiRequestBodyForTest("gemini-2.5-flash", "sys",
+                java.util.Arrays.asList(msg("user", "hi"), msg("assistant", "yo")), "now", 0.2);
+        assertFalse("model lives in the URL, not the body", body.has("model"));
+        org.json.JSONArray contents = body.getJSONArray("contents");
+        assertEquals(3, contents.length());
+        assertEquals("user", contents.getJSONObject(0).getString("role"));
+        assertEquals("model", contents.getJSONObject(1).getString("role")); // assistant -> model
+        assertEquals("now", contents.getJSONObject(2).getJSONArray("parts").getJSONObject(0).getString("text"));
+        assertEquals("sys", body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text"));
+        assertEquals(OpenAiClient.MAX_OUTPUT_TOKENS, body.getJSONObject("generationConfig").getInt("maxOutputTokens"));
+        assertEquals("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+                OpenAiClient.geminiStreamUrl("https://generativelanguage.googleapis.com/v1beta/", "gemini-2.5-flash"));
+    }
+
+    @Test
+    public void anthropicStreamExtractsOnlyTextDeltas() throws Exception {
+        String sse = "event: message_start\n"
+                + "data: {\"type\":\"message_start\",\"message\":{\"id\":\"x\"}}\n\n"
+                + "event: content_block_delta\n"
+                + "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n"
+                + "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n\n"
+                + "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" world\"}}\n\n"
+                + "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        assertEquals("Hello world",
+                OpenAiClient.readNativeStreamContentForTest(sse, OpenAiClient::extractAnthropicDelta));
+    }
+
+    @Test
+    public void geminiStreamConcatenatesPartText() throws Exception {
+        String sse = "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello\"}]}}]}\n\n"
+                + "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\" world\"}]}}]}\n\n";
+        // No [DONE] from Gemini — termination is EOF.
+        assertEquals("Hello world",
+                OpenAiClient.readNativeStreamContentForTest(sse, OpenAiClient::extractGeminiDelta));
+    }
+
+    @Test
+    public void nativeDeltaExtractorsIgnoreNonTextPayloads() {
+        assertEquals("", OpenAiClient.extractAnthropicDelta(new JSONObject()));
+        assertEquals("", OpenAiClient.extractGeminiDelta(new JSONObject()));
+    }
+
+    private static ChatMessage msg(String role, String content) {
+        return new ChatMessage(0, 0, role, content, 0, null);
+    }
+
     private static final class FakeSharedPreferences implements SharedPreferences {
         private final Map<String, Object> values = new HashMap<>();
 

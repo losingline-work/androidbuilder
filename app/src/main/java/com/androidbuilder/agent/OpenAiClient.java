@@ -63,6 +63,9 @@ public class OpenAiClient {
     public static final String PROVIDER_DOUBAO = "doubao";
     public static final String PROVIDER_OPENROUTER = "openrouter";
     public static final String PROVIDER_GROQ = "groq";
+    // Native-protocol providers (different request/auth/streaming from OpenAI).
+    public static final String PROVIDER_ANTHROPIC = "anthropic";
+    public static final String PROVIDER_GEMINI = "gemini";
     public static final String PROVIDER_CUSTOM = "custom";
     public static final String OPENAI_MODEL_GPT_55 = "gpt-5.5";
     public static final String OPENAI_MODEL_GPT_54 = "gpt-5.4";
@@ -159,7 +162,40 @@ public class OpenAiClient {
                     MINIMAX_MODEL_M25, MINIMAX_MODEL_M25_HIGHSPEED, MINIMAX_MODEL_M21,
                     MINIMAX_MODEL_M21_HIGHSPEED, MINIMAX_MODEL_M2};
         }
+        if (PROVIDER_ANTHROPIC.equals(provider)) {
+            return anthropicModels();
+        }
+        if (PROVIDER_GEMINI.equals(provider)) {
+            return geminiModels();
+        }
         return new String[0];
+    }
+
+    // --- Native-protocol providers (Anthropic Messages API, Google Gemini generateContent) ---
+
+    public static final String ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+    public static final String ANTHROPIC_MESSAGES_ENDPOINT = ANTHROPIC_BASE_URL + "/v1/messages";
+    public static final String ANTHROPIC_VERSION = "2023-06-01";
+    public static final String ANTHROPIC_MODEL_OPUS = "claude-opus-4-8";
+    public static final String ANTHROPIC_MODEL_SONNET = "claude-sonnet-4-6";
+    public static final String ANTHROPIC_MODEL_HAIKU = "claude-haiku-4-5";
+
+    public static final String GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+    public static final String GEMINI_STREAM_SUFFIX = ":streamGenerateContent?alt=sse";
+    public static final String GEMINI_MODEL_FLASH = "gemini-2.5-flash";
+    public static final String GEMINI_MODEL_PRO = "gemini-2.5-pro";
+
+    static String[] anthropicModels() {
+        return new String[]{ANTHROPIC_MODEL_OPUS, ANTHROPIC_MODEL_SONNET, ANTHROPIC_MODEL_HAIKU};
+    }
+
+    static String[] geminiModels() {
+        return new String[]{GEMINI_MODEL_FLASH, GEMINI_MODEL_PRO, "gemini-2.5-flash-lite", "gemini-2.0-flash"};
+    }
+
+    /** True for providers whose request body, auth, and streaming differ from the OpenAI wire format. */
+    static boolean isNativeProvider(String provider) {
+        return PROVIDER_ANTHROPIC.equals(provider) || PROVIDER_GEMINI.equals(provider);
     }
     private static final String CHAT_COMPLETIONS_PATH = "/chat/completions";
     private static final String DEEPSEEK_OFFICIAL_CHAT_COMPLETIONS_ENDPOINT = DEEPSEEK_OFFICIAL_BASE_URL + CHAT_COMPLETIONS_PATH;
@@ -363,11 +399,20 @@ public class OpenAiClient {
             throw new IllegalStateException(chinese ? "MiniMax 仅支持 MiniMax-M3、MiniMax-M2.7、MiniMax-M2.5、MiniMax-M2.1 和 MiniMax-M2 系列模型。" : "MiniMax supports MiniMax-M3, MiniMax-M2.7, MiniMax-M2.5, MiniMax-M2.1, and MiniMax-M2 series models.");
         }
         boolean thinkingEnabled = effectiveThinking(thinkingEnabledForProvider(prefs, provider), structuredOutput);
-        JSONObject body = chatRequestBody(provider, model, systemPrompt, messages, latestUserMessage, temperature, thinkingEnabled);
+        JSONObject body;
+        String requestUrl = endpoint;
+        if (PROVIDER_ANTHROPIC.equals(provider)) {
+            body = anthropicRequestBody(model, systemPrompt, messages, latestUserMessage);
+        } else if (PROVIDER_GEMINI.equals(provider)) {
+            body = geminiRequestBody(model, systemPrompt, messages, latestUserMessage, temperature);
+            requestUrl = geminiStreamUrl(endpoint, model); // Gemini puts the model in the URL path
+        } else {
+            body = chatRequestBody(provider, model, systemPrompt, messages, latestUserMessage, temperature, thinkingEnabled);
+        }
 
         for (int attempt = 0; attempt <= SOCKET_ABORT_RETRIES; attempt++) {
             try {
-                return executeChatRequest(endpoint, apiKey, body, readTimeoutMs, provider, chinese, callTag, streamInspector);
+                return executeChatRequest(requestUrl, apiKey, body, readTimeoutMs, provider, chinese, callTag, streamInspector);
             } catch (SocketTimeoutException error) {
                 throw new IllegalStateException(chinese ? "模型响应超时。已等待 " + (readTimeoutMs / 1000) + " 秒，请重试或把任务拆得更小。" : "Model response timed out after " + (readTimeoutMs / 1000) + " seconds. Retry or split the task smaller.", error);
             } catch (SocketException error) {
@@ -432,7 +477,15 @@ public class OpenAiClient {
         connection.setReadTimeout(readTimeoutMs);
         connection.setDoOutput(true);
         connection.setRequestProperty("Content-Type", "application/json");
-        connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+        if (PROVIDER_ANTHROPIC.equals(provider)) {
+            // Anthropic uses x-api-key + a version header, NOT Authorization: Bearer.
+            connection.setRequestProperty("x-api-key", apiKey);
+            connection.setRequestProperty("anthropic-version", ANTHROPIC_VERSION);
+        } else if (PROVIDER_GEMINI.equals(provider)) {
+            connection.setRequestProperty("x-goog-api-key", apiKey);
+        } else {
+            connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+        }
         connection.setRequestProperty("Accept", "text/event-stream");
         try (OutputStream out = connection.getOutputStream()) {
             out.write(body.toString().getBytes(StandardCharsets.UTF_8));
@@ -449,8 +502,158 @@ public class OpenAiClient {
                 }
                 throw new IllegalStateException(httpErrorMessage(provider, code, error.toString(), chinese));
             }
+            if (PROVIDER_ANTHROPIC.equals(provider)) {
+                return readNativeStreamContent(reader, OpenAiClient::extractAnthropicDelta, progressListener, callTag, streamInspector);
+            }
+            if (PROVIDER_GEMINI.equals(provider)) {
+                return readNativeStreamContent(reader, OpenAiClient::extractGeminiDelta, progressListener, callTag, streamInspector);
+            }
             return readChatContent(reader, progressListener, callTag, streamInspector);
         }
+    }
+
+    // --- Native request bodies + streaming readers (Anthropic Messages API, Gemini generateContent) ---
+
+    private static JSONObject anthropicRequestBody(String model, String system, List<ChatMessage> messages, String latestUser) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("model", model);
+        body.put("max_tokens", MAX_OUTPUT_TOKENS); // required by the Messages API
+        body.put("stream", true);
+        body.put("system", system); // top-level string, not a message
+        JSONArray chat = new JSONArray();
+        for (ChatMessage message : messages) {
+            if ("user".equals(message.role) || "assistant".equals(message.role)) {
+                chat.put(new JSONObject().put("role", message.role).put("content", message.content));
+            }
+        }
+        chat.put(new JSONObject().put("role", "user").put("content", latestUser));
+        body.put("messages", chat);
+        return body;
+    }
+
+    static JSONObject anthropicRequestBodyForTest(String model, String system, List<ChatMessage> messages, String latestUser) throws Exception {
+        return anthropicRequestBody(model, system, messages, latestUser);
+    }
+
+    private static JSONObject geminiRequestBody(String model, String system, List<ChatMessage> messages, String latestUser, double temperature) throws Exception {
+        JSONObject body = new JSONObject(); // NOTE: no top-level "model" — the model lives in the URL path
+        JSONArray contents = new JSONArray();
+        for (ChatMessage message : messages) {
+            if ("user".equals(message.role)) {
+                contents.put(geminiContent("user", message.content));
+            } else if ("assistant".equals(message.role)) {
+                contents.put(geminiContent("model", message.content)); // Gemini calls the assistant role "model"
+            }
+        }
+        contents.put(geminiContent("user", latestUser));
+        body.put("contents", contents);
+        body.put("systemInstruction", new JSONObject().put("parts",
+                new JSONArray().put(new JSONObject().put("text", system))));
+        body.put("generationConfig", new JSONObject()
+                .put("maxOutputTokens", MAX_OUTPUT_TOKENS).put("temperature", temperature));
+        return body;
+    }
+
+    private static JSONObject geminiContent(String role, String text) throws Exception {
+        return new JSONObject().put("role", role).put("parts",
+                new JSONArray().put(new JSONObject().put("text", text)));
+    }
+
+    static JSONObject geminiRequestBodyForTest(String model, String system, List<ChatMessage> messages, String latestUser, double temperature) throws Exception {
+        return geminiRequestBody(model, system, messages, latestUser, temperature);
+    }
+
+    /** The full Gemini streaming URL: {base}/models/{model}:streamGenerateContent?alt=sse. */
+    static String geminiStreamUrl(String base, String model) {
+        String value = base == null ? "" : base.trim();
+        if (value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value + "/models/" + model + GEMINI_STREAM_SUFFIX;
+    }
+
+    /** Extracts one Anthropic text delta: only a content_block_delta carrying a text_delta yields text. */
+    static String extractAnthropicDelta(JSONObject payload) {
+        if (payload == null || !"content_block_delta".equals(payload.optString("type", ""))) {
+            return "";
+        }
+        JSONObject delta = payload.optJSONObject("delta");
+        if (delta == null || !"text_delta".equals(delta.optString("type", ""))) {
+            return ""; // thinking_delta / signature_delta etc. carry no answer text
+        }
+        return delta.isNull("text") ? "" : delta.optString("text", "");
+    }
+
+    /** Extracts the text from one Gemini chunk: candidates[0].content.parts[*].text (skips non-text parts). */
+    static String extractGeminiDelta(JSONObject payload) {
+        JSONArray candidates = payload == null ? null : payload.optJSONArray("candidates");
+        JSONObject first = candidates == null || candidates.length() == 0 ? null : candidates.optJSONObject(0);
+        JSONObject content = first == null ? null : first.optJSONObject("content");
+        JSONArray parts = content == null ? null : content.optJSONArray("parts");
+        if (parts == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < parts.length(); i++) {
+            JSONObject part = parts.optJSONObject(i);
+            if (part != null && !part.isNull("text")) {
+                text.append(part.optString("text", ""));
+            }
+        }
+        return text.toString();
+    }
+
+    interface NativeDeltaExtractor {
+        String extract(JSONObject payload);
+    }
+
+    /**
+     * Reads a native SSE stream (Anthropic/Gemini), accumulating text via {@code extractor}. Terminates on
+     * connection close (Gemini sends no {@code [DONE]}; an inert {@code [DONE]} is tolerated). Mirrors
+     * {@link #readChatContent}'s progress emission but leaves the OpenAI-compatible path untouched.
+     */
+    static String readNativeStreamContent(BufferedReader reader, NativeDeltaExtractor extractor,
+            ProgressListener listener, String callTag, StreamInspector streamInspector) throws Exception {
+        StringBuilder answer = new StringBuilder();
+        int lastEmitted = -1;
+        String line;
+        while ((line = reader.readLine()) != null) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) {
+                continue; // ignore SSE event:/id:/blank/comment lines
+            }
+            String payload = trimmed.substring(5).trim();
+            if (payload.isEmpty() || "[DONE]".equals(payload)) {
+                continue;
+            }
+            try {
+                answer.append(extractor.extract(new JSONObject(payload)));
+            } catch (Exception ignored) {
+                // tolerate keep-alive comments / non-JSON frames
+            }
+            if (listener != null || streamInspector != null) {
+                if (answer.length() - lastEmitted >= PROGRESS_EMIT_CHARS) {
+                    lastEmitted = answer.length();
+                    if (listener != null) {
+                        listener.onProgress(cleanCallTag(callTag), answer.length(), 0);
+                    }
+                    if (streamInspector != null) {
+                        streamInspector.onContent(answer.toString());
+                    }
+                }
+            }
+        }
+        if (listener != null) {
+            listener.onProgress(cleanCallTag(callTag), answer.length(), 0);
+        }
+        if (streamInspector != null) {
+            streamInspector.onContent(answer.toString());
+        }
+        return answer.toString();
+    }
+
+    static String readNativeStreamContentForTest(String sse, NativeDeltaExtractor extractor) throws Exception {
+        return readNativeStreamContent(new BufferedReader(new java.io.StringReader(sse)), extractor, null, "", null);
     }
 
     /**
@@ -613,6 +816,12 @@ public class OpenAiClient {
         if (PROVIDER_MINIMAX.equals(provider)) {
             return MINIMAX_OPENAI_COMPATIBLE_ENDPOINT;
         }
+        if (PROVIDER_ANTHROPIC.equals(provider)) {
+            return ANTHROPIC_MESSAGES_ENDPOINT;
+        }
+        if (PROVIDER_GEMINI.equals(provider)) {
+            return GEMINI_BASE_URL;
+        }
         ProviderSpec spec = specFor(provider);
         if (spec != null) {
             return spec.defaultEndpoint;
@@ -634,6 +843,14 @@ public class OpenAiClient {
         if (PROVIDER_DEEPSEEK.equals(provider) && DEEPSEEK_OFFICIAL_BASE_URL.equals(value)) {
             return DEEPSEEK_OFFICIAL_CHAT_COMPLETIONS_ENDPOINT;
         }
+        // Native providers have non-/chat/completions endpoints: Anthropic /v1/messages (append to a bare
+        // base); Gemini keeps a bare base (the model-in-path URL is built at request time), never appended to.
+        if (PROVIDER_ANTHROPIC.equals(provider)) {
+            return value.endsWith("/v1/messages") ? value : value + "/v1/messages";
+        }
+        if (PROVIDER_GEMINI.equals(provider)) {
+            return value;
+        }
         // A hand-pasted bare base for Zhipu (/api/paas/v4) or Ark/Doubao (/api/v3) needs the chat path; the
         // /v1 family is covered by the rule below (Qwen compatible-mode/v1, Moonshot/Groq/OpenRouter /v1).
         if (value.endsWith("/api/paas/v4") || value.endsWith("/api/v3")) {
@@ -654,6 +871,12 @@ public class OpenAiClient {
         }
         if (PROVIDER_MINIMAX.equals(provider)) {
             return MINIMAX_MODEL_M3;
+        }
+        if (PROVIDER_ANTHROPIC.equals(provider)) {
+            return ANTHROPIC_MODEL_OPUS;
+        }
+        if (PROVIDER_GEMINI.equals(provider)) {
+            return GEMINI_MODEL_FLASH;
         }
         ProviderSpec spec = specFor(provider);
         if (spec != null) {

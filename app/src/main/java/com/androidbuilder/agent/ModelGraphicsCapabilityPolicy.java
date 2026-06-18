@@ -26,8 +26,13 @@ final class ModelGraphicsCapabilityPolicy {
             // Flagship mainstream models trusted with rich vector graphics; smaller/flash tiers stay restricted.
             "glm-4.6",
             "qwen-max",
+            // OpenRouter-routed forms
             "anthropic/claude-sonnet-4.5",
-            "google/gemini-2.5-pro"));
+            "google/gemini-2.5-pro",
+            // Native Anthropic / Gemini forms
+            OpenAiClient.ANTHROPIC_MODEL_OPUS,
+            OpenAiClient.ANTHROPIC_MODEL_SONNET,
+            OpenAiClient.GEMINI_MODEL_PRO));
 
     private ModelGraphicsCapabilityPolicy() {
     }
