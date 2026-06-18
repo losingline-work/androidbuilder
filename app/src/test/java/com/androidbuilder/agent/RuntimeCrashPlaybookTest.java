@@ -40,6 +40,17 @@ public class RuntimeCrashPlaybookTest {
     }
 
     @Test
+    public void routesClassCastToFindViewByIdMismatchHint() {
+        String instruction = RuntimeCrashPlaybook.instruction(
+                "java.lang.ClassCastException: com.google.android.material.textview.MaterialTextView cannot be cast to android.widget.RadioButton\n"
+                        + " at com.generated.app.ui.add.AddTransactionFragment.onCreateView(AddTransactionFragment.java:82)",
+                false, false);
+        assertTrue(instruction.contains("does not match the widget type"));
+        assertTrue(instruction.contains("CompoundButton"));
+        assertFalse(instruction.contains("Theme mismatch"));
+    }
+
+    @Test
     public void routesStubCrashToImplementHint() {
         String instruction = RuntimeCrashPlaybook.instruction(
                 "java.lang.UnsupportedOperationException\n at Repo.load // ANDROIDBUILDER-STUB invoked stub", false, false);
