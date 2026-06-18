@@ -249,6 +249,43 @@ public class AgentService {
         }, "agent-repair-build").start();
     }
 
+    /**
+     * Repair a RUNTIME crash (launch 闪退) from its stack trace (a logcat dump or a pasted FATAL EXCEPTION),
+     * reusing the build-repair generation path with the crash playbook in place of the build-log triage.
+     */
+    public void repairCrashAsync(long projectId, String crashText, Callback callback) {
+        new Thread(() -> {
+            ActiveWorkRegistry.begin(context, projectId, context.getString(com.androidbuilder.R.string.foreground_work_repairing));
+            try {
+                BuildJobRecord job = repairBuild(projectId, crashText, false, true);
+                callback.onComplete(job);
+            } catch (Exception error) {
+                callback.onError(error);
+            } finally {
+                ActiveWorkRegistry.end(context, projectId);
+            }
+        }, "agent-repair-crash").start();
+    }
+
+    private static final java.util.regex.Pattern APP_NAMESPACE_PATTERN =
+            java.util.regex.Pattern.compile("namespace\\s*(?:=\\s*)?[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
+
+    /** The generated app's package, for picking out its OWN crash frames; defaults to the generated prefix. */
+    private String inferAppPackage(File sourceDir) {
+        try {
+            for (File gradle : new File[]{new File(sourceDir, "app/build.gradle"), new File(sourceDir, "build.gradle")}) {
+                if (gradle.isFile()) {
+                    java.util.regex.Matcher matcher = APP_NAMESPACE_PATTERN.matcher(FileUtils.readText(gradle));
+                    if (matcher.find()) {
+                        return matcher.group(1);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "com.generated.app";
+    }
+
     public BuildJobRecord generate(long projectId, String prompt) throws Exception {
         return generate(projectId, prompt, true, true);
     }
@@ -520,6 +557,10 @@ public class AgentService {
     }
 
     private BuildJobRecord repairBuild(long projectId, String buildLog, boolean escalate) throws Exception {
+        return repairBuild(projectId, buildLog, escalate, false);
+    }
+
+    private BuildJobRecord repairBuild(long projectId, String buildLog, boolean escalate, boolean crashMode) throws Exception {
         ProjectRecord project = repository.getProject(projectId);
         if (project == null) {
             throw new IllegalArgumentException("Project not found: " + projectId);
@@ -547,15 +588,28 @@ public class AgentService {
                     1));
 
             File sourceDir = repository.sourceDir(projectId);
-            String snapshot = sourceSnapshot(sourceDir, buildLog);
-            String baseInstruction = repairInstruction(buildLog, chinese, escalate);
-            LocalGuardResult triage = triageBuildFailureWithCloudGuard(projectId, job.id, buildLog, snapshot, chinese);
-            appendLocalGuardLog(logs, chinese ? "云端守卫构建日志分诊" : "Cloud guard build triage", triage);
-            String instruction = triage.usable && triage.decision == LocalGuardResult.Decision.REWRITE
-                    && triage.additionalInstruction != null && !triage.additionalInstruction.trim().isEmpty()
-                    ? LocalGuardInstructionComposer.forBuildTriage(baseInstruction, triage.additionalInstruction)
-                    : baseInstruction;
-            List<HermesRepairShard> repairShards = HermesRepairShardingPolicy.shards(buildLog);
+            String snapshot;
+            String instruction;
+            List<HermesRepairShard> repairShards;
+            if (crashMode) {
+                // Runtime crash: the stack trace is the signal. Focus the snapshot on the app's own frames
+                // and use the crash playbook; the build-log cloud triage / sharding do not apply.
+                String crashDiagnostics = LogcatCrashExtractor.crashDiagnostics(
+                        buildLog, inferAppPackage(sourceDir), BUILD_LOG_PREVIEW_LIMIT);
+                snapshot = sourceSnapshot(sourceDir, crashDiagnostics);
+                instruction = RuntimeCrashPlaybook.instruction(crashDiagnostics, chinese, escalate);
+                repairShards = java.util.Collections.emptyList();
+            } else {
+                snapshot = sourceSnapshot(sourceDir, buildLog);
+                String baseInstruction = repairInstruction(buildLog, chinese, escalate);
+                LocalGuardResult triage = triageBuildFailureWithCloudGuard(projectId, job.id, buildLog, snapshot, chinese);
+                appendLocalGuardLog(logs, chinese ? "云端守卫构建日志分诊" : "Cloud guard build triage", triage);
+                instruction = triage.usable && triage.decision == LocalGuardResult.Decision.REWRITE
+                        && triage.additionalInstruction != null && !triage.additionalInstruction.trim().isEmpty()
+                        ? LocalGuardInstructionComposer.forBuildTriage(baseInstruction, triage.additionalInstruction)
+                        : baseInstruction;
+                repairShards = HermesRepairShardingPolicy.shards(buildLog);
+            }
             TaskOperations operations = null;
             if (canUseParallelRepair(repairShards)) {
                 try {
