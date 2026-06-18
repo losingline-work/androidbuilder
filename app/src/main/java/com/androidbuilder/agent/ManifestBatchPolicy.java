@@ -22,7 +22,11 @@ final class ManifestBatchPolicy {
         if (files == null || files.isEmpty()) {
             return Collections.emptyList();
         }
-        if (files.size() <= SINGLE_BATCH_THRESHOLD) {
+        // Collapse to a single batch only when it is small by file count AND by content weight — a handful
+        // of HEAVY files (e.g. complex layouts) must still be split, or one cloud response overflows
+        // max_tokens, truncates, and the carry-forward keeps re-requesting the same oversized set forever
+        // (project-14: 5 complex layouts looped to retry-exhaustion).
+        if (files.size() <= SINGLE_BATCH_THRESHOLD && totalWeight(files) <= MAX_BATCH_WEIGHT) {
             return Collections.singletonList(Collections.unmodifiableList(new ArrayList<>(files)));
         }
         List<TaskManifest.Entry> ordered = new ArrayList<>();
@@ -90,10 +94,22 @@ final class ManifestBatchPolicy {
         return 5;
     }
 
+    private static int totalWeight(List<TaskManifest.Entry> files) {
+        int total = 0;
+        for (TaskManifest.Entry file : files) {
+            total += weightFor(file);
+        }
+        return total;
+    }
+
     private static int weightFor(TaskManifest.Entry entry) {
         String path = entry == null || entry.path == null ? "" : entry.path;
+        // A complex layout (a full Fragment screen) can fill a whole cloud response on its own; weight it
+        // so at most ONE layout lands per batch (6 > MAX_BATCH_WEIGHT/2), which keeps every response well
+        // under max_tokens and lets the carry-forward converge one layout at a time instead of re-truncating
+        // a bundle of them. Small res XML (icons, values) still pack densely alongside it.
         if (path.startsWith("app/src/main/res/layout")) {
-            return 2;
+            return 6;
         }
         if (path.startsWith("app/src/main/res/") && path.endsWith(".xml")) {
             return 1;

@@ -38,14 +38,15 @@ public class ManifestBatchPolicyTest {
 
         List<List<TaskManifest.Entry>> batches = ManifestBatchPolicy.batches(files);
 
-        assertEquals(2, batches.size());
-        assertEquals("app/src/main/res/values/strings.xml", batches.get(0).get(0).path);
-        assertEquals("app/src/main/res/layout/activity_main.xml", batches.get(0).get(1).path);
-        assertEquals("app/src/main/res/drawable/ic_add.xml", batches.get(0).get(2).path);
-        assertEquals("app/build.gradle", batches.get(0).get(3).path);
-        assertEquals("app/src/main/AndroidManifest.xml", batches.get(0).get(4).path);
-        assertEquals("app/src/main/java/MainActivity.java", batches.get(1).get(0).path);
-        assertEquals("app/src/main/java/RecordDao.java", batches.get(1).get(1).path);
+        // Category order (values -> other resources -> config -> java) is preserved across batches.
+        List<String> order = flatten(batches);
+        assertEquals("app/src/main/res/values/strings.xml", order.get(0));
+        assertEquals("app/src/main/res/layout/activity_main.xml", order.get(1));
+        assertEquals("app/src/main/res/drawable/ic_add.xml", order.get(2));
+        assertEquals("app/build.gradle", order.get(3));
+        assertEquals("app/src/main/AndroidManifest.xml", order.get(4));
+        assertEquals("app/src/main/java/MainActivity.java", order.get(5));
+        assertEquals("app/src/main/java/RecordDao.java", order.get(6));
     }
 
     @Test
@@ -61,11 +62,30 @@ public class ManifestBatchPolicyTest {
 
         List<List<TaskManifest.Entry>> batches = ManifestBatchPolicy.batches(files);
 
-        // values 1+1 + layouts 2+2 + first java 3 = weight 9; the remaining two java files
-        // (weight 3 each) form the second batch.
-        assertEquals(2, batches.size());
-        assertEquals(5, batches.get(0).size());
-        assertEquals(2, batches.get(1).size());
+        // Heavy layouts (weight 6) split sparsely: at most one layout per batch so a response never overflows.
+        assertTrue(batches.size() >= 3);
+        for (List<TaskManifest.Entry> batch : batches) {
+            assertTrue("at most one layout per batch", countLayouts(batch) <= 1);
+        }
+    }
+
+    @Test
+    public void fewHeavyLayoutsAreStillSplitNotCollapsedIntoOneBatch() {
+        // project-14: 5 complex layouts (count <= SINGLE_BATCH_THRESHOLD) must NOT collapse into one
+        // oversized batch that overflows max_tokens and loops the carry-forward to exhaustion.
+        List<TaskManifest.Entry> files = Arrays.asList(
+                entry("app/src/main/res/layout/fragment_add_transaction.xml"),
+                entry("app/src/main/res/layout/fragment_budget.xml"),
+                entry("app/src/main/res/layout/fragment_profile.xml"),
+                entry("app/src/main/res/layout/item_transaction.xml"),
+                entry("app/src/main/res/layout/item_account.xml"));
+
+        List<List<TaskManifest.Entry>> batches = ManifestBatchPolicy.batches(files);
+
+        assertTrue("five heavy layouts must not be one batch", batches.size() >= 5);
+        for (List<TaskManifest.Entry> batch : batches) {
+            assertTrue("at most one layout per batch", countLayouts(batch) <= 1);
+        }
     }
 
     @Test
@@ -113,6 +133,26 @@ public class ManifestBatchPolicyTest {
         assertTrue(entity < dao);
         assertTrue(dao < repo);
         assertTrue(repo < ui);
+    }
+
+    private static List<String> flatten(List<List<TaskManifest.Entry>> batches) {
+        List<String> order = new java.util.ArrayList<>();
+        for (List<TaskManifest.Entry> batch : batches) {
+            for (TaskManifest.Entry e : batch) {
+                order.add(e.path);
+            }
+        }
+        return order;
+    }
+
+    private static int countLayouts(List<TaskManifest.Entry> batch) {
+        int count = 0;
+        for (TaskManifest.Entry e : batch) {
+            if (e.path != null && e.path.startsWith("app/src/main/res/layout")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static TaskManifest.Entry entry(String path) {
