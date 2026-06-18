@@ -75,6 +75,29 @@ public class ImplementationTaskNormalizerTest {
         assertFalse(hasTask(normalized, "Java", "MainActivity"));
     }
 
+    @Test
+    public void splitPhasesCarryTheFeatureNameAsSuffix() {
+        ProjectTaskRecord broad = task("首页与余额卡片",
+                "更新 app/build.gradle 依赖，补 values/colors.xml 与 themes.xml，写 activity_main.xml 布局，实现 MainActivity 与 HomeFragment。");
+
+        List<ProjectTaskRecord> normalized = ImplementationTaskNormalizer.normalize(Collections.singletonList(broad));
+
+        boolean anySuffixed = false;
+        for (ProjectTaskRecord task : normalized) {
+            // Every split phase still resolves to a canonical phase despite the display suffix, so the
+            // downstream policies (tiers, high-volume batching) keep working.
+            boolean recognized = CanonicalTaskPhase.is(task.title, CanonicalTaskPhase.GRADLE)
+                    || CanonicalTaskPhase.is(task.title, CanonicalTaskPhase.RESOURCES)
+                    || CanonicalTaskPhase.is(task.title, CanonicalTaskPhase.DRAWABLE_LAYOUT)
+                    || CanonicalTaskPhase.is(task.title, CanonicalTaskPhase.JAVA);
+            assertTrue("phase not recognized: " + task.title, recognized);
+            if (task.title.contains(CanonicalTaskPhase.SEPARATOR + "首页与余额卡片")) {
+                anySuffixed = true;
+            }
+        }
+        assertTrue("at least one phase should carry the feature suffix", anySuffixed);
+    }
+
     private static ProjectTaskRecord task(String title, String instruction) {
         return new ProjectTaskRecord(0, 0, 0, title, instruction, "pending", "", 0, 0, 0, 0);
     }

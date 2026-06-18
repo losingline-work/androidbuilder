@@ -31,13 +31,14 @@ public final class TierValidationPolicy {
             return Tier.OTHER;
         }
         String title = taskTitle.trim();
-        if ("Gradle skeleton and dependencies".equals(title)) {
+        if (CanonicalTaskPhase.is(title, CanonicalTaskPhase.GRADLE)) {
             return Tier.GRADLE;
         }
-        if ("resources: values, themes, and menu".equals(title) || "drawable and layout XML".equals(title)) {
+        if (CanonicalTaskPhase.is(title, CanonicalTaskPhase.RESOURCES)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.DRAWABLE_LAYOUT)) {
             return Tier.RESOURCE;
         }
-        if ("Java source wiring".equals(title)) {
+        if (CanonicalTaskPhase.is(title, CanonicalTaskPhase.JAVA)) {
             return Tier.CODE;
         }
         // Fallback for model-titled tasks that skipped canned normalization.

@@ -20,8 +20,8 @@ final class HighVolumeTaskPolicy {
             return false;
         }
         String title = taskTitle.trim();
-        return "drawable and layout XML".equals(title)
-                || "resources: values, themes, and menu".equals(title)
-                || "Java source wiring".equals(title);
+        return CanonicalTaskPhase.is(title, CanonicalTaskPhase.DRAWABLE_LAYOUT)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.RESOURCES)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.JAVA);
     }
 }

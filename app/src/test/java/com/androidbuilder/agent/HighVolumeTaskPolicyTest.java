@@ -28,4 +28,12 @@ public class HighVolumeTaskPolicyTest {
         assertTrue(HighVolumeTaskPolicy.isHighVolume("drawable and layout XML"));
         assertTrue(HighVolumeTaskPolicy.isHighVolume("resources: values, themes, and menu"));
     }
+
+    @Test
+    public void recognizesPhaseTitlesWithAFeatureSuffix() {
+        assertTrue(HighVolumeTaskPolicy.isHighVolume("Java source wiring · 首页"));
+        assertTrue(HighVolumeTaskPolicy.isHighVolume("drawable and layout XML · charts"));
+        // A model title that merely mentions the words is NOT a canned phase.
+        assertFalse(HighVolumeTaskPolicy.isHighVolume("Write the Java source for the home screen"));
+    }
 }

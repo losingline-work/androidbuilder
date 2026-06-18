@@ -58,6 +58,16 @@ public class TierValidationPolicyTest {
         assertFalse(TierValidationPolicy.shouldValidateCode(gradleOnly));
     }
 
+    @Test
+    public void tierOfRecognizesPhaseTitlesWithAFeatureSuffix() {
+        assertEquals(TierValidationPolicy.Tier.GRADLE,
+                TierValidationPolicy.tierOf("Gradle skeleton and dependencies · 首页"));
+        assertEquals(TierValidationPolicy.Tier.RESOURCE,
+                TierValidationPolicy.tierOf("drawable and layout XML · charts"));
+        assertEquals(TierValidationPolicy.Tier.CODE,
+                TierValidationPolicy.tierOf("Java source wiring · 账户管理"));
+    }
+
     private static ProjectTaskRecord task(String title, String status) {
         return new ProjectTaskRecord(0, 0, 0, title, "instruction", status, "", 0, 0, 0, 0);
     }

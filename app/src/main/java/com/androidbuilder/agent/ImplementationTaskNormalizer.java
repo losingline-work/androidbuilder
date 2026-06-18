@@ -112,30 +112,42 @@ final class ImplementationTaskNormalizer {
             return java.util.Collections.emptyList();
         }
 
+        // The phases are split by FILE TYPE, so they otherwise carry identical titles across every feature.
+        // Carry the original task's name as a display suffix so the user can tell them apart.
+        String feature = featureHint(task);
         List<ProjectTaskRecord> split = new ArrayList<>();
         if (flags.gradle) {
-            split.add(task("Gradle skeleton and dependencies",
+            split.add(task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.GRADLE, feature),
                     "Update only Gradle/build configuration files such as app/build.gradle. Keep namespace, applicationId, SDK levels, versionCode/versionName, and allowed dependencies consistent. Do not write values XML, menu XML, drawable XML, layout XML, or Java files."));
         }
         if (flags.values || flags.themes || flags.menu) {
-            split.add(resourceTask());
+            split.add(resourceTask(feature));
         }
         if (flags.drawable || flags.layout) {
-            split.add(drawableLayoutTask());
+            split.add(drawableLayoutTask(feature));
         }
         if (flags.javaSource) {
-            split.add(task("Java source wiring",
+            split.add(task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.JAVA, feature),
                     "Write only Java source files such as package placeholders, MainActivity, DBHelper, DAO, Repository, Fragment, or Adapter classes needed for this phase. Use existing layouts and resources; if a referenced resource is missing, stop and keep this task focused instead of writing new XML here."));
         }
         return split;
     }
 
+    /** A short, human-readable hint drawn from the original (pre-split) task title; "" when uninformative. */
+    private static String featureHint(ProjectTaskRecord task) {
+        String title = task == null || task.title == null ? "" : task.title.trim();
+        if (title.isEmpty() || isNormalizedPhase(task)) {
+            return "";
+        }
+        return title.length() > 28 ? title.substring(0, 28).trim() : title;
+    }
+
     private static boolean isNormalizedPhase(ProjectTaskRecord task) {
         String title = task == null || task.title == null ? "" : task.title;
-        return "Gradle skeleton and dependencies".equals(title)
-                || "resources: values, themes, and menu".equals(title)
-                || "drawable and layout XML".equals(title)
-                || "Java source wiring".equals(title);
+        return CanonicalTaskPhase.is(title, CanonicalTaskPhase.GRADLE)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.RESOURCES)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.DRAWABLE_LAYOUT)
+                || CanonicalTaskPhase.is(title, CanonicalTaskPhase.JAVA);
     }
 
     private static CategoryFlags categories(ProjectTaskRecord task) {
@@ -175,12 +187,20 @@ final class ImplementationTaskNormalizer {
     }
 
     private static ProjectTaskRecord resourceTask() {
-        return task("resources: values, themes, and menu",
+        return resourceTask("");
+    }
+
+    private static ProjectTaskRecord resourceTask(String feature) {
+        return task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.RESOURCES, feature),
                 "Write app/src/main/res/values resource XML such as colors.xml, strings.xml, dimens.xml, arrays.xml, app/src/main/res/values/themes.xml, matching values-night/themes.xml variants, and menu XML such as menu_bottom_nav.xml when needed. Keep XML well-formed and reference only resources that exist or are written in this task. Do not write Gradle files, layout XML, or Java files.");
     }
 
     private static ProjectTaskRecord drawableLayoutTask() {
-        return task("drawable and layout XML",
+        return drawableLayoutTask("");
+    }
+
+    private static ProjectTaskRecord drawableLayoutTask(String feature) {
+        return task(CanonicalTaskPhase.withFeature(CanonicalTaskPhase.DRAWABLE_LAYOUT, feature),
                 "Write drawable XML resources (shape drawables, color selectors, and simple icons) together with related layout XML such as activity_main.xml. Prefer built-in @android:drawable icons and simple <shape> drawables over hand-drawn vector paths. Include every drawable referenced by these layouts and declare all view ids used by later Java wiring. Do not write Gradle files, values XML, menu XML, or Java files.");
     }
 
