@@ -69,7 +69,34 @@ public final class HermesTaskGraph {
                 ready.add(task);
             }
         }
+        if (ready.isEmpty()) {
+            // Anti-deadlock: dependsOn/produces token matching is a best-effort ORDERING optimization,
+            // not a hard gate. A model-generated multi-task plan often has free-text contract tokens that
+            // never match (e.g. dependsOn "data layer" vs produces "datalayer"), so every pending task's
+            // dependency stays unsatisfied and readyTasks() goes empty -> the scheduler runs nothing and
+            // the whole plan stalls while still appearing 'buildable'. Never let a token mismatch stall the
+            // plan: fall back to the first not-done task in plan order that is not behind a real exclusive
+            // barrier (e.g. the Gradle skeleton), so execution always makes progress.
+            ProjectTaskRecord fallback = firstUnblockedInPlanOrder();
+            if (fallback != null) {
+                return Collections.singletonList(fallback);
+            }
+        }
         return ready;
+    }
+
+    /** First not-done, not-failed task in plan order whose only block is unmatched dependsOn tokens (not
+     *  a real exclusive barrier) - the anti-deadlock fallback when no task resolves as ready. */
+    private ProjectTaskRecord firstUnblockedInPlanOrder() {
+        for (ProjectTaskRecord task : tasks) {
+            if (isDone(task) || isFailed(task)) {
+                continue;
+            }
+            if (!hasEarlierUnfinishedBarrier(task)) {
+                return task;
+            }
+        }
+        return null;
     }
 
     private boolean dependenciesSatisfied(HermesTaskContract contract) {

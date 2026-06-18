@@ -47,6 +47,21 @@ public class HermesTaskGraphTest {
         assertEquals(failed.id, ready.get(0).id);
     }
 
+    @Test
+    public void readyTasksFallsBackToPlanOrderWhenDependencyTokensNeverMatch() throws Exception {
+        // Model-generated contracts whose dependsOn token never matches any produces token must NOT
+        // deadlock the plan: with nothing resolvable as ready, readyTasks falls back to the first
+        // not-done task in plan order so execution still progresses.
+        ProjectTaskRecord a = task(1, 0, "A", contract("{\"dependsOn\":[\"data layer\"]}"), "pending");
+        ProjectTaskRecord b = task(2, 1, "B", contract("{\"dependsOn\":[\"a screen\"]}"), "pending");
+
+        HermesTaskGraph graph = HermesTaskGraph.fromTasks(Arrays.asList(a, b));
+
+        List<ProjectTaskRecord> ready = graph.readyTasks();
+        assertEquals(1, ready.size());
+        assertEquals(a.id, ready.get(0).id);
+    }
+
     private static ProjectTaskRecord task(long id, int order, String title, String instruction, String status) {
         return new ProjectTaskRecord(id, 1, order, title, instruction, status, "", 0, 0, 0, 0);
     }

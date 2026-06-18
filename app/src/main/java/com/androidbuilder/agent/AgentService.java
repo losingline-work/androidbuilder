@@ -468,7 +468,13 @@ public class AgentService {
             if (exhaustedFailure != null) {
                 message = exhaustedFailurePauseMessage(exhaustedFailure.title, chinese);
             } else if (completedTitles.isEmpty()) {
-                message = chinese ? "所有计划任务已完成。下一步可以构建。" : "All plan tasks are done. Next, build the project.";
+                // Only truly "all done" when nothing is pending/failed; otherwise this pass scheduled
+                // nothing despite remaining tasks - never report it as build-ready.
+                message = next == null
+                        ? (chinese ? "所有计划任务已完成。下一步可以构建。" : "All plan tasks are done. Next, build the project.")
+                        : (chinese
+                                ? "本次没有可执行的任务（可能依赖未满足或被阻塞）。请再次点击执行下一步，或调整计划后重试。"
+                                : "No task could run this pass (an unsatisfied dependency or block). Tap Execute next step again, or adjust the plan.");
             } else {
                 String completedTitle = executionCompletionTitle(completedTitles, chinese);
                 message = taskCompletionMessage(completedTitle, next != null && failedTasks == 0, buildRequiredAfter, chinese);
