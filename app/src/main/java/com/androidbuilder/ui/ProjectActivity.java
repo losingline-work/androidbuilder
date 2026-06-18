@@ -117,6 +117,9 @@ public class ProjectActivity extends BaseActivity {
     private long autoLoopHandledBuildJobId = -1;
     private boolean autoLoopEnabled;
     private String lastFailureSignature = "";
+    // Consecutive repair rounds whose diagnostics did not shrink; drives escalation + give-up across BOTH
+    // the auto loop and the (previously unbounded) manual Repair path.
+    private int stalledRounds;
     private long repairSourceBuildJobId = -1;
     private long operationStartedAt;
     private long activeTaskStartedAt;
@@ -941,6 +944,7 @@ public class ProjectActivity extends BaseActivity {
     private void buildLatest() {
         // A user-initiated build starts a fresh auto-repair budget.
         autoRepairRounds = 0;
+        stalledRounds = 0;
         lastFailureSignature = "";
         startBuild();
     }
@@ -993,20 +997,23 @@ public class ProjectActivity extends BaseActivity {
         }
         boolean repairable = "failed".equals(job.status) && isRepairableFailure(job);
         if ("failed".equals(job.status)) {
-            // Stop early if the last repair changed nothing the compiler noticed (same diagnostics),
-            // instead of burning the remaining rounds on the same wall.
+            // Multi-phase signature (javac + aapt): count a round as stalled when the diagnostics did not
+            // shrink, so an oscillating javac<->aapt loop can no longer hide non-progress. Two stalled
+            // rounds escalate to full-file rewrites; three give up cleanly.
             String signature = "";
             try {
                 signature = RepairLoopStallPolicy.signature(FileUtils.readText(new File(job.logsPath)));
             } catch (Exception ignored) {
             }
-            if (RepairLoopStallPolicy.stalled(lastFailureSignature, signature)) {
-                repairable = false;
+            if (!signature.isEmpty() && !RepairLoopStallPolicy.shrank(lastFailureSignature, signature)) {
+                stalledRounds++;
+            } else {
+                stalledRounds = 0;
             }
             lastFailureSignature = signature;
         }
-        AutoRepairLoopPolicy.Decision decision =
-                AutoRepairLoopPolicy.decide(job.status, repairable, autoRepairRounds, MAX_AUTO_REPAIR_ROUNDS);
+        AutoRepairLoopPolicy.Decision decision = AutoRepairLoopPolicy.decide(
+                job.status, repairable, autoRepairRounds, MAX_AUTO_REPAIR_ROUNDS, stalledRounds);
         switch (decision) {
             case IN_PROGRESS:
                 return;
@@ -1014,12 +1021,18 @@ public class ProjectActivity extends BaseActivity {
             case GIVE_UP:
                 autoLoopHandledBuildJobId = jobId;
                 autoRepairRounds = 0;
+                stalledRounds = 0;
                 lastFailureSignature = "";
                 return;
             case AUTO_REPAIR:
                 autoLoopHandledBuildJobId = jobId;
                 autoRepairRounds++;
-                autoRepairFrom(job);
+                autoRepairFrom(job, false);
+                return;
+            case AUTO_REPAIR_ESCALATE:
+                autoLoopHandledBuildJobId = jobId;
+                autoRepairRounds++;
+                autoRepairFrom(job, true);
                 return;
             default:
                 return;
@@ -1027,7 +1040,7 @@ public class ProjectActivity extends BaseActivity {
     }
 
     /** Repair the source from a failed build's log, then automatically rebuild (the auto-loop). */
-    private void autoRepairFrom(BuildJobRecord failed) {
+    private void autoRepairFrom(BuildJobRecord failed, boolean escalate) {
         String logs;
         try {
             logs = ProjectBuildFailureContextPolicy.previewText(FileUtils.readText(new File(failed.logsPath)));
@@ -1039,7 +1052,7 @@ public class ProjectActivity extends BaseActivity {
         setBusy(true);
         setOperationStatus(getString(R.string.repair_build_started));
         refresh();
-        agentService.repairBuildAsync(projectId, logs, new AgentService.Callback() {
+        agentService.repairBuildAsync(projectId, logs, escalate, new AgentService.Callback() {
             @Override
             public void onComplete(BuildJobRecord job) {
                 runOnUiThread(() -> {
@@ -1099,20 +1112,31 @@ public class ProjectActivity extends BaseActivity {
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
             return;
         }
-        String logs;
+        String fullLog;
         try {
-            logs = FileUtils.readText(new File(failed.logsPath));
-            logs = ProjectBuildFailureContextPolicy.previewText(logs);
+            fullLog = FileUtils.readText(new File(failed.logsPath));
         } catch (Exception error) {
             Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
             return;
         }
+        // The manual Repair path was previously unbounded (the project-134 80-round freeze was the user
+        // re-clicking Repair). Track the same multi-phase stall signal as the auto loop so repeated clicks
+        // that do not shrink the error set escalate to full-file rewrites instead of repeating stale edits.
+        String signature = RepairLoopStallPolicy.signature(fullLog);
+        if (!signature.isEmpty() && !RepairLoopStallPolicy.shrank(lastFailureSignature, signature)) {
+            stalledRounds++;
+        } else {
+            stalledRounds = 0;
+        }
+        lastFailureSignature = signature;
+        boolean escalate = stalledRounds >= 2;
+        String logs = ProjectBuildFailureContextPolicy.previewText(fullLog);
         repairSourceBuildJobId = failed.id;
         setBusy(true);
         setOperationStatus(getString(R.string.repair_build_started));
         refresh();
         Toast.makeText(this, R.string.repair_build_started, Toast.LENGTH_SHORT).show();
-        agentService.repairBuildAsync(projectId, logs, new AgentService.Callback() {
+        agentService.repairBuildAsync(projectId, logs, escalate, new AgentService.Callback() {
             @Override
             public void onComplete(BuildJobRecord job) {
                 runOnUiThread(() -> {

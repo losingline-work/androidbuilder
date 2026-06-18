@@ -18,6 +18,8 @@ final class AutoRepairLoopPolicy {
         SUCCEEDED,
         /** A repairable failure with rounds left: repair from the log and rebuild. */
         AUTO_REPAIR,
+        /** Repairs are not shrinking the error set: repair once more but force full-file rewrites. */
+        AUTO_REPAIR_ESCALATE,
         /** A failure that is not auto-repairable or the round cap is reached: stop, leave it to the user. */
         GIVE_UP
     }
@@ -26,6 +28,15 @@ final class AutoRepairLoopPolicy {
     }
 
     static Decision decide(String status, boolean repairableByModel, int roundsUsed, int maxRounds) {
+        return decide(status, repairableByModel, roundsUsed, maxRounds, 0);
+    }
+
+    /**
+     * {@code stalledRounds} is the number of consecutive repair rounds whose diagnostics did not shrink.
+     * After two stalled rounds escalate to full-file rewrites; after three give up cleanly rather than
+     * burning the remaining cap on the same wall.
+     */
+    static Decision decide(String status, boolean repairableByModel, int roundsUsed, int maxRounds, int stalledRounds) {
         boolean failed = "failed".equals(status);
         boolean succeeded = "success".equals(status);
         if (!failed && !succeeded) {
@@ -34,9 +45,15 @@ final class AutoRepairLoopPolicy {
         if (succeeded) {
             return Decision.SUCCEEDED;
         }
-        if (repairableByModel && roundsUsed < maxRounds) {
-            return Decision.AUTO_REPAIR;
+        if (!repairableByModel || roundsUsed >= maxRounds) {
+            return Decision.GIVE_UP;
         }
-        return Decision.GIVE_UP;
+        if (stalledRounds >= 3) {
+            return Decision.GIVE_UP;
+        }
+        if (stalledRounds >= 2) {
+            return Decision.AUTO_REPAIR_ESCALATE;
+        }
+        return Decision.AUTO_REPAIR;
     }
 }

@@ -231,10 +231,15 @@ public class AgentService {
     }
 
     public void repairBuildAsync(long projectId, String buildLog, Callback callback) {
+        repairBuildAsync(projectId, buildLog, false, callback);
+    }
+
+    /** {@code escalate} forces full-file rewrites this round (used after the loop stalls). */
+    public void repairBuildAsync(long projectId, String buildLog, boolean escalate, Callback callback) {
         new Thread(() -> {
             ActiveWorkRegistry.begin(context, projectId, context.getString(com.androidbuilder.R.string.foreground_work_repairing));
             try {
-                BuildJobRecord job = repairBuild(projectId, buildLog);
+                BuildJobRecord job = repairBuild(projectId, buildLog, escalate);
                 callback.onComplete(job);
             } catch (Exception error) {
                 callback.onError(error);
@@ -514,7 +519,7 @@ public class AgentService {
         }
     }
 
-    private BuildJobRecord repairBuild(long projectId, String buildLog) throws Exception {
+    private BuildJobRecord repairBuild(long projectId, String buildLog, boolean escalate) throws Exception {
         ProjectRecord project = repository.getProject(projectId);
         if (project == null) {
             throw new IllegalArgumentException("Project not found: " + projectId);
@@ -543,7 +548,7 @@ public class AgentService {
 
             File sourceDir = repository.sourceDir(projectId);
             String snapshot = sourceSnapshot(sourceDir, buildLog);
-            String baseInstruction = repairInstruction(buildLog, chinese);
+            String baseInstruction = repairInstruction(buildLog, chinese, escalate);
             LocalGuardResult triage = triageBuildFailureWithCloudGuard(projectId, job.id, buildLog, snapshot, chinese);
             appendLocalGuardLog(logs, chinese ? "云端守卫构建日志分诊" : "Cloud guard build triage", triage);
             String instruction = triage.usable && triage.decision == LocalGuardResult.Decision.REWRITE
@@ -2616,12 +2621,31 @@ public class AgentService {
     }
 
     private String repairInstruction(String buildLog, boolean chinese) {
+        return repairInstruction(buildLog, chinese, false);
+    }
+
+    /**
+     * When {@code escalate} is set, the previous rounds did not shrink the error set, so we tell the model
+     * to stop emitting precise edits (whose anchors keep going stale) and instead rewrite each named file
+     * in full and create the classes/resources that are merely referenced but absent. Full writes do not
+     * anchor, so they sidestep the edit-not-found wall that stalled project-134.
+     */
+    private String repairInstruction(String buildLog, boolean chinese, boolean escalate) {
         String log = buildLog == null ? "" : buildLog.trim();
         if (log.length() > BUILD_LOG_PREVIEW_LIMIT) {
             log = log.substring(0, BUILD_LOG_PREVIEW_LIMIT) + "\n...[truncated]";
         }
+        String escalationClause = !escalate ? "" : (chinese
+                ? "重要：之前几轮修复没有减少错误数量。本轮不要使用 edit/find-replace；对 diagnostics 指向的每个文件，用 action=write 输出整份修正后的完整文件。"
+                + "对仅被引用但不存在的类（例如 Intent 里引用的 Activity），在其声明的包路径下新建完整文件；"
+                + "把每个缺失的 @color/@string/@drawable/@menu/@mipmap 资源补到正确的 res/ 文件中。\n\n"
+                : "ESCALATION: previous rounds did not reduce the error count. This round do NOT use edit/find-replace; "
+                + "for every file named by the diagnostics emit a single action=write with the COMPLETE corrected file. "
+                + "Create any class that is referenced but missing (e.g. an Activity named in an Intent) as a new file in its declared package, "
+                + "and add every missing @color/@string/@drawable/@menu/@mipmap resource to the correct res/ file.\n\n");
         if (chinese) {
-            return "根据下面的构建失败日志修复当前源码。只做最小必要改动，不要重新生成整个项目，不要删除无关功能。"
+            return escalationClause
+                    + "根据下面的构建失败日志修复当前源码。只做最小必要改动，不要重新生成整个项目，不要删除无关功能。"
                     + "优先使用 edit 操作（find/replace）精确修改 diagnostics 指向的那几行：find 必须是当前文件中唯一出现的片段，包含足够上下文以保证唯一；只有当文件确实需要整体重写时才用 write。"
                     + "javac 通常已经打印了真实的期望签名（required:/found:，或 symbol/location），请逐字采用它来修正调用，而不是凭空猜测。"
                     + "如果错误来自依赖策略，请改用当前依赖模式允许的 Android SDK/Java/XML 实现。"
@@ -2636,7 +2660,8 @@ public class AgentService {
                     + "不要使用 Kotlin synthetic 视图变量（例如 btn_save.setOnClickListener），必须先从 dialog/root view 中 findViewById 声明局部变量；"
                     + "所有 R.* 代码引用和 XML 中的 @mipmap/@style/@drawable/@string/@color/@layout 引用都必须有对应资源，缺失时补资源或改用已有资源。\n\n构建日志：\n" + log;
         }
-        return "Repair the current source based on the build failure log below. Make the smallest necessary changes, do not regenerate the whole project, and do not remove unrelated features. "
+        return escalationClause
+                + "Repair the current source based on the build failure log below. Make the smallest necessary changes, do not regenerate the whole project, and do not remove unrelated features. "
                 + "Prefer edit operations (find/replace) that change only the exact lines named by the diagnostics: find must be a snippet that occurs exactly once in the current file, with enough surrounding context to be unique; only use a full write when the file genuinely needs a wholesale rewrite. "
                 + "javac usually already prints the real expected signature (required:/found:, or the symbol and its location); use it verbatim to fix the call instead of guessing. "
                 + "If the log contains 'Could not find <group:artifact:version>', that dependency does not exist in the configured repositories: remove it or replace it with a verified catalog library (" + DependencyCatalog.coordinatesSummary() + "). "

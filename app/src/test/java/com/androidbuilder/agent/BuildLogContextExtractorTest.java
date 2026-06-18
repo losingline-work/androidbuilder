@@ -63,4 +63,27 @@ public class BuildLogContextExtractorTest {
         assertEquals("Missing field references:\n- CategorySum.total",
                 BuildLogContextExtractor.missingFieldHints(log));
     }
+
+    @Test
+    public void resourceDiagnosticsExtractsSortedDeDupedMissingTokens() {
+        String log = "> Task :app:processDebugResources FAILED\n"
+                + "/data/work/13/92/source/app/src/main/res/layout/fragment_profile.xml:9: error: resource string/category_manage (aka com.generated.app:string/category_manage) not found.\n"
+                + "/data/work/13/92/source/app/src/main/res/values/values.xml:245: error: resource color/colorSurface (aka com.generated.app:color/colorSurface) not found.\n"
+                + "/other/path/menu_host.xml:3: error: resource menu/bottom_nav_menu (aka com.generated.app:menu/bottom_nav_menu) not found.\n"
+                + "/dup/again.xml:7: error: resource color/colorSurface (aka com.generated.app:color/colorSurface) not found.\n"
+                + "error: failed linking file resources.\n";
+
+        String diagnostics = BuildLogContextExtractor.resourceDiagnostics(log, 4000);
+
+        // Sorted, de-duplicated tokens; volatile work-dir paths and line numbers stripped.
+        assertEquals("missing color/colorSurface\nmissing menu/bottom_nav_menu\nmissing string/category_manage",
+                diagnostics);
+    }
+
+    @Test
+    public void resourceDiagnosticsEmptyWhenNoAaptErrors() {
+        assertEquals("", BuildLogContextExtractor.resourceDiagnostics("BUILD SUCCESSFUL in 2s", 4000));
+        assertEquals("", BuildLogContextExtractor.resourceDiagnostics(
+                "/work/app/src/main/java/com/x/Repo.java:12: error: cannot find symbol\n1 error\n", 4000));
+    }
 }

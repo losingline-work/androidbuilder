@@ -38,4 +38,22 @@ public class AutoRepairLoopPolicyTest {
         assertEquals(AutoRepairLoopPolicy.Decision.GIVE_UP,
                 AutoRepairLoopPolicy.decide("failed", false, 0, 6));
     }
+
+    @Test
+    public void firstStallStillAutoRepairs() {
+        assertEquals(AutoRepairLoopPolicy.Decision.AUTO_REPAIR,
+                AutoRepairLoopPolicy.decide("failed", true, 1, 6, 1));
+    }
+
+    @Test
+    public void escalatesAfterTwoStalledRounds() {
+        assertEquals(AutoRepairLoopPolicy.Decision.AUTO_REPAIR_ESCALATE,
+                AutoRepairLoopPolicy.decide("failed", true, 2, 6, 2));
+    }
+
+    @Test
+    public void givesUpAfterThreeStalledRounds() {
+        assertEquals(AutoRepairLoopPolicy.Decision.GIVE_UP,
+                AutoRepairLoopPolicy.decide("failed", true, 3, 6, 3));
+    }
 }

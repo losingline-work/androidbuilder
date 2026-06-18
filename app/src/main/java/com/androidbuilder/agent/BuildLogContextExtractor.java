@@ -2,12 +2,15 @@ package com.androidbuilder.agent;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class BuildLogContextExtractor {
     private static final Pattern JAVAC_ERROR = Pattern.compile(".*\\.java:\\d+:\\s+error:.*");
     private static final Pattern ERROR_COUNT = Pattern.compile("\\d+\\s+errors?");
+    // aapt missing-resource diagnostic, e.g. "error: resource color/colorSurface (aka ...) not found."
+    private static final Pattern AAPT_MISSING_RESOURCE = Pattern.compile("error:\\s+resource\\s+([a-z]+)/([A-Za-z0-9_.]+)");
     private static final Pattern REFERENCED_TYPE = Pattern.compile("\\btype\\s+([A-Z][A-Za-z0-9_]*)\\b");
     private static final Pattern SYMBOL_VARIABLE = Pattern.compile("\\bsymbol:\\s+variable\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\b");
     private static final Pattern LOCATION_VARIABLE_TYPE = Pattern.compile("\\blocation:\\s+variable\\s+\\S+\\s+of\\s+type\\s+([A-Z][A-Za-z0-9_]*)\\b");
@@ -38,6 +41,32 @@ public final class BuildLogContextExtractor {
             }
         }
         return trimMiddle(diagnostics.toString().trim(), maxChars);
+    }
+
+    /**
+     * A stable fingerprint of the aapt missing-resource diagnostics: one sorted, de-duplicated
+     * "missing &lt;type&gt;/&lt;name&gt;" token per absent resource. Sorted so a build that merely re-orders the
+     * same missing set between rounds is not mistaken for progress; volatile work-dir paths and line
+     * numbers are dropped. Empty when the log has no aapt resource errors (a pure-javac or success log),
+     * which keeps the stall policy's empty-signature short-circuit meaningful.
+     */
+    public static String resourceDiagnostics(String logs, int maxChars) {
+        if (logs == null || logs.trim().isEmpty()) {
+            return "";
+        }
+        TreeSet<String> tokens = new TreeSet<>();
+        Matcher matcher = AAPT_MISSING_RESOURCE.matcher(logs);
+        while (matcher.find()) {
+            tokens.add("missing " + matcher.group(1) + "/" + matcher.group(2));
+        }
+        if (tokens.isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        for (String token : tokens) {
+            appendLine(out, token);
+        }
+        return trimMiddle(out.toString(), maxChars);
     }
 
     public static Set<String> referencedJavaTypes(String text) {
