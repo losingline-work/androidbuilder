@@ -43,7 +43,25 @@ public class FileOperationsWriter {
         return lastStubs;
     }
 
+    /** Strict, atomic apply: any failing operation discards the whole batch (NORMAL generation path). */
     public void apply(File sourceDir, TaskOperations taskOperations) throws IOException {
+        applyInternal(sourceDir, taskOperations, false, null);
+    }
+
+    /**
+     * Lenient apply for the REPAIR path: commit the operations that succeed and SKIP+report the ones that
+     * cannot be applied (a stale/ambiguous edit anchor), so a repair round makes net progress instead of
+     * discarding every fix because one edit's find-anchor went stale (project-134: ~80 frozen rounds). The
+     * batch-level guards (dependency guard, source-policy guard, required-file/path-escape invariants) still
+     * gate the whole result atomically — leniency only softens per-operation anchor failures.
+     */
+    public FileOperationsApplyReport applyLenient(File sourceDir, TaskOperations taskOperations) throws IOException {
+        FileOperationsApplyReport report = new FileOperationsApplyReport();
+        applyInternal(sourceDir, taskOperations, true, report);
+        return report;
+    }
+
+    private void applyInternal(File sourceDir, TaskOperations taskOperations, boolean lenient, FileOperationsApplyReport report) throws IOException {
         if (dependencyGuard != null) {
             dependencyGuard.validate(taskOperations);
         }
@@ -59,7 +77,7 @@ public class FileOperationsWriter {
             throw new IOException("Cannot create temporary source directory: " + tempDir);
         }
         try {
-            applyToDirectory(tempDir, taskOperations);
+            applyToDirectory(tempDir, taskOperations, lenient, report);
             DatabaseContractNormalizer.normalize(tempDir);
             JavaApiReconciler.reconcile(tempDir);
             // Last resort: splice compiling stubs for genuinely-missing members the model never closed,
@@ -88,7 +106,7 @@ public class FileOperationsWriter {
         }
     }
 
-    private void applyToDirectory(File sourceDir, TaskOperations taskOperations) throws IOException {
+    private void applyToDirectory(File sourceDir, TaskOperations taskOperations, boolean lenient, FileOperationsApplyReport report) throws IOException {
         String rootPath = sourceDir.getCanonicalPath();
         for (FileOperation operation : taskOperations.operations) {
             String canonicalPath = CanonicalPathPolicy.canonicalize(operation.path);
@@ -98,21 +116,35 @@ public class FileOperationsWriter {
             File target = new File(sourceDir, canonicalPath);
             String targetPath = target.getCanonicalPath();
             if (!targetPath.equals(rootPath) && !targetPath.startsWith(rootPath + File.separator)) {
+                // Security invariant: a path escaping the source tree hard-throws even in lenient mode.
                 throw new IOException("Generated file escapes project source directory: " + operation.path);
             }
-            if ("delete".equals(operation.action)) {
-                FileUtils.deleteRecursively(target);
-            } else if ("write".equals(operation.action)) {
-                FileUtils.writeText(target, operation.content);
-            } else if ("edit".equals(operation.action)) {
-                // Precise in-place edit against the on-disk file (the file already exists from a prior
-                // task or from earlier in this same operation batch, since operations apply in order).
-                // EditOperationPolicy enforces a unique find-match so an edit can never land in the
-                // wrong place; a missing/ambiguous target throws a clear "resend the full file" message.
-                String existing = target.isFile() ? FileUtils.readText(target) : "";
-                FileUtils.writeText(target, EditOperationPolicy.apply(existing, operation.find, operation.replace, canonicalPath));
-            } else {
-                throw new IllegalArgumentException("Unsupported file operation action: " + operation.action);
+            try {
+                if ("delete".equals(operation.action)) {
+                    FileUtils.deleteRecursively(target);
+                } else if ("write".equals(operation.action)) {
+                    FileUtils.writeText(target, operation.content);
+                } else if ("edit".equals(operation.action)) {
+                    // Precise in-place edit against the on-disk file (the file already exists from a prior
+                    // task or from earlier in this same operation batch, since operations apply in order).
+                    // EditOperationPolicy enforces a unique find-match so an edit can never land in the
+                    // wrong place; a missing/ambiguous target throws a clear "resend the full file" message.
+                    String existing = target.isFile() ? FileUtils.readText(target) : "";
+                    FileUtils.writeText(target, EditOperationPolicy.apply(existing, operation.find, operation.replace, canonicalPath));
+                } else {
+                    throw new IllegalArgumentException("Unsupported file operation action: " + operation.action);
+                }
+                if (report != null) {
+                    report.recordApplied(canonicalPath);
+                }
+            } catch (IllegalArgumentException opError) {
+                // Strict (generation) mode: propagate so the whole batch is discarded atomically.
+                if (!lenient) {
+                    throw opError;
+                }
+                // Lenient (repair) mode: skip just this op (stale/ambiguous anchor, or a malformed action)
+                // and record it; the surviving ops still commit so the round makes progress.
+                report.recordFailed(operation.action, canonicalPath, opError.getMessage());
             }
         }
     }

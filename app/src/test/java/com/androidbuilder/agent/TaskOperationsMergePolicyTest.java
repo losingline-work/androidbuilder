@@ -109,17 +109,53 @@ public class TaskOperationsMergePolicyTest {
     }
 
     @Test
-    public void mergeRejectsEditWhenPreviousWriteIsMissing() {
+    public void mergeDefersEditWhenAnchorIsMissingInsteadOfDiscardingBatch() {
+        // project-134: one unanchored edit must NOT throw away the whole correction batch (that froze the
+        // repair loop ~80 rounds). The surviving write is kept; the unanchored edit is deferred + recorded.
         TaskOperations previous = operations("previous",
                 write("app/src/main/java/Bar.java", "class Bar {}\n"));
         TaskOperations correction = operations("correction",
                 edit("app/src/main/java/Foo.java", "old", "new"));
 
-        IllegalArgumentException error = org.junit.Assert.assertThrows(IllegalArgumentException.class,
-                () -> TaskOperationsMergePolicy.merge(previous, correction));
+        TaskOperations merged = TaskOperationsMergePolicy.merge(previous, correction);
 
-        assertEquals("edit target not found in app/src/main/java/Foo.java (the file may have changed); resend the full file with action write",
-                error.getMessage());
+        assertEquals(1, merged.operations.size());
+        assertEquals("app/src/main/java/Bar.java", merged.operations.get(0).path);
+        assertTrue(merged.summary.contains(TaskOperationsMergePolicy.DEFERRED_EDIT_MARKER));
+        assertTrue(merged.summary.contains("app/src/main/java/Foo.java"));
+    }
+
+    @Test
+    public void staleEditDoesNotDiscardValidEditInSameCorrection() {
+        TaskOperations previous = operations("previous",
+                write("app/src/main/java/A.java", "class A { int count = 1; }\n"));
+        TaskOperations correction = operations("correction",
+                edit("app/src/main/java/A.java", "int count = 1;", "int count = 2;"),
+                edit("app/src/main/java/B.java", "anchor-not-present", "x"));
+
+        TaskOperations merged = TaskOperationsMergePolicy.merge(previous, correction);
+
+        // The valid A.java edit applies; the stale B.java edit is deferred, not thrown.
+        assertEquals(1, merged.operations.size());
+        assertEquals("app/src/main/java/A.java", merged.operations.get(0).path);
+        assertEquals("write", merged.operations.get(0).action);
+        assertEquals("class A { int count = 2; }\n", merged.operations.get(0).content);
+        assertTrue(merged.summary.contains("app/src/main/java/B.java"));
+    }
+
+    @Test
+    public void ambiguousEditIsDeferredNotThrown() {
+        TaskOperations previous = operations("previous",
+                write("app/src/main/java/A.java", "x; x;\n"));
+        TaskOperations correction = operations("correction",
+                edit("app/src/main/java/A.java", "x;", "y;"));
+
+        TaskOperations merged = TaskOperationsMergePolicy.merge(previous, correction);
+
+        // "x;" matches twice -> ambiguous -> deferred. The previous write survives unchanged.
+        assertEquals(1, merged.operations.size());
+        assertEquals("x; x;\n", merged.operations.get(0).content);
+        assertTrue(merged.summary.contains(TaskOperationsMergePolicy.DEFERRED_EDIT_MARKER));
     }
 
     @Test

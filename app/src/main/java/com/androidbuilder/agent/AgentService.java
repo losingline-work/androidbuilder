@@ -1538,7 +1538,28 @@ public class AgentService {
                 }
                 updateStreamPhase(callTag, "merging", attempt);
                 narrate(callTag, logs, BatchNarrationPolicy.mergingLine(chinese));
-                operationsWriter.apply(sourceDir, operations);
+                if (repairFlow) {
+                    // Repair path: commit the ops that apply and defer the ones whose edit anchor went
+                    // stale, so a round always makes net progress instead of discarding every fix because
+                    // of one unmatched edit (project-134: the same javac errors repeated ~80 rounds).
+                    FileOperationsApplyReport applyReport = operationsWriter.applyLenient(sourceDir, operations);
+                    if (!applyReport.anyApplied() && applyReport.anyFailed()) {
+                        // Nothing committed (every op was an unanchored edit). Raise a rewriteable error so
+                        // the loop retries with full-write instructions rather than reporting a no-op
+                        // "success" that leaves the build to fail identically next round.
+                        throw new IllegalArgumentException("edit target not found in "
+                                + applyReport.failedPaths().get(0)
+                                + " (the file may have changed); resend the full file with action write");
+                    }
+                    if (applyReport.anyFailed()) {
+                        narrate(callTag, logs, (chinese ? "🩹 已应用可定位的修改，延后 " : "🩹 applied locatable edits; deferred ")
+                                + applyReport.failedPaths().size()
+                                + (chinese ? " 处待整文件重写：" : " for full-file rewrite: ")
+                                + String.join("; ", applyReport.failedPaths()));
+                    }
+                } else {
+                    operationsWriter.apply(sourceDir, operations);
+                }
                 if (deleteDraftOnApplySuccess) {
                     deleteTaskDraftSafely(projectId, taskId);
                 }

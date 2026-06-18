@@ -193,6 +193,87 @@ public class FileOperationsWriterTest {
         assertEquals("app/src/main/AndroidManifest.xml", FileOperationsWriter.firstMissingRequiredProjectFile(root));
     }
 
+    @Test
+    public void lenientApplyCommitsMatchingOpsAndReportsStaleEdit() throws Exception {
+        // project-134: the repair path must commit the ops that apply and DEFER the unanchored edit,
+        // instead of discarding the whole batch because one find-anchor went stale.
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+
+        TaskOperations operations = new TaskOperations("repair", Arrays.asList(
+                new FileOperation("write", "app/src/main/java/com/example/Added.java",
+                        "package com.example;\nclass Added {}\n"),
+                new FileOperation("edit", "app/src/main/java/com/example/Missing.java", "",
+                        "absent anchor", "x")));
+
+        FileOperationsApplyReport report = new FileOperationsWriter().applyLenient(root, operations);
+
+        assertTrue(new File(root, "app/src/main/java/com/example/Added.java").exists());
+        assertTrue(report.anyApplied());
+        assertTrue(report.appliedPaths().contains("app/src/main/java/com/example/Added.java"));
+        assertTrue(report.anyFailed());
+        assertEquals(1, report.failedOps().size());
+        assertEquals("app/src/main/java/com/example/Missing.java", report.failedOps().get(0).path);
+        assertTrue(report.failedOps().get(0).reason.startsWith("edit target not found"));
+    }
+
+    @Test
+    public void strictApplyStillDiscardsWholeBatchOnStaleEdit() throws Exception {
+        // The strict (normal-generation) path stays atomic: a stale edit discards even a valid sibling write.
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+
+        TaskOperations operations = new TaskOperations("gen", Arrays.asList(
+                new FileOperation("write", "app/src/main/java/com/example/Added.java",
+                        "package com.example;\nclass Added {}\n"),
+                new FileOperation("edit", "app/src/main/java/com/example/Missing.java", "",
+                        "absent anchor", "x")));
+
+        assertThrows(IllegalArgumentException.class, () -> new FileOperationsWriter().apply(root, operations));
+        assertFalse(new File(root, "app/src/main/java/com/example/Added.java").exists());
+    }
+
+    @Test
+    public void lenientApplyWithAllEditsStaleAppliesNothingButReportsFailures() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+
+        TaskOperations operations = new TaskOperations("repair", Collections.singletonList(
+                new FileOperation("edit", "app/src/main/java/com/example/Missing.java", "",
+                        "absent", "x")));
+
+        FileOperationsApplyReport report = new FileOperationsWriter().applyLenient(root, operations);
+
+        assertFalse(report.anyApplied());
+        assertTrue(report.anyFailed());
+        assertEquals(1, report.failedOps().size());
+    }
+
+    @Test
+    public void lenientApplyStillEnforcesRequiredFileGuardWholesale() throws Exception {
+        // Leniency softens only per-op anchor failures; deleting a required project file is still rejected.
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+
+        TaskOperations operations = new TaskOperations("repair", Collections.singletonList(
+                new FileOperation("delete", "app/src/main/AndroidManifest.xml", "")));
+
+        assertThrows(IllegalArgumentException.class, () -> new FileOperationsWriter().applyLenient(root, operations));
+        assertTrue(new File(root, "app/src/main/AndroidManifest.xml").exists());
+    }
+
+    @Test
+    public void lenientApplyStillHardThrowsOnUncanonicalPath() throws Exception {
+        // The canonical-layout invariant is a security boundary; it hard-throws even in lenient mode.
+        File root = temporaryFolder.newFolder("source");
+        writeRequiredProjectFiles(root);
+
+        TaskOperations operations = new TaskOperations("repair", Collections.singletonList(
+                new FileOperation("write", "res/values/colors.xml", "<resources />")));
+
+        assertThrows(IOException.class, () -> new FileOperationsWriter().applyLenient(root, operations));
+    }
+
     private void write(File root, String path, String content) throws Exception {
         FileUtils.writeText(new File(root, path), content);
     }

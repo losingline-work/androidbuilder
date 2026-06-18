@@ -20,6 +20,18 @@ public class TaskOperationErrorPolicyTest {
     }
 
     @Test
+    public void retriesStaleEditAnchorsAsFullWrites() {
+        // project-134 unlock: an unanchored edit must be rewriteable so the loop retries with a full write
+        // instead of rethrowing immediately and freezing on the same diagnostics.
+        assertTrue(TaskOperationErrorPolicy.shouldRequestRewrite(new IllegalArgumentException(
+                "edit target not found in app/src/main/java/X.java (the file may have changed); resend the full file with action write")));
+        assertTrue(TaskOperationErrorPolicy.shouldRequestRewrite(new IllegalArgumentException(
+                "edit target is ambiguous in app/src/main/java/X.java (2 matches); include more surrounding context in find, or resend the full file")));
+        assertTrue(TaskOperationErrorPolicy.shouldRequestRewrite(new IllegalArgumentException(
+                "edit operation has empty find text in app/src/main/java/X.java; resend the full file with action write")));
+    }
+
+    @Test
     public void keepsUnrelatedErrorsNonRewriteable() {
         assertFalse(TaskOperationErrorPolicy.shouldRequestRewrite(new IllegalArgumentException("Project not found.")));
     }
