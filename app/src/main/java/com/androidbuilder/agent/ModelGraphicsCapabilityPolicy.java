@@ -22,7 +22,12 @@ final class ModelGraphicsCapabilityPolicy {
             OpenAiClient.OPENAI_MODEL_GPT_51,
             OpenAiClient.OPENAI_MODEL_GPT_5,
             OpenAiClient.DEEPSEEK_MODEL_PRO,
-            OpenAiClient.MINIMAX_MODEL_M3));
+            OpenAiClient.MINIMAX_MODEL_M3,
+            // Flagship mainstream models trusted with rich vector graphics; smaller/flash tiers stay restricted.
+            "glm-4.6",
+            "qwen-max",
+            "anthropic/claude-sonnet-4.5",
+            "google/gemini-2.5-pro"));
 
     private ModelGraphicsCapabilityPolicy() {
     }

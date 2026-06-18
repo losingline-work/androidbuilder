@@ -56,6 +56,13 @@ public class OpenAiClient {
     public static final String PROVIDER_OPENAI = "openai";
     public static final String PROVIDER_DEEPSEEK = "deepseek";
     public static final String PROVIDER_MINIMAX = "minimax";
+    // Mainstream OpenAI-compatible providers (same /chat/completions wire format; only base URL + model differ).
+    public static final String PROVIDER_ZHIPU = "zhipu";
+    public static final String PROVIDER_MOONSHOT = "moonshot";
+    public static final String PROVIDER_QWEN = "qwen";
+    public static final String PROVIDER_DOUBAO = "doubao";
+    public static final String PROVIDER_OPENROUTER = "openrouter";
+    public static final String PROVIDER_GROQ = "groq";
     public static final String PROVIDER_CUSTOM = "custom";
     public static final String OPENAI_MODEL_GPT_55 = "gpt-5.5";
     public static final String OPENAI_MODEL_GPT_54 = "gpt-5.4";
@@ -79,6 +86,81 @@ public class OpenAiClient {
     public static final String MINIMAX_MODEL_M2 = "MiniMax-M2";
     public static final String MINIMAX_CHINA_BASE_URL = "https://api.minimaxi.com/v1";
     public static final String MINIMAX_INTERNATIONAL_BASE_URL = "https://api.minimax.io/v1";
+
+    /** An OpenAI-compatible provider preset: full chat-completions URL + curated model list. */
+    static final class ProviderSpec {
+        final String id;
+        final String defaultEndpoint;
+        final String defaultModel;
+        final String[] models;
+
+        ProviderSpec(String id, String defaultEndpoint, String defaultModel, String[] models) {
+            this.id = id;
+            this.defaultEndpoint = defaultEndpoint;
+            this.defaultModel = defaultModel;
+            this.models = models;
+        }
+    }
+
+    // OpenAI-compatible mainstream providers, in UI order. Adding one is a single entry — the request body,
+    // streaming parse, and Bearer auth are all reused unchanged. Model ids are curated defaults the user can
+    // override (they churn; a stale id surfaces only as model-not-found on a real call).
+    private static final java.util.LinkedHashMap<String, ProviderSpec> SPECS = new java.util.LinkedHashMap<>();
+
+    static {
+        SPECS.put(PROVIDER_ZHIPU, new ProviderSpec(PROVIDER_ZHIPU,
+                "https://open.bigmodel.cn/api/paas/v4/chat/completions", "glm-4.6",
+                new String[]{"glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4-flash"}));
+        SPECS.put(PROVIDER_MOONSHOT, new ProviderSpec(PROVIDER_MOONSHOT,
+                "https://api.moonshot.cn/v1/chat/completions", "kimi-k2-0905-preview",
+                new String[]{"kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-128k", "moonshot-v1-32k"}));
+        SPECS.put(PROVIDER_QWEN, new ProviderSpec(PROVIDER_QWEN,
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "qwen-plus",
+                new String[]{"qwen-max", "qwen-plus", "qwen-turbo", "qwen3-coder-plus"}));
+        SPECS.put(PROVIDER_DOUBAO, new ProviderSpec(PROVIDER_DOUBAO,
+                "https://ark.cn-beijing.volces.com/api/v3/chat/completions", "doubao-seed-1-6-250615",
+                new String[]{"doubao-seed-1-6-250615", "doubao-1-5-pro-32k-250115", "doubao-1-5-pro-256k-250115"}));
+        SPECS.put(PROVIDER_OPENROUTER, new ProviderSpec(PROVIDER_OPENROUTER,
+                "https://openrouter.ai/api/v1/chat/completions", "anthropic/claude-sonnet-4.5",
+                new String[]{"anthropic/claude-sonnet-4.5", "google/gemini-2.5-pro", "deepseek/deepseek-chat",
+                        "meta-llama/llama-3.3-70b-instruct", "openai/gpt-4o"}));
+        SPECS.put(PROVIDER_GROQ, new ProviderSpec(PROVIDER_GROQ,
+                "https://api.groq.com/openai/v1/chat/completions", "llama-3.3-70b-versatile",
+                new String[]{"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen-2.5-32b",
+                        "deepseek-r1-distill-llama-70b"}));
+    }
+
+    /** The OpenAI-compatible preset for this provider, or null if it is not a table provider. */
+    static ProviderSpec specFor(String provider) {
+        return provider == null ? null : SPECS.get(provider);
+    }
+
+    /** The OpenAI-compatible mainstream provider ids, in UI order. */
+    public static String[] mainstreamCompatibleProviders() {
+        return SPECS.keySet().toArray(new String[0]);
+    }
+
+    /** The curated model id list for a provider's picker; empty for custom. */
+    public static String[] modelsForProvider(String provider) {
+        ProviderSpec spec = specFor(provider);
+        if (spec != null) {
+            return spec.models.clone();
+        }
+        if (PROVIDER_OPENAI.equals(provider)) {
+            return new String[]{OPENAI_MODEL_GPT_55, OPENAI_MODEL_GPT_54, OPENAI_MODEL_GPT_54_MINI,
+                    OPENAI_MODEL_GPT_54_NANO, OPENAI_MODEL_GPT_51, OPENAI_MODEL_GPT_5,
+                    OPENAI_MODEL_GPT_5_MINI, OPENAI_MODEL_GPT_5_NANO};
+        }
+        if (PROVIDER_DEEPSEEK.equals(provider)) {
+            return new String[]{DEEPSEEK_MODEL_FLASH, DEEPSEEK_MODEL_PRO};
+        }
+        if (PROVIDER_MINIMAX.equals(provider)) {
+            return new String[]{MINIMAX_MODEL_M3, MINIMAX_MODEL_M27, MINIMAX_MODEL_M27_HIGHSPEED,
+                    MINIMAX_MODEL_M25, MINIMAX_MODEL_M25_HIGHSPEED, MINIMAX_MODEL_M21,
+                    MINIMAX_MODEL_M21_HIGHSPEED, MINIMAX_MODEL_M2};
+        }
+        return new String[0];
+    }
     private static final String CHAT_COMPLETIONS_PATH = "/chat/completions";
     private static final String DEEPSEEK_OFFICIAL_CHAT_COMPLETIONS_ENDPOINT = DEEPSEEK_OFFICIAL_BASE_URL + CHAT_COMPLETIONS_PATH;
     private static final String DEEPSEEK_OPENAI_COMPATIBLE_CHAT_COMPLETIONS_ENDPOINT = DEEPSEEK_OPENAI_COMPATIBLE_BASE_URL + CHAT_COMPLETIONS_PATH;
@@ -531,6 +613,10 @@ public class OpenAiClient {
         if (PROVIDER_MINIMAX.equals(provider)) {
             return MINIMAX_OPENAI_COMPATIBLE_ENDPOINT;
         }
+        ProviderSpec spec = specFor(provider);
+        if (spec != null) {
+            return spec.defaultEndpoint;
+        }
         return "https://api.openai.com/v1/chat/completions";
     }
 
@@ -548,6 +634,11 @@ public class OpenAiClient {
         if (PROVIDER_DEEPSEEK.equals(provider) && DEEPSEEK_OFFICIAL_BASE_URL.equals(value)) {
             return DEEPSEEK_OFFICIAL_CHAT_COMPLETIONS_ENDPOINT;
         }
+        // A hand-pasted bare base for Zhipu (/api/paas/v4) or Ark/Doubao (/api/v3) needs the chat path; the
+        // /v1 family is covered by the rule below (Qwen compatible-mode/v1, Moonshot/Groq/OpenRouter /v1).
+        if (value.endsWith("/api/paas/v4") || value.endsWith("/api/v3")) {
+            return value + CHAT_COMPLETIONS_PATH;
+        }
         if (value.endsWith("/v1")) {
             return value + CHAT_COMPLETIONS_PATH;
         }
@@ -563,6 +654,10 @@ public class OpenAiClient {
         }
         if (PROVIDER_MINIMAX.equals(provider)) {
             return MINIMAX_MODEL_M3;
+        }
+        ProviderSpec spec = specFor(provider);
+        if (spec != null) {
+            return spec.defaultModel;
         }
         return OPENAI_MODEL_GPT_54_MINI;
     }

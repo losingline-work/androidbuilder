@@ -619,6 +619,112 @@ public class OpenAiClientTest {
         return builder.toString();
     }
 
+    @Test
+    public void mainstreamCompatibleProvidersResolveToFullChatEndpointsAndCuratedModels() {
+        for (String provider : OpenAiClient.mainstreamCompatibleProviders()) {
+            String endpoint = OpenAiClient.defaultEndpoint(provider);
+            assertTrue(provider + " endpoint: " + endpoint, endpoint.endsWith("/chat/completions"));
+            String[] models = OpenAiClient.modelsForProvider(provider);
+            assertTrue(provider + " has models", models.length > 0);
+            // the curated default must be one of the listed models
+            assertTrue(provider + " default in list",
+                    java.util.Arrays.asList(models).contains(OpenAiClient.defaultModel(provider)));
+        }
+        // The six expected providers are present, in UI order.
+        assertEquals(java.util.Arrays.asList(
+                OpenAiClient.PROVIDER_ZHIPU, OpenAiClient.PROVIDER_MOONSHOT, OpenAiClient.PROVIDER_QWEN,
+                OpenAiClient.PROVIDER_DOUBAO, OpenAiClient.PROVIDER_OPENROUTER, OpenAiClient.PROVIDER_GROQ),
+                java.util.Arrays.asList(OpenAiClient.mainstreamCompatibleProviders()));
+        assertEquals("https://openrouter.ai/api/v1/chat/completions",
+                OpenAiClient.defaultEndpoint(OpenAiClient.PROVIDER_OPENROUTER));
+    }
+
+    @Test
+    public void specForReturnsNullForNonTableProviders() {
+        assertEquals(null, OpenAiClient.specFor(OpenAiClient.PROVIDER_OPENAI));
+        assertEquals(null, OpenAiClient.specFor(OpenAiClient.PROVIDER_CUSTOM));
+        assertEquals(null, OpenAiClient.specFor("unknown"));
+        assertTrue(OpenAiClient.specFor(OpenAiClient.PROVIDER_ZHIPU) != null);
+    }
+
+    @Test
+    public void normalizedEndpointAppendsChatPathForBareBases() {
+        // Zhipu (/api/paas/v4), Ark/Doubao (/api/v3), and the /v1 family all resolve to a full chat URL.
+        assertEquals("https://open.bigmodel.cn/api/paas/v4/chat/completions",
+                OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_ZHIPU, "https://open.bigmodel.cn/api/paas/v4/"));
+        assertEquals("https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+                OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_DOUBAO, "https://ark.cn-beijing.volces.com/api/v3"));
+        assertEquals("https://api.moonshot.cn/v1/chat/completions",
+                OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_MOONSHOT, "https://api.moonshot.cn/v1"));
+        // A full endpoint passes through unchanged.
+        assertEquals("https://api.groq.com/openai/v1/chat/completions",
+                OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_GROQ, "https://api.groq.com/openai/v1/chat/completions"));
+    }
+
+    @Test
+    public void slashAndPrefixedModelIdsPassThroughVerbatim() {
+        // OpenRouter slash ids and Ark 'ep-' ids must never be snapped to a default.
+        assertEquals("anthropic/claude-sonnet-4.5",
+                OpenAiClient.normalizedModel(OpenAiClient.PROVIDER_OPENROUTER, "anthropic/claude-sonnet-4.5"));
+        assertEquals("ep-20240101-abcde",
+                OpenAiClient.normalizedModel(OpenAiClient.PROVIDER_DOUBAO, "ep-20240101-abcde"));
+        // blank falls back to the curated default
+        assertEquals("glm-4.6", OpenAiClient.normalizedModel(OpenAiClient.PROVIDER_ZHIPU, ""));
+    }
+
+    @Test
+    public void newProvidersSendPlainOpenAiBodyWithTemperatureAndNoReasoningKeys() throws Exception {
+        for (String provider : OpenAiClient.mainstreamCompatibleProviders()) {
+            JSONObject body = OpenAiClient.chatRequestBodyForTest(
+                    provider, OpenAiClient.defaultModel(provider), "system",
+                    Collections.emptyList(), "latest", 0.2, true);
+            assertEquals(provider, OpenAiClient.defaultModel(provider), body.getString("model"));
+            assertTrue(provider + " streams", body.getBoolean("stream"));
+            assertEquals(provider, OpenAiClient.MAX_OUTPUT_TOKENS, body.getInt("max_tokens"));
+            assertTrue(provider + " keeps temperature", body.has("temperature"));
+            assertFalse(provider + " has no reasoning_split", body.has("reasoning_split"));
+            assertFalse(provider + " has no thinking key", body.has("thinking"));
+        }
+    }
+
+    @Test
+    public void existingProviderRequestBodiesStayByteIdentical() throws Exception {
+        // Regression: routing new providers through the registry must not drift the existing bodies. Assert
+        // the exact key set (order-independent — org.json key order is not guaranteed) + the distinguishing
+        // provider tweaks (temperature / reasoning_split / thinking).
+        JSONObject openai = OpenAiClient.chatRequestBodyForTest(OpenAiClient.PROVIDER_OPENAI, "gpt-5.5", "sys",
+                Collections.emptyList(), "u", 0.2, true);
+        assertEquals(4, openai.length()); // model, stream, max_tokens, messages (gpt-5.5 omits temperature)
+        assertEquals("gpt-5.5", openai.getString("model"));
+        assertFalse(openai.has("temperature"));
+        assertFalse(openai.has("reasoning_split"));
+        assertFalse(openai.has("thinking"));
+
+        JSONObject minimax = OpenAiClient.chatRequestBodyForTest(OpenAiClient.PROVIDER_MINIMAX, "MiniMax-M3", "sys",
+                Collections.emptyList(), "u", 0.2, true);
+        assertEquals(6, minimax.length()); // + temperature + reasoning_split
+        assertEquals(0.2, minimax.getDouble("temperature"), 0.0001);
+        assertTrue(minimax.getBoolean("reasoning_split"));
+        assertFalse(minimax.has("thinking"));
+
+        JSONObject deepseek = OpenAiClient.chatRequestBodyForTest(OpenAiClient.PROVIDER_DEEPSEEK, "deepseek-v4-flash",
+                "sys", Collections.emptyList(), "u", 0.2, false); // thinking OFF
+        assertEquals(6, deepseek.length()); // + temperature + thinking
+        assertEquals("disabled", deepseek.getJSONObject("thinking").getString("type"));
+        assertFalse(deepseek.has("reasoning_split"));
+    }
+
+    @Test
+    public void flagshipNewModelsAreGraphicsCapableButTiersAreRestricted() {
+        assertEquals("", OpenAiClient.graphicsRestrictionClause(OpenAiClient.PROVIDER_ZHIPU, "glm-4.6", false));
+        assertEquals("", OpenAiClient.graphicsRestrictionClause(OpenAiClient.PROVIDER_QWEN, "qwen-max", false));
+        assertEquals("", OpenAiClient.graphicsRestrictionClause(
+                OpenAiClient.PROVIDER_OPENROUTER, "anthropic/claude-sonnet-4.5", false));
+        // a restricted small/flash tier still gets the restriction clause
+        assertFalse(OpenAiClient.graphicsRestrictionClause(
+                OpenAiClient.PROVIDER_GROQ, "llama-3.1-8b-instant", false).isEmpty());
+    }
+
     private static final class FakeSharedPreferences implements SharedPreferences {
         private final Map<String, Object> values = new HashMap<>();
 
