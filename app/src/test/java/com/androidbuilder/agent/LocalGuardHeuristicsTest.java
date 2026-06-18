@@ -77,7 +77,9 @@ public class LocalGuardHeuristicsTest {
     }
 
     @Test
-    public void preflightCatchesDaoCallWithoutDeclaration() {
+    public void preflightDefersDaoMethodMismatchToJavac() {
+        // The DAO method check is javac's authority at build: when the DAO lives in a frozen earlier
+        // batch the rewrite is unsatisfiable and loops the task, so the preflight no longer raises it.
         TaskOperations operations = new TaskOperations(
                 "Add backup",
                 Collections.singletonList(new FileOperation(
@@ -89,10 +91,7 @@ public class LocalGuardHeuristicsTest {
 
         LocalGuardResult result = LocalGuardHeuristics.reviewOperations(snapshot, operations);
 
-        assertTrue(result.usable);
-        assertEquals(LocalGuardResult.Decision.REWRITE, result.decision);
-        assertTrue(result.additionalInstruction.contains("RecordDao.listAll()"));
-        assertTrue(result.additionalInstruction.contains("JsonBackup.java"));
+        assertFalse(result.usable);
     }
 
     @Test
@@ -242,10 +241,11 @@ public class LocalGuardHeuristicsTest {
     }
 
     @Test
-    public void preflightStillFlagsGenuinelyAbsentDaoMethodWhenDaoIsVisible() {
-        // The DAO declaration is visible as a full-text (non-truncated) section but lacks the method,
-        // so this is a genuinely-absent method and must still be flagged - the RC2 hardening must not
-        // weaken detection when the guard can actually see the DAO's complete declarations.
+    public void preflightDefersAbsentDaoMethodToJavacEvenWhenDaoIsVisible() {
+        // Even when the DAO is visible and the method is genuinely absent, the preflight no longer flags
+        // it: the DAO is typically a frozen earlier batch the current batch cannot edit, so the rewrite
+        // demand is unsatisfiable. javac at the compile gate is the authority and the repair loop, seeing
+        // the whole tree, can add the method to the DAO.
         TaskOperations operations = new TaskOperations(
                 "add backup",
                 Collections.singletonList(new FileOperation(
@@ -264,10 +264,7 @@ public class LocalGuardHeuristicsTest {
 
         LocalGuardResult result = LocalGuardHeuristics.reviewOperations(snapshot, operations);
 
-        assertTrue(result.usable);
-        assertEquals(LocalGuardResult.Decision.REWRITE, result.decision);
-        assertTrue(result.additionalInstruction.contains("TransactionDao.getRecent()"));
-        assertTrue(result.additionalInstruction.contains("TransactionRepository.java"));
+        assertFalse(result.usable);
     }
 
     @Test

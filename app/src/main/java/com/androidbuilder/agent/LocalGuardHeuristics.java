@@ -28,33 +28,20 @@ final class LocalGuardHeuristics {
     }
 
     static LocalGuardResult reviewOperations(String sourceSnapshot, TaskOperations operations) {
-        if (operations == null || operations.operations == null || operations.operations.isEmpty()) {
-            return LocalGuardResult.unusable("");
-        }
-        StringBuilder hints = new StringBuilder();
-        for (FileOperation operation : operations.operations) {
-            if (operation == null || operation.content == null || operation.path == null) {
-                continue;
-            }
-            String path = operation.path;
-            String content = operation.content;
-            // No arrow/lambda hint here: this scans RAW content, so it flagged '->' inside comments,
-            // Javadocs and string literals - an unsatisfiable "delete the arrow from your comment"
-            // demand. The merge-time AndroidSourceGuard already enforces the lambda policy on
-            // comment/string-stripped code (its sole authority), so a real lambda is still caught.
-            //
-            // No resource-existence hint either (XML @type/name or Java R.drawable.*): the preflight only
-            // sees this one task's operations plus a DIGESTED snapshot, so it cannot see resources owned
-            // by another task (colors/styles/strings/mipmaps declared in the values task, the launcher
-            // icon, the app theme) and falsely flagged them as missing, looping the task. Resource
-            // existence is aapt's authority at build time; a genuinely missing resource is caught there.
-            appendMissingDbHelperFieldHints(hints, sourceSnapshot, operations, path, content);
-            appendMissingDaoMethodHints(hints, sourceSnapshot, operations, path, content);
-        }
-        if (hints.length() == 0) {
-            return LocalGuardResult.unusable("");
-        }
-        return LocalGuardResult.rewrite("Deterministic rules found high-confidence source/API mismatches.", hints.toString());
+        // The deterministic pre-apply review no longer raises ANY hint. Every check it used to run is
+        // owned by a real build tool that the source flows to anyway:
+        //  - cross-file Java API mismatch (a call to a DAO method / DBHelper field / model field not
+        //    declared) is javac's authority at the compile gate;
+        //  - resource existence (@type/name, R.*) is aapt's authority at resource linking;
+        //  - the lambda/Kotlin/synthetic policy is the merge-time AndroidSourceGuard's authority.
+        // The preflight only sees ONE task's operations plus a DIGESTED snapshot, so when the missing
+        // declaration lives in an already-accepted (frozen) batch or a sibling task, its rewrite demand
+        // is UNSATISFIABLE and loops the task to exhaustion (observed: a data-layer task whose frozen DAO
+        // could not gain the method its later batch's callers needed, burning all 5 attempts). The build's
+        // compile/resource gates + the auto-repair loop see the WHOLE tree and can modify the frozen file,
+        // so they close any real gap without the false in-task loop. Kept as a seam for future
+        // genuinely-local, always-satisfiable checks.
+        return LocalGuardResult.unusable("");
     }
 
     static LocalGuardResult rewritePolicyFailure(String policyError) {
