@@ -100,6 +100,9 @@ public class FileOperationsWriter {
                 // Strip a color-only attribute pointing at a @drawable (e.g. app:cardBackgroundColor) — a
                 // guaranteed "Can't convert to ComplexColor" inflate crash that aapt cannot see.
                 lastStubs.addAll(LayoutColorAttributeReconciler.reconcile(tempDir));
+                // Inject an auto crash-reporter so a launch crash is captured to the control app's sink
+                // (no computer/adb needed); the user can then repair from the captured crash.
+                lastStubs.addAll(CrashReporterInjector.reconcile(tempDir));
             }
             validateNoRequiredFileRemoved(sourceDir, tempDir);
             try {

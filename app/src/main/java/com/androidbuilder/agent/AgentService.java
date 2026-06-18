@@ -267,6 +267,22 @@ public class AgentService {
         }, "agent-repair-crash").start();
     }
 
+    /**
+     * If the injected crash reporter captured a launch crash for this project's generated app, repair from
+     * it (and clear the capture so it fires once). Returns false when nothing was captured.
+     */
+    public boolean repairLatestCapturedCrashAsync(long projectId, Callback callback) {
+        File sourceDir = repository.sourceDir(projectId);
+        String appPackage = inferAppPackage(sourceDir);
+        String crash = com.androidbuilder.crash.CrashReportStore.read(context, appPackage);
+        if (crash == null || crash.trim().isEmpty()) {
+            return false;
+        }
+        com.androidbuilder.crash.CrashReportStore.clear(context, appPackage);
+        repairCrashAsync(projectId, crash, callback);
+        return true;
+    }
+
     private static final java.util.regex.Pattern APP_NAMESPACE_PATTERN =
             java.util.regex.Pattern.compile("namespace\\s*(?:=\\s*)?[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
 

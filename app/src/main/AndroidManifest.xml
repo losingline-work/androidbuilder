@@ -47,5 +47,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Crash sink: generated apps post their FATAL stack here (insert runs in this process). -->
+        <provider
+            android:name="com.androidbuilder.crash.CrashReportProvider"
+            android:authorities="com.androidbuilder.crashsink"
+            android:exported="true" />
     </application>
 </manifest>

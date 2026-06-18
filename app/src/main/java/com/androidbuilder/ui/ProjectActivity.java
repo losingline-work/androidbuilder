@@ -318,6 +318,48 @@ public class ProjectActivity extends BaseActivity {
         super.onBackPressed();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        maybeRepairCapturedCrash();
+    }
+
+    /**
+     * The injected crash reporter may have captured a launch crash while the generated app was open; on
+     * returning to this screen, repair from it automatically. The capture is cleared on read, so this fires
+     * once per crash.
+     */
+    private void maybeRepairCapturedCrash() {
+        if (busy || agentService == null) {
+            return;
+        }
+        boolean started = agentService.repairLatestCapturedCrashAsync(projectId, new AgentService.Callback() {
+            @Override
+            public void onComplete(BuildJobRecord job) {
+                runOnUiThread(() -> {
+                    setBusy(false);
+                    refresh();
+                    startBuild();
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                runOnUiThread(() -> {
+                    setBusy(false);
+                    refresh();
+                    Toast.makeText(ProjectActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+        if (started) {
+            setBusy(true);
+            setOperationStatus(getString(R.string.repair_build_started));
+            Toast.makeText(this, R.string.repair_build_started, Toast.LENGTH_SHORT).show();
+            refresh();
+        }
+    }
+
     private void refresh() {
         ProjectRecord project = repository.getProject(projectId);
         if (project == null) {
