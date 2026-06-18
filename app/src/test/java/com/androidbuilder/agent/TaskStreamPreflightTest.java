@@ -45,6 +45,55 @@ public class TaskStreamPreflightTest {
     }
 
     @Test
+    public void allowsFileBeneathDirectoryPrefixAllowedPath() {
+        // Hermes contracts list directory prefixes (with a trailing slash) in allowedPaths while naming
+        // exact files in expectedFiles. A file under such a prefix must NOT be blocked as "outside
+        // allowedPaths" — that was the project-133 false positive on model/Transaction.java.
+        HermesTaskContract contract = new HermesTaskContract(
+                Collections.singletonList("app/src/main/java/com/generated/app/model/"),
+                Collections.singletonList("app/src/main/java/com/generated/app/model/Transaction.java"),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                "",
+                false);
+
+        String error = TaskStreamPreflight.review(Collections.singletonList(
+                new FileOperation("write", "app/src/main/java/com/generated/app/model/Transaction.java",
+                        "package com.generated.app.model; class Transaction {}")
+        ), contract);
+
+        assertNull(error);
+    }
+
+    @Test
+    public void rejectsSiblingDirectoryOutsideDirectoryPrefixAllowedPath() {
+        // The directory scope must stay tight: a near-name sibling directory ("models") is not covered
+        // by an allowedPath of ".../model/".
+        HermesTaskContract contract = new HermesTaskContract(
+                Collections.singletonList("app/src/main/java/com/generated/app/model/"),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                "",
+                false);
+
+        String error = TaskStreamPreflight.review(Collections.singletonList(
+                new FileOperation("write", "app/src/main/java/com/generated/app/models/Other.java",
+                        "package com.generated.app.models; class Other {}")
+        ), contract);
+
+        assertTrue(error.contains("outside allowedPaths"));
+    }
+
+    @Test
     public void rejectsJavaLambdasAfterStrippingCommentsAndStrings() {
         String harmless = TaskStreamPreflight.review(Collections.singletonList(
                 new FileOperation("write", "app/src/main/java/com/example/Notes.java",

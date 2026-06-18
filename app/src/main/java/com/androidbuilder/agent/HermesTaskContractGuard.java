@@ -110,11 +110,16 @@ final class HermesTaskContractGuard {
         if ("*".equals(pattern) || pattern.equals(path)) {
             return true;
         }
-        if (!pattern.endsWith("/*")) {
-            return false;
+        if (pattern.endsWith("/*")) {
+            String prefix = pattern.substring(0, pattern.length() - 2);
+            return path.equals(prefix) || path.startsWith(prefix + "/") || path.startsWith(prefix + ".");
         }
-        String prefix = pattern.substring(0, pattern.length() - 2);
-        return path.equals(prefix) || path.startsWith(prefix + "/") || path.startsWith(prefix + ".");
+        // Hermes contracts emit directory prefixes in allowedPaths (e.g. ".../model/", whose trailing
+        // slash is normalized away to ".../model") while listing exact files in expectedFiles. Treat a
+        // bare path as a directory scope so a valid file beneath it is not wrongly blocked as "outside
+        // allowedPaths". An exact-file allowedPath still matches only itself via the equals check above.
+        String directory = pattern.endsWith("/") ? pattern.substring(0, pattern.length() - 1) : pattern;
+        return path.startsWith(directory + "/");
     }
 
     private static HermesReview ok() {
