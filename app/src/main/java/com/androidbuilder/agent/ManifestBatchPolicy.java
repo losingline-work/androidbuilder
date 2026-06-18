@@ -107,12 +107,24 @@ final class ManifestBatchPolicy {
         // A complex layout (a full Fragment screen) can fill a whole cloud response on its own; weight it
         // so at most ONE layout lands per batch (6 > MAX_BATCH_WEIGHT/2), which keeps every response well
         // under max_tokens and lets the carry-forward converge one layout at a time instead of re-truncating
-        // a bundle of them. Small res XML (icons, values) still pack densely alongside it.
+        // a bundle of them. Small res XML (icons, menu, color selectors) still pack densely alongside it.
         if (path.startsWith("app/src/main/res/layout")) {
             return 6;
         }
+        // Heavy value files: a full-featured app's strings.xml (hundreds of strings) and verbose Material
+        // themes/arrays are NOT tiny — bundling the whole values/ set in one response overflows max_tokens
+        // and loops the carry-forward (project-141: 7 value files in batch 1/1 truncated to exhaustion).
+        if (path.endsWith("/strings.xml")) {
+            return 4;
+        }
+        if (path.endsWith("/themes.xml") || path.endsWith("/arrays.xml") || path.endsWith("/styles.xml")) {
+            return 3;
+        }
+        if (path.startsWith("app/src/main/res/values")) {
+            return 2; // colors, dimens, and other values variants
+        }
         if (path.startsWith("app/src/main/res/") && path.endsWith(".xml")) {
-            return 1;
+            return 1; // drawable, menu, color selectors, mipmap — small
         }
         return 3;
     }

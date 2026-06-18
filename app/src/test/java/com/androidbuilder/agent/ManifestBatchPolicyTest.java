@@ -8,21 +8,55 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class ManifestBatchPolicyTest {
     @Test
-    public void smallManifestsStayInOneBatchWithOriginalOrder() {
+    public void smallLightManifestsStayInOneBatchWithOriginalOrder() {
+        // A few genuinely-light files (no heavy layout/strings) stay in one batch, in original order.
         List<TaskManifest.Entry> files = Arrays.asList(
-                entry("app/src/main/java/MainActivity.java"),
-                entry("app/src/main/res/values/strings.xml"),
-                entry("app/src/main/res/layout/activity_main.xml"));
+                entry("app/src/main/res/values/colors.xml"),
+                entry("app/src/main/res/values/dimens.xml"),
+                entry("app/src/main/res/drawable/ic_add.xml"));
 
         List<List<TaskManifest.Entry>> batches = ManifestBatchPolicy.batches(files);
 
         assertEquals(1, batches.size());
-        assertEquals("app/src/main/java/MainActivity.java", batches.get(0).get(0).path);
-        assertEquals("app/src/main/res/values/strings.xml", batches.get(0).get(1).path);
+        assertEquals("app/src/main/res/values/colors.xml", batches.get(0).get(0).path);
+        assertEquals("app/src/main/res/values/dimens.xml", batches.get(0).get(1).path);
+    }
+
+    @Test
+    public void heavyValueSetIsSplitNotBundledIntoOneOversizedBatch() {
+        // project-141: the whole values/ set (a big strings.xml + verbose themes/arrays) plus menu must NOT
+        // be one response that overflows max_tokens and loops the carry-forward to exhaustion.
+        List<TaskManifest.Entry> files = Arrays.asList(
+                entry("app/src/main/res/values/colors.xml"),
+                entry("app/src/main/res/values/strings.xml"),
+                entry("app/src/main/res/values/dimens.xml"),
+                entry("app/src/main/res/values/arrays.xml"),
+                entry("app/src/main/res/values/themes.xml"),
+                entry("app/src/main/res/values-night/themes.xml"),
+                entry("app/src/main/res/menu/menu_bottom_nav.xml"));
+
+        List<List<TaskManifest.Entry>> batches = ManifestBatchPolicy.batches(files);
+
+        assertTrue("the heavy value set must split across batches", batches.size() >= 2);
+        for (List<TaskManifest.Entry> batch : batches) {
+            // strings.xml never shares a batch with BOTH themes files (the worst-case overflow combo).
+            boolean hasStrings = false;
+            int themes = 0;
+            for (TaskManifest.Entry e : batch) {
+                if (e.path.endsWith("/strings.xml")) {
+                    hasStrings = true;
+                }
+                if (e.path.endsWith("/themes.xml")) {
+                    themes++;
+                }
+            }
+            assertFalse("strings.xml bundled with both themes files", hasStrings && themes >= 2);
+        }
     }
 
     @Test
