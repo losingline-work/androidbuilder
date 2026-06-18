@@ -31,4 +31,15 @@ public final class AppSettings {
         }
         return context.getResources().getConfiguration().getLocales().get(0).getLanguage().startsWith("zh");
     }
+
+    private static final String KEY_CODE_REVIEW = "code_review_enabled";
+
+    /** Whether the pre-build LLM code-review gate runs after generation. Default on. */
+    public static boolean isCodeReviewEnabled(Context context) {
+        return prefs(context).getBoolean(KEY_CODE_REVIEW, true);
+    }
+
+    public static void setCodeReviewEnabled(Context context, boolean enabled) {
+        prefs(context).edit().putBoolean(KEY_CODE_REVIEW, enabled).apply();
+    }
 }

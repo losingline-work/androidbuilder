@@ -132,6 +132,19 @@ public class OpenAiClient {
         return completeChat(tasksSystemPrompt(chinese), java.util.Collections.emptyList(), "Approved engineering plan:\n\n" + plan, 0.2, chinese, TASKS_READ_TIMEOUT_MS, true);
     }
 
+    /** Pre-build code review: returns the reviewer's JSON findings ({@link CodeReviewParser} parses it). */
+    public String reviewGeneratedCode(String sourceSnapshot, boolean chinese, String callTag) throws Exception {
+        return completeChat(
+                CodeReviewPrompt.systemPrompt(chinese),
+                java.util.Collections.emptyList(),
+                CodeReviewPrompt.userPrompt(sourceSnapshot, chinese),
+                0.1,
+                chinese,
+                CODING_READ_TIMEOUT_MS,
+                true,
+                callTag);
+    }
+
     public String createTaskManifest(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, boolean chinese, String callTag) throws Exception {
         return completeChat(
                 taskManifestSystemPrompt(chinese),

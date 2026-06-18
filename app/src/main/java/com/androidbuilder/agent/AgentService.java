@@ -527,6 +527,11 @@ public class AgentService {
                         : "; " + failedTasks + " task(s) still failed. Review the logs and run the plan again to retry.";
             }
             repository.addMessage(projectId, "assistant", message, job.id);
+            // Pre-build code-review gate: only when generation is genuinely complete (nothing pending/failed).
+            // Non-fatal — a review failure never blocks the build.
+            if (next == null && failedTasks == 0) {
+                codeReviewGate(projectId, job, logs, chinese);
+            }
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
         } catch (Exception error) {
@@ -553,6 +558,46 @@ public class AgentService {
                 throw error;
             }
             throw new IllegalStateException(errorMessage, error);
+        }
+    }
+
+    /**
+     * Pre-build code-review gate: one LLM pass over the generated app's snapshot for build-INVISIBLE
+     * runtime-crash / wiring bugs, with only the concrete blocker/high findings applied through the repair
+     * path before the build runs. Non-fatal and single-pass — never blocks generation, and the build +
+     * runtime tiers remain the authorities behind it.
+     */
+    private void codeReviewGate(long projectId, BuildJobRecord job, File logs, boolean chinese) {
+        if (!AppSettings.isCodeReviewEnabled(context)) {
+            return;
+        }
+        try {
+            File sourceDir = repository.sourceDir(projectId);
+            ProjectPlanRecord plan = repository.latestProjectPlan(projectId);
+            String planContent = plan == null || plan.content.trim().isEmpty() ? fallbackRepairPlan(chinese) : plan.content;
+            String snapshot = sourceSnapshot(sourceDir, "");
+            FileUtils.appendText(logs, chinese ? "正在进行构建前代码评审。\n" : "Running pre-build code review.\n");
+            repository.addMessage(projectId, "assistant", chinese ? "正在进行构建前代码评审。" : "Running a pre-build code review.", job.id);
+            String response = openAiClient.reviewGeneratedCode(snapshot, chinese, job.id + ":code-review");
+            List<CodeReviewParser.Finding> findings = CodeReviewParser.parse(response);
+            String instruction = CodeReviewParser.toRepairInstruction(findings, chinese);
+            if (instruction.isEmpty()) {
+                FileUtils.appendText(logs, chinese ? "代码评审通过，未发现需修复的问题。\n" : "Code review passed; nothing to fix.\n");
+                return;
+            }
+            int count = CodeReviewParser.actionable(findings).size();
+            String found = (chinese ? "代码评审发现 " : "Code review found ") + count + (chinese ? " 个问题，正在修复。" : " issue(s); repairing.");
+            FileUtils.appendText(logs, found + "\n");
+            repository.addMessage(projectId, "assistant", found, job.id);
+            createAndApplyTaskOperations(projectId, job.id, sourceDir, planContent,
+                    chinese ? "代码评审修复" : "Code review fix", instruction, snapshot, logs, chinese, instruction, true);
+            FileUtils.appendText(logs, chinese ? "代码评审修复完成。\n" : "Code review fixes applied.\n");
+        } catch (Exception error) {
+            try {
+                FileUtils.appendText(logs, (chinese ? "代码评审已跳过：" : "Code review skipped: ")
+                        + (error.getMessage() == null ? error.toString() : error.getMessage()) + "\n");
+            } catch (Exception ignored) {
+            }
         }
     }
 
