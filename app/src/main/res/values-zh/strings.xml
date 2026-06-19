@@ -230,6 +230,16 @@
     <string name="plan_generated">工程计划已生成。</string>
     <string name="plan_required">请先生成工程计划。</string>
     <string name="plan_executing">正在执行计划...</string>
+    <string name="milestone_generating">正在生成里程碑 M%1$d · %2$s</string>
+    <string name="milestone_checkpointing">里程碑构建通过，正在记录检查点…</string>
+    <string name="milestone_rolling_back">里程碑无法构建，正在回滚到上一个检查点…</string>
+    <string name="milestone_paused_at_checkpoint">已在当前里程碑检查点暂停。</string>
+    <string name="milestone_all_done">所有里程碑已完成，app 可运行。</string>
+    <string name="milestone_failed_rolled_back">里程碑 %1$s 构建失败，已回滚到上一个可运行检查点。</string>
+    <string name="milestone_pause">暂停推进</string>
+    <string name="milestone_single_step">单步：下一个里程碑</string>
+    <string name="milestone_pause_pending">将在当前里程碑完成后暂停。</string>
+    <string name="milestone_requires_embedded">增量里程碑构建需要内置构建运行时。请在设置中将构建后端切换为内置。</string>
     <string name="streaming_thinking">思考中…%1$s 字</string>
     <string name="streaming_writing">正在写入…%1$s 字</string>
     <string name="source_generated_from_plan">已完成一个计划任务。</string>

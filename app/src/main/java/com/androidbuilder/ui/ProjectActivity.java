@@ -26,6 +26,7 @@ import android.widget.Toast;
 import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
 import com.androidbuilder.agent.AgentService;
+import com.androidbuilder.agent.MilestoneStatus;
 import com.androidbuilder.agent.BuildFailureClassifier;
 import com.androidbuilder.agent.HermesRecoveryPolicy;
 import com.androidbuilder.agent.OpenAiClient;
@@ -41,6 +42,7 @@ import com.androidbuilder.model.HermesAgentRunRecord;
 import com.androidbuilder.model.ProjectLogEntry;
 import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
+import com.androidbuilder.model.ProjectMilestoneRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
 import com.androidbuilder.server.LocalBuildServer;
 import com.androidbuilder.util.ActiveWorkRegistry;
@@ -121,6 +123,11 @@ public class ProjectActivity extends BaseActivity {
     // the auto loop and the (previously unbounded) manual Repair path.
     private int stalledRounds;
     private long repairSourceBuildJobId = -1;
+    // Incremental milestone march: default auto, pausable at each green checkpoint.
+    private boolean milestoneMarchActive;
+    private boolean milestoneMarchPaused;
+    private boolean milestoneSingleStep;
+    private long marchMilestoneId = -1;
     private long operationStartedAt;
     private long activeTaskStartedAt;
     private String statusSummary = "";
@@ -160,6 +167,14 @@ public class ProjectActivity extends BaseActivity {
             }
             if (item.getItemId() == R.id.action_log_query) {
                 toggleLogQuery();
+                return true;
+            }
+            if (item.getItemId() == R.id.action_pause_march) {
+                pauseMilestoneMarch();
+                return true;
+            }
+            if (item.getItemId() == R.id.action_single_step) {
+                startMilestoneMarch(true);
                 return true;
             }
             return false;
@@ -386,6 +401,7 @@ public class ProjectActivity extends BaseActivity {
         }
         updateBuildLogPanel();
         updateActionButtons();
+        updateMarchMenu();
         updateKeepScreenOn();
         if (!messages.isEmpty() || shouldShowOperationStatus()) {
             scrollMessagesToBottom();
@@ -875,9 +891,26 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void executePlan() {
+        // Incremental flow: "execute" starts (or resumes) the milestone march. It is allowed whenever a plan
+        // exists and a milestone is still pending — independent of plan.status, so it resumes after a paused
+        // or partly-built run, not only from the initial "planned" state.
         latestPlan = repository.latestProjectPlan(projectId);
-        if (latestPlan == null || latestPlan.content.trim().isEmpty() || !"planned".equals(latestPlan.status)) {
+        boolean hasPlan = latestPlan != null && !latestPlan.content.trim().isEmpty();
+        if (!hasPlan || repository.firstUnfinishedMilestone(projectId) == null) {
             Toast.makeText(this, R.string.plan_required, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        startMilestoneMarch(false);
+    }
+
+    // ---- Incremental milestone march (default auto-march, pausable at each green checkpoint) ----
+
+    private void startMilestoneMarch(boolean singleStep) {
+        if (milestoneMarchActive) {
+            // Already marching; a single-step request just unpauses to do exactly the next one.
+            milestoneMarchPaused = false;
+            milestoneSingleStep = singleStep;
+            updateMarchMenu();
             return;
         }
         if (!new OpenAiClient(this).isConfigured()) {
@@ -885,12 +918,153 @@ public class ProjectActivity extends BaseActivity {
             startActivity(new android.content.Intent(this, SettingsActivity.class));
             return;
         }
-        setBusy(true);
-        setOperationStatus(getString(R.string.plan_executing));
-        adapter.notifyDataSetChanged();
-        autoExecutingPlan = true;
+        // The march advances/checkpoints/rolls back entirely through the embedded auto-repair loop
+        // (onBuildJobChanged). The external Termux backend reports over a separate channel the march cannot
+        // observe, so refuse to march there rather than freeze after the first build.
+        BuildBackend marchBackend = BuildBackendFactory.create(this, repository, buildServer);
+        if (BuildBackendSettings.EXTERNAL_TERMUX.equals(marchBackend.id())) {
+            Toast.makeText(this, R.string.milestone_requires_embedded, Toast.LENGTH_LONG).show();
+            return;
+        }
+        milestoneMarchActive = true;
+        milestoneMarchPaused = false;
+        milestoneSingleStep = singleStep;
         updateKeepScreenOn();
-        executePlanStep();
+        advanceMilestoneMarch();
+    }
+
+    private void advanceMilestoneMarch() {
+        ProjectMilestoneRecord next = repository.firstUnfinishedMilestone(projectId);
+        if (next == null) {
+            finishMilestoneMarch(getString(R.string.milestone_all_done));
+            return;
+        }
+        marchMilestoneId = next.id;
+        activeTaskStartedAt = System.currentTimeMillis();
+        setBusy(true);
+        setOperationStatus(getString(R.string.milestone_generating, next.orderIndex, next.title));
+        updateElapsedTicker();
+        if (adapter != null) {
+            adapter.notifyDataSetChanged();
+        }
+        agentService.generateMilestoneAsync(projectId, next.id, new AgentService.Callback() {
+            @Override
+            public void onComplete(BuildJobRecord job) {
+                runOnUiThread(() -> {
+                    refresh();
+                    // Fresh auto-repair budget for this milestone's build.
+                    autoRepairRounds = 0;
+                    stalledRounds = 0;
+                    lastFailureSignature = "";
+                    if (!startBuild()) {
+                        // Generation left the project unbuildable (e.g. a required file missing); treat this
+                        // milestone as a build failure so the march rolls back and stops instead of freezing.
+                        onMilestoneBuildExhausted();
+                    }
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                runOnUiThread(() -> {
+                    refresh();
+                    finishMilestoneMarch(null);
+                    Toast.makeText(ProjectActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    /** A march milestone built green: checkpoint it, then advance / pause / finish per the march policy. */
+    private void onMilestoneBuildGreen(long greenBuildJobId) {
+        final long milestoneId = marchMilestoneId;
+        final MilestoneMarchPolicy.Action action = MilestoneMarchPolicy.onBuildResult(
+                AutoRepairLoopPolicy.Decision.SUCCEEDED,
+                hasOtherUnfinishedMilestone(milestoneId),
+                milestoneMarchPaused,
+                milestoneSingleStep);
+        setOperationStatus(getString(R.string.milestone_checkpointing));
+        agentService.checkpointMilestoneAsync(projectId, milestoneId, greenBuildJobId, () -> runOnUiThread(() -> {
+            refresh();
+            switch (action) {
+                case CHECKPOINT_AND_ADVANCE:
+                    advanceMilestoneMarch();
+                    break;
+                case CHECKPOINT_AND_PAUSE:
+                    finishMilestoneMarch(getString(R.string.milestone_paused_at_checkpoint));
+                    break;
+                case CHECKPOINT_AND_DONE:
+                default:
+                    finishMilestoneMarch(getString(R.string.milestone_all_done));
+                    break;
+            }
+        }));
+    }
+
+    /** A march milestone could not be made to build: mark it failed, roll back to the last green app, stop. */
+    private void onMilestoneBuildExhausted() {
+        final long milestoneId = marchMilestoneId;
+        if (milestoneId > 0) {
+            repository.updateMilestoneStatus(milestoneId, MilestoneStatus.FAILED);
+        }
+        setOperationStatus(getString(R.string.milestone_rolling_back));
+        agentService.rollbackToLastCheckpointAsync(projectId, () -> runOnUiThread(() -> {
+            ProjectMilestoneRecord failed = milestoneId > 0 ? repository.getMilestone(milestoneId) : null;
+            String title = failed == null ? "" : ("M" + failed.orderIndex + " · " + failed.title);
+            refresh();
+            finishMilestoneMarch(getString(R.string.milestone_failed_rolled_back, title));
+        }));
+    }
+
+    private void finishMilestoneMarch(String message) {
+        milestoneMarchActive = false;
+        milestoneSingleStep = false;
+        marchMilestoneId = -1;
+        setBusy(false);
+        updateKeepScreenOn();
+        refresh();
+        if (message != null && !message.isEmpty()) {
+            setOperationStatus(message);
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void pauseMilestoneMarch() {
+        if (!milestoneMarchActive || milestoneMarchPaused) {
+            return;
+        }
+        milestoneMarchPaused = true;
+        setOperationStatus(getString(R.string.milestone_pause_pending));
+        Toast.makeText(this, R.string.milestone_pause_pending, Toast.LENGTH_SHORT).show();
+        updateMarchMenu();
+    }
+
+    private boolean hasOtherUnfinishedMilestone(long exceptMilestoneId) {
+        for (ProjectMilestoneRecord milestone : repository.listProjectMilestones(projectId)) {
+            if (milestone.id != exceptMilestoneId && !MilestoneStatus.DONE.equals(milestone.status)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void updateMarchMenu() {
+        if (projectToolbar == null) {
+            return;
+        }
+        android.view.Menu menu = projectToolbar.getMenu();
+        if (menu == null) {
+            return;
+        }
+        android.view.MenuItem pause = menu.findItem(R.id.action_pause_march);
+        android.view.MenuItem step = menu.findItem(R.id.action_single_step);
+        boolean hasPending = repository.firstUnfinishedMilestone(projectId) != null;
+        if (pause != null) {
+            pause.setVisible(milestoneMarchActive && !milestoneMarchPaused);
+        }
+        if (step != null) {
+            step.setVisible(!milestoneMarchActive && hasPending && !busy);
+        }
     }
 
     private void executePlanStep() {
@@ -991,19 +1165,20 @@ public class ProjectActivity extends BaseActivity {
         startBuild();
     }
 
-    private void startBuild() {
+    /** @return true if a build was actually started; false (with a Toast) when a precondition blocked it. */
+    private boolean startBuild() {
         if (!hasSourceFiles()) {
             Toast.makeText(this, R.string.generate_source_first, Toast.LENGTH_SHORT).show();
-            return;
+            return false;
         }
         String missingRequired = com.androidbuilder.agent.FileOperationsWriter.firstMissingRequiredProjectFile(sourceRoot);
         if (missingRequired != null) {
             Toast.makeText(this, getString(R.string.build_missing_required_file, missingRequired), Toast.LENGTH_LONG).show();
-            return;
+            return false;
         }
         if (buildServer == null) {
             Toast.makeText(this, R.string.local_server_not_running, Toast.LENGTH_SHORT).show();
-            return;
+            return false;
         }
         BuildJobRecord job = repository.createBuildJob(projectId);
         BuildBackend backend = BuildBackendFactory.create(this, repository, buildServer);
@@ -1020,6 +1195,7 @@ public class ProjectActivity extends BaseActivity {
         backend.build(buildJob == null ? job : buildJob, (pid, jid) -> runOnUiThread(() -> onBuildJobChanged(jid)));
         refresh();
         Toast.makeText(this, BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started, Toast.LENGTH_SHORT).show();
+        return true;
     }
 
     /**
@@ -1060,20 +1236,37 @@ public class ProjectActivity extends BaseActivity {
             case IN_PROGRESS:
                 return;
             case SUCCEEDED:
+                autoLoopHandledBuildJobId = jobId;
+                autoRepairRounds = 0;
+                stalledRounds = 0;
+                lastFailureSignature = "";
+                if (milestoneMarchActive) {
+                    onMilestoneBuildGreen(jobId);
+                }
+                return;
             case GIVE_UP:
                 autoLoopHandledBuildJobId = jobId;
                 autoRepairRounds = 0;
                 stalledRounds = 0;
                 lastFailureSignature = "";
+                if (milestoneMarchActive) {
+                    onMilestoneBuildExhausted();
+                }
                 return;
             case AUTO_REPAIR:
                 autoLoopHandledBuildJobId = jobId;
                 autoRepairRounds++;
+                if (milestoneMarchActive && marchMilestoneId > 0) {
+                    repository.updateMilestoneStatus(marchMilestoneId, MilestoneStatus.REPAIRING);
+                }
                 autoRepairFrom(job, false);
                 return;
             case AUTO_REPAIR_ESCALATE:
                 autoLoopHandledBuildJobId = jobId;
                 autoRepairRounds++;
+                if (milestoneMarchActive && marchMilestoneId > 0) {
+                    repository.updateMilestoneStatus(marchMilestoneId, MilestoneStatus.REPAIRING);
+                }
                 autoRepairFrom(job, true);
                 return;
             default:
@@ -1100,7 +1293,10 @@ public class ProjectActivity extends BaseActivity {
                 runOnUiThread(() -> {
                     setBusy(false);
                     refresh();
-                    startBuild();
+                    if (!startBuild() && milestoneMarchActive) {
+                        // The repaired source still cannot start a build; end the march cleanly.
+                        onMilestoneBuildExhausted();
+                    }
                 });
             }
 
@@ -1527,25 +1723,32 @@ public class ProjectActivity extends BaseActivity {
         View buildButton = findViewById(R.id.buildButton);
         View repairButton = findViewById(R.id.repairButton);
         View installButton = findViewById(R.id.installButton);
-        boolean canExecutePlan = latestPlan != null && "planned".equals(latestPlan.status) && !latestPlan.content.trim().isEmpty();
+        // Execute starts/resumes the milestone march whenever a plan exists and a milestone is still
+        // unfinished — independent of plan.status, which becomes "generated" after the first milestone.
+        boolean canExecutePlan = latestPlan != null && !latestPlan.content.trim().isEmpty()
+                && repository.firstUnfinishedMilestone(projectId) != null;
         boolean hasSourceFiles = hasSourceFiles();
         BuildJobRecord repairTarget = repairTargetJob();
         boolean repairable = repairTarget != null && isRepairableFailure(repairTarget);
         boolean showRepairAction = (busy && repairSourceBuildJobId > 0) ||
                 ProjectBuildActionPolicy.primaryAction(repairTarget, repairable) == ProjectBuildActionPolicy.PrimaryAction.REPAIR;
+        // While a march is active it owns build/repair/execute; lock the manual actions so a stray tap can't
+        // spawn a competing build that corrupts the march's per-milestone state (busy can briefly be false
+        // between a repair completing and the next build starting).
+        boolean locked = busy || milestoneMarchActive;
         sendButton.setEnabled(!busy);
-        executePlanButton.setEnabled(!busy && canExecutePlan);
+        executePlanButton.setEnabled(!locked && canExecutePlan);
         buildButton.setVisibility(showRepairAction ? View.GONE : View.VISIBLE);
         repairButton.setVisibility(showRepairAction ? View.VISIBLE : View.GONE);
-        buildButton.setEnabled(ProjectBuildActionPolicy.canBuild(busy, hasSourceFiles, latestJob));
-        repairButton.setEnabled(ProjectBuildActionPolicy.canRepair(busy, repairTarget, repairable));
+        buildButton.setEnabled(ProjectBuildActionPolicy.canBuild(locked, hasSourceFiles, latestJob));
+        repairButton.setEnabled(ProjectBuildActionPolicy.canRepair(locked, repairTarget, repairable));
         if (buildButton instanceof TextView) {
             boolean actualBuildFailure = latestJob != null
                     && "failed".equals(latestJob.status)
                     && !ProjectJobStatePolicy.isTaskExecutionFailure(latestJob);
             ((TextView) buildButton).setText(actualBuildFailure ? R.string.rebuild : R.string.build);
         }
-        installButton.setEnabled(!busy && repository.latestBuildJobWithApk(projectId) != null);
+        installButton.setEnabled(!locked && repository.latestBuildJobWithApk(projectId) != null);
     }
 
     private void scrollMessagesToBottom() {

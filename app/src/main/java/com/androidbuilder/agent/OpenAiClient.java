@@ -250,6 +250,26 @@ public class OpenAiClient {
         return completeChat(tasksSystemPrompt(chinese), java.util.Collections.emptyList(), "Approved engineering plan:\n\n" + plan, 0.2, chinese, TASKS_READ_TIMEOUT_MS, true);
     }
 
+    /**
+     * Break an approved plan into an ORDERED list of small, independently-buildable feature milestones for
+     * incremental development. The runnable skeleton (milestone 0) is added deterministically by
+     * {@link MilestonePlanPolicy}, so this returns ONLY the feature slices. {@link MilestonePlanParser} parses it.
+     */
+    public String createMilestonePlan(String plan, boolean chinese) throws Exception {
+        return completeChat(milestonePlanSystemPrompt(chinese), java.util.Collections.emptyList(),
+                "Approved engineering plan / requirement:\n\n" + plan, 0.2, chinese, TASKS_READ_TIMEOUT_MS, true);
+    }
+
+    /**
+     * Split ONE milestone's feature slice into a short, ADDITIVE implementation task list against the CURRENT
+     * source tree (the app already exists). Same JSON contract as {@link #createImplementationTasks}, so
+     * {@link ImplementationTaskParser} parses it.
+     */
+    public String createMilestoneTasks(String plan, String milestoneTitle, String milestoneSlice, String sourceSnapshot, boolean chinese) throws Exception {
+        return completeChat(milestoneTasksSystemPrompt(chinese), java.util.Collections.emptyList(),
+                milestoneTasksUserPrompt(plan, milestoneTitle, milestoneSlice, sourceSnapshot), 0.2, chinese, TASKS_READ_TIMEOUT_MS, true);
+    }
+
     /** Pre-build code review: returns the reviewer's JSON findings ({@link CodeReviewParser} parses it). */
     public String reviewGeneratedCode(String sourceSnapshot, boolean chinese, String callTag) throws Exception {
         return completeChat(
@@ -1141,6 +1161,59 @@ public class OpenAiClient {
 
     static String tasksSystemPromptForTest(boolean chinese) {
         return tasksSystemPromptText(chinese);
+    }
+
+    private String milestonePlanSystemPrompt(boolean chinese) {
+        return milestonePlanSystemPromptText(chinese);
+    }
+
+    static String milestonePlanSystemPromptForTest(boolean chinese) {
+        return milestonePlanSystemPromptText(chinese);
+    }
+
+    private static String milestonePlanSystemPromptText(boolean chinese) {
+        String language = chinese ? "Use Simplified Chinese for milestone titles and descriptions." : "Use English for milestone titles and descriptions.";
+        return "You break an approved Android engineering plan into an ORDERED list of small, independently-buildable milestones for INCREMENTAL development. " +
+                "Return only compact JSON: {\"milestones\":[{\"order\":<int>,\"title\":<string>,\"description\":<string>,\"slice\":<string>}]}. Escape double quotes inside JSON string values, or use single quotes in prose. " +
+                "CRITICAL: do NOT include the runnable skeleton (Gradle config, AndroidManifest, launcher Activity, an empty home screen, base theme). That is milestone 0 and is added automatically. List ONLY the feature slices, starting from the first real feature that builds on top of the skeleton. " +
+                "Each milestone is ONE small VERTICAL slice — the screen(s) + data + wiring for a single coherent feature — small enough that, when added on top of all previous milestones, the app still COMPILES and RUNS. Never split a feature into a 'just the layout' milestone and a separate 'just the Java' milestone; a milestone that does not build on its own is wrong. " +
+                "Order strictly by dependency, each building on the previous and leaving the app runnable: foundational storage first (e.g. the database/helper plus one core entity and its DAO), then the core create/save flow, then the list/display of that data, then secondary features (editing, search, statistics, settings, theming polish). A later milestone may freely use classes/resources created by earlier ones. " +
+                "Prefer MORE SMALL milestones over a few big ones — a typical app is about 3 to 10 milestones, and each slice should touch only a handful of files. A weaker model must be able to generate each slice reliably in one pass. " +
+                "title: a short feature name. description: what this milestone adds and that the app stays runnable afterwards. slice: a concrete one-line focus for this feature, used to scope which files to generate. " +
+                "Do not include build, install, or test milestones. " + language;
+    }
+
+    private String milestoneTasksSystemPrompt(boolean chinese) {
+        return milestoneTasksSystemPromptText(chinese);
+    }
+
+    static String milestoneTasksSystemPromptForTest(boolean chinese) {
+        return milestoneTasksSystemPromptText(chinese);
+    }
+
+    static String milestoneTasksUserPromptForTest(String plan, String milestoneTitle, String milestoneSlice, String sourceSnapshot) {
+        return milestoneTasksUserPrompt(plan, milestoneTitle, milestoneSlice, sourceSnapshot);
+    }
+
+    private static String milestoneTasksSystemPromptText(boolean chinese) {
+        String language = chinese ? "Use Simplified Chinese for task titles." : "Use English for task titles.";
+        return "You split ONE milestone of an Android app into a short sequential implementation task list. " +
+                "The app ALREADY EXISTS — its current source tree is provided. Add ONLY this milestone's feature slice, ADDITIVELY. " +
+                "Reuse the existing classes, resources, database helpers and screens shown in the source tree, and conform to their existing names; do NOT rewrite, regenerate, or duplicate files unrelated to this slice. Touch only the files this slice needs. " +
+                "Return only compact JSON with a tasks array. Each task must have title and instruction. Escape double quotes inside JSON string values, or use single quotes in prose. " +
+                "Each task may also include Hermes task contract fields: allowedPaths, expectedFiles, forbiddenPaths, acceptanceChecks, riskNotes, dependsOn, produces, rollbackScope, riskLevel, and buildRequiredAfter. Use arrays for list fields and boolean for buildRequiredAfter. Use allowedPaths/forbiddenPaths precisely so only this slice's files are touched. " +
+                "Use 1 to 4 tasks — a milestone is small. Keep each task a cohesive phase, and do not combine Gradle configuration with Java source wiring in the same task. " +
+                "If the source tree has no Gradle/AndroidManifest yet (the skeleton milestone), the first task must create the Gradle files, app/src/main/AndroidManifest.xml, base values/themes resources, and a launcher Activity with an empty home layout, so the app compiles, installs and launches. " +
+                "If the skeleton already exists, do NOT recreate Gradle/manifest/theme; only add what this slice needs and wire it into the existing app (e.g. register a new Activity in the manifest, add a navigation entry from an existing screen). " +
+                "Do not include build, install, or test tasks. " + language;
+    }
+
+    private static String milestoneTasksUserPrompt(String plan, String milestoneTitle, String milestoneSlice, String sourceSnapshot) {
+        return "Overall engineering plan (vision, for context):\n\n" + PlanContentSanitizer.clean(plan)
+                + "\n\nCurrent source tree:\n" + sourceSnapshot
+                + "\n\nImplement exactly THIS milestone, adding only its slice on top of the current app:\n"
+                + "Title: " + milestoneTitle
+                + "\nSlice: " + milestoneSlice;
     }
 
     private static String tasksSystemPromptText(boolean chinese) {

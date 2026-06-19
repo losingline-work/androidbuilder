@@ -11,6 +11,7 @@ import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
 import com.androidbuilder.model.HermesAgentRunRecord;
 import com.androidbuilder.model.HermesExecutionRunRecord;
+import com.androidbuilder.model.ProjectMilestoneRecord;
 import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
@@ -338,6 +339,125 @@ public class AppRepository {
             }
         }
         return null;
+    }
+
+    // ---- Milestones (incremental development): the ordered, machine-readable execution list. ----
+
+    public synchronized void replaceProjectMilestones(long projectId, List<ProjectMilestoneRecord> milestones) {
+        SQLiteDatabase db = helper.getWritableDatabase();
+        long now = System.currentTimeMillis();
+        db.delete(DatabaseHelper.TABLE_PROJECT_MILESTONES, "project_id = ?", new String[]{String.valueOf(projectId)});
+        for (int i = 0; i < milestones.size(); i++) {
+            ProjectMilestoneRecord milestone = milestones.get(i);
+            ContentValues values = new ContentValues();
+            values.put("project_id", projectId);
+            values.put("order_index", i);
+            values.put("title", milestone.title);
+            values.put("description", milestone.description);
+            values.put("slice", milestone.slice);
+            values.put("status", "pending");
+            values.put("checkpoint_path", "");
+            values.put("build_job_id", 0);
+            values.put("repair_rounds", 0);
+            values.put("created_at", now);
+            values.put("updated_at", now);
+            db.insertOrThrow(DatabaseHelper.TABLE_PROJECT_MILESTONES, null, values);
+        }
+        touchProject(projectId);
+    }
+
+    public synchronized void clearProjectMilestones(long projectId) {
+        helper.getWritableDatabase().delete(DatabaseHelper.TABLE_PROJECT_MILESTONES, "project_id = ?", new String[]{String.valueOf(projectId)});
+        touchProject(projectId);
+    }
+
+    public synchronized List<ProjectMilestoneRecord> listProjectMilestones(long projectId) {
+        List<ProjectMilestoneRecord> rows = new ArrayList<>();
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_MILESTONES, null, "project_id = ?", new String[]{String.valueOf(projectId)}, null, null, "order_index ASC")) {
+            while (cursor.moveToNext()) {
+                rows.add(readProjectMilestone(cursor));
+            }
+        }
+        return rows;
+    }
+
+    /** The lowest-order milestone still owing work (pending or paused), or null when all are done/failed. */
+    public synchronized ProjectMilestoneRecord nextPendingMilestone(long projectId) {
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_MILESTONES, null, "project_id = ? AND status IN (?, ?)", new String[]{String.valueOf(projectId), "pending", "paused"}, null, null, "order_index ASC", "1")) {
+            if (cursor.moveToFirst()) {
+                return readProjectMilestone(cursor);
+            }
+        }
+        return null;
+    }
+
+    public synchronized ProjectMilestoneRecord getMilestone(long id) {
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_MILESTONES, null, "id = ?", new String[]{String.valueOf(id)}, null, null, null)) {
+            if (cursor.moveToFirst()) {
+                return readProjectMilestone(cursor);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The lowest-order milestone that is NOT done yet (pending, paused, failed, or left mid-flight by an
+     * interrupted run), or null when every milestone is done. This is the march's "next work" pointer: it
+     * stops at — and retries — a failed/stuck milestone rather than skipping past it to a later one, so
+     * milestone ordering is never violated and "all done" is only reported when truly complete.
+     */
+    public synchronized ProjectMilestoneRecord firstUnfinishedMilestone(long projectId) {
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_MILESTONES, null,
+                "project_id = ? AND status != ?", new String[]{String.valueOf(projectId), "done"},
+                null, null, "order_index ASC", "1")) {
+            if (cursor.moveToFirst()) {
+                return readProjectMilestone(cursor);
+            }
+        }
+        return null;
+    }
+
+    /** The highest-order milestone that built green and has a saved checkpoint, or null if none yet. */
+    public synchronized ProjectMilestoneRecord lastCheckpointedMilestone(long projectId) {
+        try (Cursor cursor = helper.getReadableDatabase().query(DatabaseHelper.TABLE_PROJECT_MILESTONES, null,
+                "project_id = ? AND status = ? AND checkpoint_path != ''",
+                new String[]{String.valueOf(projectId), "done"}, null, null, "order_index DESC", "1")) {
+            if (cursor.moveToFirst()) {
+                return readProjectMilestone(cursor);
+            }
+        }
+        return null;
+    }
+
+    public synchronized void updateMilestoneStatus(long id, String status) {
+        ContentValues values = new ContentValues();
+        values.put("status", status);
+        values.put("updated_at", System.currentTimeMillis());
+        helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    public synchronized void updateMilestoneBuildJob(long id, long buildJobId) {
+        ContentValues values = new ContentValues();
+        values.put("build_job_id", buildJobId);
+        values.put("updated_at", System.currentTimeMillis());
+        helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    public synchronized void updateMilestoneRepairRounds(long id, int repairRounds) {
+        ContentValues values = new ContentValues();
+        values.put("repair_rounds", repairRounds);
+        values.put("updated_at", System.currentTimeMillis());
+        helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    /** Mark a milestone green: store its checkpoint snapshot path + build job and set status DONE. */
+    public synchronized void markMilestoneCheckpoint(long id, String checkpointPath, long buildJobId) {
+        ContentValues values = new ContentValues();
+        values.put("status", "done");
+        values.put("checkpoint_path", checkpointPath == null ? "" : checkpointPath);
+        values.put("build_job_id", buildJobId);
+        values.put("updated_at", System.currentTimeMillis());
+        helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
     }
 
     public synchronized HermesExecutionRunRecord createHermesExecutionRun(
@@ -744,6 +864,23 @@ public class AppRepository {
                 cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
                 cursor.getLong(cursor.getColumnIndexOrThrow("started_at")),
                 cursor.getLong(cursor.getColumnIndexOrThrow("completed_at"))
+        );
+    }
+
+    private ProjectMilestoneRecord readProjectMilestone(Cursor cursor) {
+        return new ProjectMilestoneRecord(
+                cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("project_id")),
+                cursor.getInt(cursor.getColumnIndexOrThrow("order_index")),
+                cursor.getString(cursor.getColumnIndexOrThrow("title")),
+                cursor.getString(cursor.getColumnIndexOrThrow("description")),
+                cursor.getString(cursor.getColumnIndexOrThrow("slice")),
+                cursor.getString(cursor.getColumnIndexOrThrow("status")),
+                cursor.getString(cursor.getColumnIndexOrThrow("checkpoint_path")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("build_job_id")),
+                cursor.getInt(cursor.getColumnIndexOrThrow("repair_rounds")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                cursor.getLong(cursor.getColumnIndexOrThrow("updated_at"))
         );
     }
 

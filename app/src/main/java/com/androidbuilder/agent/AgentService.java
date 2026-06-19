@@ -13,6 +13,7 @@ import com.androidbuilder.model.HermesExecutionRunRecord;
 import com.androidbuilder.model.HermesRunEvent;
 import com.androidbuilder.model.HermesReview;
 import com.androidbuilder.model.HermesTaskContract;
+import com.androidbuilder.model.ProjectMilestoneRecord;
 import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
@@ -230,6 +231,81 @@ public class AgentService {
         }, "agent-execute-plan").start();
     }
 
+    /** Incremental path: generate + ready-for-build ONE milestone's slice on top of the current app. */
+    public void generateMilestoneAsync(long projectId, long milestoneId, Callback callback) {
+        new Thread(() -> {
+            ActiveWorkRegistry.begin(context, projectId, context.getString(com.androidbuilder.R.string.foreground_work_coding));
+            try {
+                BuildJobRecord job = generateMilestone(projectId, milestoneId);
+                callback.onComplete(job);
+            } catch (Exception error) {
+                callback.onError(error);
+            } finally {
+                ActiveWorkRegistry.end(context, projectId);
+            }
+        }, "agent-generate-milestone").start();
+    }
+
+    /**
+     * Snapshot the current app source as milestone {@code orderIndex}'s green checkpoint and return its path.
+     * Called by the march after a milestone builds green; the path is stored on the milestone row so a later
+     * failed milestone can roll the source back to here.
+     */
+    public String checkpointMilestone(long projectId, int orderIndex) throws Exception {
+        File sourceDir = repository.sourceDir(projectId);
+        File checkpointDir = MilestoneCheckpointStore.checkpointDir(repository.projectRoot(projectId), orderIndex);
+        MilestoneCheckpointStore.save(sourceDir, checkpointDir);
+        return checkpointDir.getAbsolutePath();
+    }
+
+    /** Roll the live source tree back to a previously-saved checkpoint (no-op for an empty/missing path). */
+    public void rollbackToCheckpoint(long projectId, String checkpointPath) throws Exception {
+        if (checkpointPath == null || checkpointPath.trim().isEmpty()) {
+            return;
+        }
+        MilestoneCheckpointStore.restore(new File(checkpointPath), repository.sourceDir(projectId));
+    }
+
+    /**
+     * Off the UI thread: snapshot a green milestone's source and mark it DONE with the id of the build that
+     * actually went green, then run {@code onDone}. The milestone is marked DONE even if the snapshot copy
+     * fails (rare IO error) — with an empty checkpoint_path — so it is never orphaned in 'building'; rollback
+     * then simply targets an earlier green checkpoint.
+     */
+    public void checkpointMilestoneAsync(long projectId, long milestoneId, long greenBuildJobId, Runnable onDone) {
+        new Thread(() -> {
+            ProjectMilestoneRecord milestone = repository.getMilestone(milestoneId);
+            if (milestone != null) {
+                String path = "";
+                try {
+                    path = checkpointMilestone(projectId, milestone.orderIndex);
+                } catch (Exception ignored) {
+                    // Snapshot failed; still mark DONE below so the milestone is not stuck in 'building'.
+                }
+                repository.markMilestoneCheckpoint(milestoneId, path, greenBuildJobId);
+            }
+            if (onDone != null) {
+                onDone.run();
+            }
+        }, "agent-checkpoint-milestone").start();
+    }
+
+    /** Off the UI thread: restore the source to the last green checkpoint, then run {@code onDone}. */
+    public void rollbackToLastCheckpointAsync(long projectId, Runnable onDone) {
+        new Thread(() -> {
+            try {
+                ProjectMilestoneRecord last = repository.lastCheckpointedMilestone(projectId);
+                if (last != null) {
+                    rollbackToCheckpoint(projectId, last.checkpointPath);
+                }
+            } catch (Exception ignored) {
+            }
+            if (onDone != null) {
+                onDone.run();
+            }
+        }, "agent-rollback-checkpoint").start();
+    }
+
     public void repairBuildAsync(long projectId, String buildLog, Callback callback) {
         repairBuildAsync(projectId, buildLog, false, callback);
     }
@@ -380,11 +456,60 @@ public class AgentService {
         repository.clearProjectTasks(projectId);
         deleteAllTaskDraftsSafely(projectId);
         repository.addMessage(projectId, "assistant", plan, null);
+        ensureMilestonePlanFromPlan(projectId, plan, chinese);
         CapabilityAssessment assessment = assessCapability(plan + "\n" + prompt);
         if (assessment.hasRisks()) {
             repository.addMessage(projectId, "assistant", assessment.message(chinese), null);
         }
         return plan;
+    }
+
+    /**
+     * Derive the ordered milestone list from the approved plan and store it as the project's machine-readable
+     * execution list. On any failure (model/parse) it falls back to the canonical skeleton-only milestone so
+     * the project can at least build a runnable app and be extended afterwards.
+     */
+    private void ensureMilestonePlanFromPlan(long projectId, String plan, boolean chinese) {
+        repository.clearProjectMilestones(projectId);
+        List<ProjectMilestoneRecord> milestones;
+        try {
+            String raw = recordCloudAiCall(
+                    projectId,
+                    null,
+                    chinese ? "云端 AI · 里程碑拆分" : "Cloud AI · milestone breakdown",
+                    "Approved engineering plan:\n\n" + plan,
+                    () -> openAiClient.createMilestonePlan(plan, chinese));
+            List<ProjectMilestoneRecord> slices = MilestonePlanParser.fromJson(raw);
+            milestones = MilestonePlanPolicy.normalize(slices, chinese);
+            if (MilestonePlanPolicy.truncated(slices)) {
+                repository.addMessage(projectId, "assistant", chinese
+                        ? "里程碑数量较多，已截断到前 " + MilestonePlanPolicy.MAX_FEATURE_MILESTONES + " 个功能里程碑。"
+                        : "Many milestones were proposed; truncated to the first " + MilestonePlanPolicy.MAX_FEATURE_MILESTONES + " feature milestones.", null);
+            }
+        } catch (Exception error) {
+            milestones = MilestonePlanPolicy.normalize(java.util.Collections.<ProjectMilestoneRecord>emptyList(), chinese);
+            String reason = error.getMessage() == null ? error.toString() : error.getMessage();
+            repository.addMessage(projectId, "assistant", (chinese
+                    ? "里程碑拆分失败，已先创建可运行骨架里程碑；可稍后重试或继续追加功能。原因："
+                    : "Milestone breakdown failed; created the runnable-skeleton milestone only. Retry or add features later. Reason: ") + reason, null);
+        }
+        repository.replaceProjectMilestones(projectId, milestones);
+        repository.addMessage(projectId, "assistant", milestoneListMessage(milestones, chinese), null);
+    }
+
+    private String milestoneListMessage(List<ProjectMilestoneRecord> milestones, boolean chinese) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(chinese
+                ? "已拆分为 " + milestones.size() + " 个里程碑（逐个生成并构建，每个都先跑通再做下一个）：\n"
+                : "Broken into " + milestones.size() + " milestones (each is generated and built in turn, green before the next):\n");
+        for (ProjectMilestoneRecord milestone : milestones) {
+            sb.append("M").append(milestone.orderIndex).append(" · ").append(milestone.title).append("\n");
+        }
+        return sb.toString().trim();
+    }
+
+    private interface GenerationStep {
+        void run() throws Exception;
     }
 
     private BuildJobRecord executePlan(long projectId) throws Exception {
@@ -402,6 +527,55 @@ public class AgentService {
             throw new IllegalStateException(assessment.message(chinese));
         }
         BuildJobRecord job = repository.createBuildJob(projectId);
+        return runGenerationToReadyForBuild(projectId, job, plan, chinese,
+                () -> ensureImplementationTasks(projectId, job.id, plan, chinese));
+    }
+
+    /**
+     * Generate ONE milestone to ready_for_build: derive the slice's tasks against the current app snapshot,
+     * run the generation waves, and mark the milestone BUILDING (the build itself is driven by the UI march).
+     * On a pre-build generation failure the milestone is left PENDING for retry.
+     */
+    private BuildJobRecord generateMilestone(long projectId, long milestoneId) throws Exception {
+        ProjectRecord project = repository.getProject(projectId);
+        if (project == null) {
+            throw new IllegalArgumentException("Project not found: " + projectId);
+        }
+        ProjectMilestoneRecord milestone = repository.getMilestone(milestoneId);
+        if (milestone == null) {
+            throw new IllegalArgumentException("Milestone not found: " + milestoneId);
+        }
+        boolean chinese = AppSettings.isChinese(context);
+        ProjectPlanRecord plan = repository.latestProjectPlan(projectId);
+        if (plan == null || plan.content == null || plan.content.trim().isEmpty()) {
+            throw new IllegalStateException(chinese ? "请先生成工程计划。" : "Generate an engineering plan first.");
+        }
+        BuildJobRecord job = repository.createBuildJob(projectId);
+        repository.updateMilestoneStatus(milestoneId, MilestoneStatus.GENERATING);
+        repository.updateMilestoneBuildJob(milestoneId, job.id);
+        repository.addMessage(projectId, "assistant",
+                (chinese ? "开始生成里程碑 M" : "Generating milestone M") + milestone.orderIndex + " · " + milestone.title, job.id);
+        try {
+            BuildJobRecord ready = runGenerationToReadyForBuild(projectId, job, plan, chinese,
+                    () -> deriveMilestoneTasks(projectId, job.id, milestone, plan, chinese));
+            repository.updateMilestoneStatus(milestoneId, MilestoneStatus.BUILDING);
+            return ready;
+        } catch (Exception error) {
+            // Generation failed before the build started; leave the milestone pending so it can be retried.
+            // (runGenerationToReadyForBuild already failed the job and logged the reason.)
+            repository.updateMilestoneStatus(milestoneId, MilestoneStatus.PENDING);
+            throw error;
+        }
+    }
+
+    /**
+     * Run a single generation pass to ready_for_build: derive this pass's tasks (via {@code deriveTasks} —
+     * the whole-plan split for the legacy path, or one milestone's scoped tasks for the incremental path),
+     * execute them in weight-batched parallel waves, run the code-review gate, and mark the build job
+     * ready_for_build. Failure handling (mark running tasks failed, fail the job) is shared by both callers.
+     */
+    private BuildJobRecord runGenerationToReadyForBuild(long projectId, BuildJobRecord job, ProjectPlanRecord plan,
+                                                        boolean chinese, GenerationStep deriveTasks) throws Exception {
         File jobDir = repository.jobDir(projectId, job.id);
         File logs = new File(jobDir, "build.log");
         File agentsRoot = new File(jobDir, "agents");
@@ -410,7 +584,7 @@ public class AgentService {
         try {
             repository.updateProjectPlanStatus(projectId, "coding", job.id);
             repository.updateBuildJob(job.id, "generating", "cloud_spec", null, null, null, 0);
-            ensureImplementationTasks(projectId, job.id, plan, chinese);
+            deriveTasks.run();
             File sourceDir = repository.sourceDir(projectId);
             int maxParallel = BuildBackendSettings.parallelAgentLimit(context);
             String baseSourceHash = safeSourceHash(sourceDir);
@@ -2819,6 +2993,29 @@ public class AgentService {
         repository.replaceProjectTasks(projectId, tasks);
         deleteAllTaskDraftsSafely(projectId);
         repository.addMessage(projectId, "assistant", taskListMessage(tasks, chinese), null);
+    }
+
+    /**
+     * Derive ONE milestone's small task set against the CURRENT source snapshot and install it as the
+     * project's task list (replacing the previous milestone's tasks — each milestone owns a fresh, tight set).
+     * This is how the incremental flow adds a feature to an already-built app, closing the gap where
+     * {@link #ensureImplementationTasks} won't derive new tasks once a project already has them.
+     */
+    private void deriveMilestoneTasks(long projectId, Long linkedBuildJobId, ProjectMilestoneRecord milestone, ProjectPlanRecord plan, boolean chinese) throws Exception {
+        repository.clearProjectTasks(projectId);
+        File sourceDir = repository.sourceDir(projectId);
+        String snapshot = sourceSnapshot(sourceDir, milestone.slice);
+        String planContent = plan == null ? "" : plan.content;
+        String tasksJson = recordCloudAiCall(
+                projectId,
+                linkedBuildJobId,
+                chinese ? "云端 AI · 里程碑任务拆分" : "Cloud AI · milestone task split",
+                "Milestone M" + milestone.orderIndex + " · " + milestone.title + "\nSlice: " + milestone.slice,
+                () -> openAiClient.createMilestoneTasks(planContent, milestone.title, milestone.slice, snapshot, chinese));
+        List<ProjectTaskRecord> tasks = ImplementationTaskNormalizer.normalize(ImplementationTaskParser.fromJson(tasksJson), chinese);
+        repository.replaceProjectTasks(projectId, tasks);
+        deleteAllTaskDraftsSafely(projectId);
+        repository.addMessage(projectId, "assistant", taskListMessage(tasks, chinese), linkedBuildJobId);
     }
 
     private String taskListMessage(List<ProjectTaskRecord> tasks, boolean chinese) {

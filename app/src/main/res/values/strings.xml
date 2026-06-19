@@ -230,6 +230,16 @@
     <string name="plan_generated">Engineering plan generated.</string>
     <string name="plan_required">Generate an engineering plan first.</string>
     <string name="plan_executing">Executing next step...</string>
+    <string name="milestone_generating">Generating milestone M%1$d · %2$s</string>
+    <string name="milestone_checkpointing">Milestone built; saving checkpoint…</string>
+    <string name="milestone_rolling_back">Milestone could not build; rolling back to the last checkpoint…</string>
+    <string name="milestone_paused_at_checkpoint">Paused at the current milestone checkpoint.</string>
+    <string name="milestone_all_done">All milestones done — the app is runnable.</string>
+    <string name="milestone_failed_rolled_back">Milestone %1$s failed to build; rolled back to the last runnable checkpoint.</string>
+    <string name="milestone_pause">Pause march</string>
+    <string name="milestone_single_step">Single-step: next milestone</string>
+    <string name="milestone_pause_pending">Will pause after the current milestone completes.</string>
+    <string name="milestone_requires_embedded">Incremental milestone build needs the embedded build runtime. Switch the build backend to embedded in Settings.</string>
     <string name="streaming_thinking">Thinking… %1$s</string>
     <string name="streaming_writing">Writing… %1$s</string>
     <string name="source_generated_from_plan">One plan task completed.</string>

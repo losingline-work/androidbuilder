@@ -11,12 +11,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     static final String TABLE_ARTIFACTS = "artifacts";
     static final String TABLE_PROJECT_PLANS = "project_plans";
     static final String TABLE_PROJECT_TASKS = "project_tasks";
+    static final String TABLE_PROJECT_MILESTONES = "project_milestones";
     static final String TABLE_AI_CONVERSATIONS = "ai_conversations";
     static final String TABLE_HERMES_EXECUTION_RUNS = "hermes_execution_runs";
     static final String TABLE_HERMES_AGENT_RUNS = "hermes_agent_runs";
 
     private static final String DB_NAME = "android_builder.db";
-    private static final int DB_VERSION = 6;
+    private static final int DB_VERSION = 7;
 
     public DatabaseHelper(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -67,6 +68,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 ")");
         createProjectPlansTable(db);
         createProjectTasksTable(db);
+        createProjectMilestonesTable(db);
         createAiConversationsTable(db);
         createHermesExecutionRunsTable(db);
         createHermesAgentRunsTable(db);
@@ -96,6 +98,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 6) {
             createHermesExecutionRunsTable(db);
             createHermesAgentRunsTable(db);
+        }
+        if (oldVersion < 7) {
+            createProjectMilestonesTable(db);
         }
     }
 
@@ -136,6 +141,25 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE" +
                 ")");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_project ON project_tasks(project_id, sort_order)");
+    }
+
+    private void createProjectMilestonesTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS project_milestones (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "project_id INTEGER NOT NULL," +
+                "order_index INTEGER NOT NULL," +
+                "title TEXT NOT NULL," +
+                "description TEXT NOT NULL DEFAULT ''," +
+                "slice TEXT NOT NULL DEFAULT ''," +
+                "status TEXT NOT NULL DEFAULT 'pending'," +
+                "checkpoint_path TEXT NOT NULL DEFAULT ''," +
+                "build_job_id INTEGER NOT NULL DEFAULT 0," +
+                "repair_rounds INTEGER NOT NULL DEFAULT 0," +
+                "created_at INTEGER NOT NULL," +
+                "updated_at INTEGER NOT NULL," +
+                "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE" +
+                ")");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_milestones_project ON project_milestones(project_id, order_index)");
     }
 
     private void createAiConversationsTable(SQLiteDatabase db) {
