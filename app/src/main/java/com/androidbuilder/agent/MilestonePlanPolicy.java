@@ -39,20 +39,34 @@ public final class MilestonePlanPolicy {
     public static List<ProjectMilestoneRecord> normalize(List<ProjectMilestoneRecord> featureSlices, boolean chinese) {
         List<ProjectMilestoneRecord> out = new ArrayList<>();
         out.add(skeletonMilestone(chinese));
-        if (featureSlices != null) {
-            int limit = Math.min(featureSlices.size(), MAX_FEATURE_MILESTONES);
-            for (int i = 0; i < limit; i++) {
-                ProjectMilestoneRecord m = featureSlices.get(i);
-                out.add(new ProjectMilestoneRecord(
-                        0, 0, i + 1, m.title, m.description, m.slice,
-                        MilestoneStatus.PENDING, "", 0, 0, 0, 0));
-            }
+        List<ProjectMilestoneRecord> expanded = expand(featureSlices, chinese);
+        int limit = Math.min(expanded.size(), MAX_FEATURE_MILESTONES);
+        for (int i = 0; i < limit; i++) {
+            ProjectMilestoneRecord m = expanded.get(i);
+            out.add(new ProjectMilestoneRecord(
+                    0, 0, i + 1, m.title, m.description, m.slice,
+                    MilestoneStatus.PENDING, "", 0, 0, 0, 0));
         }
         return out;
     }
 
-    /** True when {@link #normalize} dropped trailing feature slices past the cap (so the caller can warn). */
-    public static boolean truncated(List<ProjectMilestoneRecord> featureSlices) {
-        return featureSlices != null && featureSlices.size() > MAX_FEATURE_MILESTONES;
+    /**
+     * The model's feature slices after DETERMINISTIC splitting: each coarse multi-unit milestone (multiple
+     * tables/screens) is broken into one milestone per unit by {@link MilestoneSplitPolicy}, so even a weak
+     * model that ignored the "one unit per milestone" instruction still gets small slices.
+     */
+    private static List<ProjectMilestoneRecord> expand(List<ProjectMilestoneRecord> featureSlices, boolean chinese) {
+        List<ProjectMilestoneRecord> expanded = new ArrayList<>();
+        if (featureSlices != null) {
+            for (ProjectMilestoneRecord slice : featureSlices) {
+                expanded.addAll(MilestoneSplitPolicy.split(slice, chinese));
+            }
+        }
+        return expanded;
+    }
+
+    /** True when {@link #normalize} dropped trailing milestones past the cap (so the caller can warn). */
+    public static boolean truncated(List<ProjectMilestoneRecord> featureSlices, boolean chinese) {
+        return expand(featureSlices, chinese).size() > MAX_FEATURE_MILESTONES;
     }
 }

@@ -481,7 +481,7 @@ public class AgentService {
                     () -> openAiClient.createMilestonePlan(plan, chinese));
             List<ProjectMilestoneRecord> slices = MilestonePlanParser.fromJson(raw);
             milestones = MilestonePlanPolicy.normalize(slices, chinese);
-            if (MilestonePlanPolicy.truncated(slices)) {
+            if (MilestonePlanPolicy.truncated(slices, chinese)) {
                 repository.addMessage(projectId, "assistant", chinese
                         ? "里程碑数量较多，已截断到前 " + MilestonePlanPolicy.MAX_FEATURE_MILESTONES + " 个功能里程碑。"
                         : "Many milestones were proposed; truncated to the first " + MilestonePlanPolicy.MAX_FEATURE_MILESTONES + " feature milestones.", null);

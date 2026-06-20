@@ -59,7 +59,7 @@ public class MilestonePlanPolicyTest {
 
         // skeleton + exactly MAX feature milestones
         assertEquals(MilestonePlanPolicy.MAX_FEATURE_MILESTONES + 1, out.size());
-        assertTrue(MilestonePlanPolicy.truncated(slices));
+        assertTrue(MilestonePlanPolicy.truncated(slices, false));
         // order stays contiguous through the cap
         assertEquals(MilestonePlanPolicy.MAX_FEATURE_MILESTONES, out.get(out.size() - 1).orderIndex);
     }
@@ -68,7 +68,7 @@ public class MilestonePlanPolicyTest {
     public void normalize_doesNotReportTruncationWithinBound() {
         List<ProjectMilestoneRecord> slices = new ArrayList<>();
         slices.add(slice("only feature"));
-        assertFalse(MilestonePlanPolicy.truncated(slices));
+        assertFalse(MilestonePlanPolicy.truncated(slices, false));
     }
 
     @Test
