@@ -555,9 +555,17 @@ public class AgentService {
         repository.updateMilestoneBuildJob(milestoneId, job.id);
         repository.addMessage(projectId, "assistant",
                 (chinese ? "开始生成里程碑 M" : "Generating milestone M") + milestone.orderIndex + " · " + milestone.title, job.id);
+        // Milestone 0 is the runnable skeleton: lay it down DETERMINISTICALLY (settings.gradle, build.gradle,
+        // manifest with a launcher, an AppCompat-safe theme and a working home) via GeneratedProjectWriter
+        // instead of asking the model to bootstrap a buildable Gradle project from an empty directory — that
+        // bootstrap is exactly where weak models drop a required file, leaving M0 unbuildable and the march
+        // stuck retrying M0. Feature milestones (M1+) then add their slices on top of this proven base.
+        final boolean isSkeleton = milestone.orderIndex == 0;
+        GenerationStep step = isSkeleton
+                ? () -> scaffoldSkeletonMilestone(projectId, job.id, chinese)
+                : () -> deriveMilestoneTasks(projectId, job.id, milestone, plan, chinese);
         try {
-            BuildJobRecord ready = runGenerationToReadyForBuild(projectId, job, plan, chinese,
-                    () -> deriveMilestoneTasks(projectId, job.id, milestone, plan, chinese));
+            BuildJobRecord ready = runGenerationToReadyForBuild(projectId, job, plan, chinese, step);
             repository.updateMilestoneStatus(milestoneId, MilestoneStatus.BUILDING);
             return ready;
         } catch (Exception error) {
@@ -566,6 +574,35 @@ public class AgentService {
             repository.updateMilestoneStatus(milestoneId, MilestoneStatus.PENDING);
             throw error;
         }
+    }
+
+    /**
+     * Lay down the deterministic, guaranteed-buildable runnable skeleton for milestone 0: derive a lightweight
+     * AppSpec, then write the proven scaffold (the same {@link GeneratedProjectWriter} the legacy one-shot path
+     * uses). No model-authored Gradle, so the required project files are always present and M0 builds green.
+     */
+    private void scaffoldSkeletonMilestone(long projectId, Long linkedBuildJobId, boolean chinese) throws Exception {
+        repository.clearProjectTasks(projectId);
+        ProjectRecord project = repository.getProject(projectId);
+        String prompt = project.description == null || project.description.trim().isEmpty()
+                ? project.name : project.description;
+        List<ChatMessage> history = ConversationContextPolicy.planningHistory(
+                repository.listMessages(projectId), PLANNING_HISTORY_WINDOW);
+        String specJson = recordCloudAiCall(
+                projectId,
+                linkedBuildJobId,
+                chinese ? "云端 AI · 骨架规格" : "Cloud AI · skeleton spec",
+                "Skeleton spec for: " + prompt,
+                () -> openAiClient.createSpecJson(history, prompt, chinese));
+        AppSpec spec = AppSpecParser.fromJson(specJson, prompt, project.name, chinese);
+        String packageName = NameUtils.isPackageName(project.packageName) ? project.packageName : spec.packageName;
+        if (!NameUtils.isPackageName(packageName)) {
+            packageName = NameUtils.packageNameFromProject(project.name);
+        }
+        spec = new AppSpec(spec.appName, packageName, spec.description, spec.entityName,
+                spec.primaryField, spec.secondaryField, spec.language);
+        repository.updateProjectMetadata(projectId, spec.packageName, spec.description);
+        writer.write(repository.sourceDir(projectId), spec);
     }
 
     /**
