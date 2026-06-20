@@ -26,6 +26,7 @@ import android.widget.Toast;
 import com.androidbuilder.AndroidBuilderApp;
 import com.androidbuilder.R;
 import com.androidbuilder.agent.AgentService;
+import com.androidbuilder.agent.MilestoneMarchRegistry;
 import com.androidbuilder.agent.MilestoneStatus;
 import com.androidbuilder.agent.BuildFailureClassifier;
 import com.androidbuilder.agent.HermesRecoveryPolicy;
@@ -930,6 +931,7 @@ public class ProjectActivity extends BaseActivity {
         milestoneMarchActive = true;
         milestoneMarchPaused = false;
         milestoneSingleStep = singleStep;
+        MilestoneMarchRegistry.setActive(projectId, true);
         updateKeepScreenOn();
         advanceMilestoneMarch();
     }
@@ -1002,6 +1004,18 @@ public class ProjectActivity extends BaseActivity {
         }));
     }
 
+    /** During a march, mark the current milestone REPAIRING and surface a transient round status (no timeline spam). */
+    private void markMarchRepairing() {
+        if (!milestoneMarchActive || marchMilestoneId <= 0) {
+            return;
+        }
+        repository.updateMilestoneStatus(marchMilestoneId, MilestoneStatus.REPAIRING);
+        ProjectMilestoneRecord milestone = repository.getMilestone(marchMilestoneId);
+        if (milestone != null) {
+            setOperationStatus(getString(R.string.milestone_repairing, milestone.orderIndex, autoRepairRounds));
+        }
+    }
+
     /** A march milestone could not be made to build: mark it failed, roll back to the last green app, stop. */
     private void onMilestoneBuildExhausted() {
         final long milestoneId = marchMilestoneId;
@@ -1025,12 +1039,16 @@ public class ProjectActivity extends BaseActivity {
         milestoneMarchActive = false;
         milestoneSingleStep = false;
         marchMilestoneId = -1;
+        MilestoneMarchRegistry.setActive(projectId, false);
         setBusy(false);
         updateKeepScreenOn();
         refresh();
         if (message != null && !message.isEmpty()) {
             setOperationStatus(message);
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+            // One persistent timeline record of the march outcome (done / paused / failed) — the per-round
+            // build/repair chatter was consolidated away, so this is the only build-related line that stays.
+            repository.addMessage(projectId, "assistant", message, null);
         }
     }
 
@@ -1242,7 +1260,11 @@ public class ProjectActivity extends BaseActivity {
         setOperationStatus(getString(BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started));
         String logsPath = resetBuildLog(job);
         repository.updateBuildJob(job.id, "building", backend.id() + "_start", logsPath, null, null, 0);
-        repository.addMessage(projectId, "assistant", getString(BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started), job.id);
+        // In a march, the "build started" line is consolidated into the milestone strip/status, not a
+        // per-round timeline message.
+        if (!milestoneMarchActive) {
+            repository.addMessage(projectId, "assistant", getString(BuildBackendSettings.EXTERNAL_TERMUX.equals(backend.id()) ? R.string.termux_build_started : R.string.embedded_build_started), job.id);
+        }
         BuildJobRecord buildJob = repository.getBuildJob(job.id);
         backend.build(buildJob == null ? job : buildJob, (pid, jid) -> runOnUiThread(() -> onBuildJobChanged(jid)));
         refresh();
@@ -1308,17 +1330,13 @@ public class ProjectActivity extends BaseActivity {
             case AUTO_REPAIR:
                 autoLoopHandledBuildJobId = jobId;
                 autoRepairRounds++;
-                if (milestoneMarchActive && marchMilestoneId > 0) {
-                    repository.updateMilestoneStatus(marchMilestoneId, MilestoneStatus.REPAIRING);
-                }
+                markMarchRepairing();
                 autoRepairFrom(job, false);
                 return;
             case AUTO_REPAIR_ESCALATE:
                 autoLoopHandledBuildJobId = jobId;
                 autoRepairRounds++;
-                if (milestoneMarchActive && marchMilestoneId > 0) {
-                    repository.updateMilestoneStatus(marchMilestoneId, MilestoneStatus.REPAIRING);
-                }
+                markMarchRepairing();
                 autoRepairFrom(job, true);
                 return;
             default:

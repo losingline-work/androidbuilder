@@ -232,6 +232,7 @@
     <string name="plan_executing">Executing next step...</string>
     <string name="milestone_generating">Generating milestone M%1$d · %2$s</string>
     <string name="milestone_checkpointing">Milestone built; saving checkpoint…</string>
+    <string name="milestone_repairing">Milestone M%1$d build failed; auto-repairing (round %2$d)…</string>
     <string name="milestone_rolling_back">Milestone could not build; rolling back to the last checkpoint…</string>
     <string name="milestone_paused_at_checkpoint">Paused at the current milestone checkpoint.</string>
     <string name="milestone_all_done">All milestones done — the app is runnable.</string>

@@ -195,7 +195,11 @@ public class LocalBuildServer {
         String status = body.startsWith("success") ? "success" : "failed";
         String error = "failed".equals(status) ? body : null;
         repository.updateBuildJob(jobId, status, "finished", job == null ? null : job.logsPath, job == null ? null : job.apkPath, error, job == null ? 0 : job.retryCount);
-        repository.addMessage(projectId, "assistant", buildResultMessage(status, body), jobId);
+        // During an auto-march, the per-round build result is consolidated into the milestone strip/status
+        // instead of one timeline message per build; keep the message for manual builds.
+        if (!com.androidbuilder.agent.MilestoneMarchRegistry.isActive(projectId)) {
+            repository.addMessage(projectId, "assistant", buildResultMessage(status, body), jobId);
+        }
         listener.onJobChanged(projectId, jobId);
     }
 

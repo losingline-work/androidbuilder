@@ -232,6 +232,7 @@
     <string name="plan_executing">正在执行计划...</string>
     <string name="milestone_generating">正在生成里程碑 M%1$d · %2$s</string>
     <string name="milestone_checkpointing">里程碑构建通过，正在记录检查点…</string>
+    <string name="milestone_repairing">里程碑 M%1$d 构建失败，自动修复中（第 %2$d 轮）…</string>
     <string name="milestone_rolling_back">里程碑无法构建，正在回滚到上一个检查点…</string>
     <string name="milestone_paused_at_checkpoint">已在当前里程碑检查点暂停。</string>
     <string name="milestone_all_done">所有里程碑已完成，app 可运行。</string>

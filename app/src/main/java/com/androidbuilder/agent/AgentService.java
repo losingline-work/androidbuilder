@@ -941,7 +941,11 @@ public class AgentService {
             FileUtils.appendText(logs, (chinese ? "修复完成：\n" : "Repair complete:\n") + operations.summary + "\n" + (chinese ? "等待重新构建。\n" : "Waiting for build.\n"));
 
             repository.updateProjectPlanStatus(projectId, "generated", job.id);
-            repository.addMessage(projectId, "assistant", (chinese ? "已完成构建修复：" : "Build repair complete: ") + operations.summary, job.id);
+            // In a march the per-round repair summary is consolidated (milestone strip + status); keep it for
+            // manual repairs so the user still sees what changed.
+            if (!MilestoneMarchRegistry.isActive(projectId)) {
+                repository.addMessage(projectId, "assistant", (chinese ? "已完成构建修复：" : "Build repair complete: ") + operations.summary, job.id);
+            }
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
         } catch (Exception error) {
