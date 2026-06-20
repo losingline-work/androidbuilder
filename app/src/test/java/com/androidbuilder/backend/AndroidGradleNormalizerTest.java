@@ -2,10 +2,38 @@ package com.androidbuilder.backend;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class AndroidGradleNormalizerTest {
+    @Test
+    public void jitpackInsertionNeverChainsAfterAPrecedingMethodCall() {
+        // A repositories block ending in a paren-less-terminated method call (gradlePluginPortal(),
+        // mavenCentral()) must not get jitpack appended directly after it — "gradlePluginPortal() maven {...}"
+        // is parsed by Groovy as a method call on the repository ("Could not find method maven()") and breaks
+        // every build, which created an infinite settings.gradle repair loop (project-18).
+        String settings = "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\n"
+                + "dependencyResolutionManagement { repositories { google(); mavenCentral() } }\n"
+                + "rootProject.name = \"x\"\ninclude ':app'\n";
+
+        String out = AndroidGradleNormalizer.ensureSettingsPluginManagement(settings);
+
+        assertTrue(out.contains("jitpack.io"));
+        // No ")" followed by only spaces/tabs (no newline or ';') and then the jitpack maven block.
+        assertFalse("jitpack must be its own statement, not chained after a method call",
+                out.matches("(?s).*\\)[ \\t]+maven \\{ url 'https://jitpack\\.io'.*"));
+    }
+
+    @Test
+    public void settingsNormalizationIsIdempotent() {
+        String settings = "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\n"
+                + "dependencyResolutionManagement { repositories { google(); mavenCentral() } }\n";
+        String once = AndroidGradleNormalizer.ensureSettingsPluginManagement(settings);
+        String twice = AndroidGradleNormalizer.ensureSettingsPluginManagement(once);
+        assertEquals("re-normalizing an already-normalized settings.gradle must be a no-op", once, twice);
+    }
+
     @Test
     public void groovyNormalizerDoesNotInjectKotlinOptions() {
         String build = "plugins { id 'com.android.application' }\n" +

@@ -212,7 +212,11 @@ final class AndroidGradleNormalizer {
             }
             String block = output.substring(braceIndex + 1, endIndex);
             if (!block.contains("jitpack.io")) {
-                String insertion = " maven { url 'https://jitpack.io' }; ";
+                // Insert on its OWN line. Appending right before the closing brace after an expression that
+                // lacks a trailing ';' (e.g. "gradlePluginPortal()") would otherwise produce
+                // "gradlePluginPortal() maven { ... }", which Groovy parses as a method call on the repository
+                // ("Could not find method maven() ... on DefaultMavenArtifactRepository") and breaks the build.
+                String insertion = "\n        maven { url 'https://jitpack.io' }\n    ";
                 output.insert(endIndex, insertion);
                 endIndex += insertion.length();
             }
