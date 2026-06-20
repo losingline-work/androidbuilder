@@ -53,6 +53,37 @@ public class MilestoneTimelinePolicyTest {
     }
 
     @Test
+    public void consolidatesBuildAttemptsIntoOneSummary() {
+        // A milestone built once + 3 repair rounds, ending failed → ONE summary, not 4 rows.
+        ProjectMilestoneRecord m = new ProjectMilestoneRecord(1, 1, 2, "M2", "", "", MilestoneStatus.FAILED,
+                "", 88, 3, 0, 0, "");
+        com.androidbuilder.model.BuildJobRecord failed = new com.androidbuilder.model.BuildJobRecord(
+                88, 1, "failed", "compileDebugJavaWithJavac", "/x.log", null,
+                "cannot find symbol: DBContract.COL_X\nsecond line", 0, 0, 0);
+
+        List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(
+                Collections.singletonList(m), 0, null, id -> id == 88 ? failed : null);
+
+        MilestoneCardModel card = cards.get(0);
+        assertTrue(card.hasBuild);
+        assertEquals(4, card.buildAttempts);
+        assertEquals("failed", card.buildResult);
+        assertTrue(card.buildError.contains("cannot find symbol"));
+        // excerpt is the first non-empty line only
+        assertTrue(!card.buildError.contains("second line"));
+    }
+
+    @Test
+    public void noBuildJobMeansNoBuildSummary() {
+        ProjectMilestoneRecord m = new ProjectMilestoneRecord(1, 1, 1, "M1", "", "", MilestoneStatus.GENERATING,
+                "", 0, 0, 0, 0, "");
+        MilestoneCardModel card = MilestoneTimelinePolicy.cards(
+                Collections.singletonList(m), 1, null, id -> null).get(0);
+        assertTrue(!card.hasBuild);
+        assertEquals(0, card.buildAttempts);
+    }
+
+    @Test
     public void cardsPreserveMilestoneOrderAndIdentity() {
         List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(Arrays.asList(
                 milestone(1, 0, MilestoneStatus.DONE, ""),

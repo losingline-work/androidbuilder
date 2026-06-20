@@ -95,6 +95,7 @@ public class ProjectActivity extends BaseActivity {
     private final List<ProjectLogEntry> logResults = new ArrayList<>();
     private final Set<Long> expandedPlanMessageIds = new HashSet<>();
     private final Set<Long> expandedTaskDetailIds = new HashSet<>();
+    private final Set<Long> expandedMilestoneIds = new HashSet<>();
     private boolean tasksCollapsed = ProjectTaskListDisplayPolicy.defaultCollapsed();
     private TimelineAdapter adapter;
     private FileAdapter fileAdapter;
@@ -1011,6 +1012,7 @@ public class ProjectActivity extends BaseActivity {
             return;
         }
         repository.updateMilestoneStatus(marchMilestoneId, MilestoneStatus.REPAIRING);
+        repository.updateMilestoneRepairRounds(marchMilestoneId, autoRepairRounds);
         ProjectMilestoneRecord milestone = repository.getMilestone(marchMilestoneId);
         if (milestone != null) {
             setOperationStatus(getString(R.string.milestone_repairing, milestone.orderIndex, autoRepairRounds));
@@ -1951,7 +1953,8 @@ public class ProjectActivity extends BaseActivity {
             List<ProjectMilestoneRecord> milestones = repository == null
                     ? java.util.Collections.<ProjectMilestoneRecord>emptyList()
                     : repository.listProjectMilestones(projectId);
-            List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(milestones, marchMilestoneId, taskItems);
+            List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(milestones, marchMilestoneId, taskItems,
+                    id -> repository == null ? null : repository.getBuildJob(id));
             snapshot = ProjectTimelineSnapshot.create(
                     messages,
                     shouldShowOperationStatus(),
@@ -2148,6 +2151,7 @@ public class ProjectActivity extends BaseActivity {
                     ? (int) Math.round(done * 100.0 / total)
                     : (MilestoneStatus.DONE.equals(card.status) ? 100 : 0));
 
+            // Always-visible task list (this is the collapsed state the user wants).
             container.removeAllViews();
             if (total > 0) {
                 container.setVisibility(View.VISIBLE);
@@ -2157,7 +2161,54 @@ public class ProjectActivity extends BaseActivity {
             } else {
                 container.setVisibility(View.GONE);
             }
+
+            // Expandable build detail: ONE consolidated build card (all attempts + repairs rolled up).
+            View buildSection = view.findViewById(R.id.milestoneBuildSection);
+            TextView buildSummary = view.findViewById(R.id.milestoneBuildSummary);
+            TextView buildError = view.findViewById(R.id.milestoneBuildError);
+            TextView toggle = view.findViewById(R.id.milestoneCardToggle);
+            boolean expanded = expandedMilestoneIds.contains(card.milestoneId);
+            toggle.setText(card.hasBuild ? (expanded ? "▾" : "▸") : "");
+            if (card.hasBuild && expanded) {
+                buildSection.setVisibility(View.VISIBLE);
+                buildSummary.setText(milestoneBuildSummaryText(card, chinese));
+                if (!card.buildError.isEmpty() && "failed".equals(card.buildResult)) {
+                    buildError.setVisibility(View.VISIBLE);
+                    buildError.setText(card.buildError);
+                } else {
+                    buildError.setVisibility(View.GONE);
+                }
+            } else {
+                buildSection.setVisibility(View.GONE);
+            }
+            final long milestoneId = card.milestoneId;
+            final boolean hasBuild = card.hasBuild;
+            view.findViewById(R.id.milestoneHeader).setOnClickListener(v -> {
+                if (!hasBuild) {
+                    return;
+                }
+                if (expandedMilestoneIds.contains(milestoneId)) {
+                    expandedMilestoneIds.remove(milestoneId);
+                } else {
+                    expandedMilestoneIds.add(milestoneId);
+                }
+                adapter.notifyDataSetChanged();
+            });
             return view;
+        }
+
+        private String milestoneBuildSummaryText(MilestoneCardModel card, boolean chinese) {
+            String result;
+            if ("success".equals(card.buildResult)) {
+                result = chinese ? "成功" : "success";
+            } else if ("failed".equals(card.buildResult)) {
+                result = chinese ? "失败" : "failed";
+            } else {
+                result = chinese ? "构建中" : "building";
+            }
+            return chinese
+                    ? ("构建 " + card.buildAttempts + " 次（含修复）· " + result)
+                    : ("Built " + card.buildAttempts + "× (incl. repairs) · " + result);
         }
 
         private TextView milestoneTaskRow(MilestoneTaskSnapshot task) {
