@@ -15,9 +15,4 @@
         android:title="@string/milestone_pause"
         android:visible="false"
         app:showAsAction="never" />
-    <item
-        android:id="@+id/action_single_step"
-        android:title="@string/milestone_single_step"
-        android:visible="false"
-        app:showAsAction="never" />
 </menu>

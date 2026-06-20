@@ -176,10 +176,6 @@ public class ProjectActivity extends BaseActivity {
                 pauseMilestoneMarch();
                 return true;
             }
-            if (item.getItemId() == R.id.action_single_step) {
-                startMilestoneMarch(true);
-                return true;
-            }
             return false;
         });
         repository = ((AndroidBuilderApp) getApplication()).repository();
@@ -1166,13 +1162,8 @@ public class ProjectActivity extends BaseActivity {
             return;
         }
         android.view.MenuItem pause = menu.findItem(R.id.action_pause_march);
-        android.view.MenuItem step = menu.findItem(R.id.action_single_step);
-        boolean hasPending = repository.firstUnfinishedMilestone(projectId) != null;
         if (pause != null) {
             pause.setVisible(milestoneMarchActive && !milestoneMarchPaused);
-        }
-        if (step != null) {
-            step.setVisible(!milestoneMarchActive && hasPending && !busy);
         }
     }
 

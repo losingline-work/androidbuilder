@@ -43,7 +43,11 @@ public final class BuildFailureClassifier {
                 "repo.maven.apache.org",
                 "dl.google.com",
                 "network unavailable")) {
-            return new Result(Kind.DEPENDENCY_NETWORK, false);
+            // A failed download of an APP library (JitPack / com.github.*, which has no domestic mirror) is
+            // recoverable: remove it and reimplement the feature with the SDK. A general outage (the build
+            // toolchain, or simply no network) is not — the model can't reimplement Gradle/AGP.
+            boolean substitutableLibrary = containsAny(text, "jitpack", "com.github.");
+            return new Result(Kind.DEPENDENCY_NETWORK, substitutableLibrary);
         }
         if (containsAny(text, "embedded_runtime_timeout", "build timed out", "last build output")) {
             return new Result(Kind.BUILD_TIMEOUT, false);

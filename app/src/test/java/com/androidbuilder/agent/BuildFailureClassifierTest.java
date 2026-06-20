@@ -107,4 +107,27 @@ public class BuildFailureClassifierTest {
         assertEquals(BuildFailureClassifier.Kind.JAVA_COMPILE, result.kind);
         assertTrue(result.repairableByModel);
     }
+
+    @Test
+    public void jitpackDownloadFailureIsRepairableBySdkSubstitution() {
+        // A JitPack app library (no domestic mirror) failing to download is recoverable — remove it and
+        // reimplement with the SDK.
+        BuildFailureClassifier.Result result = BuildFailureClassifier.classify(
+                "embedded_runtime_finished",
+                "Could not resolve com.github.PhilJay:MPAndroidChart:v3.1.0. Connect timed out (jitpack.io)");
+
+        assertEquals(BuildFailureClassifier.Kind.DEPENDENCY_NETWORK, result.kind);
+        assertTrue(result.repairableByModel);
+    }
+
+    @Test
+    public void generalNetworkOutageIsNotRepairable() {
+        // No-network / toolchain outage: the model can't reimplement Gradle/AGP, so don't burn repair rounds.
+        BuildFailureClassifier.Result result = BuildFailureClassifier.classify(
+                "embedded_runtime_finished",
+                "Could not GET 'https://dl.google.com/...'. UnknownHostException: dl.google.com. network unavailable");
+
+        assertEquals(BuildFailureClassifier.Kind.DEPENDENCY_NETWORK, result.kind);
+        assertFalse(result.repairableByModel);
+    }
 }
