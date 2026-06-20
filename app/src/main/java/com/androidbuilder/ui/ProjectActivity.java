@@ -1953,11 +1953,18 @@ public class ProjectActivity extends BaseActivity {
             List<ProjectMilestoneRecord> milestones = repository == null
                     ? java.util.Collections.<ProjectMilestoneRecord>emptyList()
                     : repository.listProjectMilestones(projectId);
+            // The live status hint goes INTO the active milestone's card; the bottom status row is then
+            // suppressed so the activity isn't shown twice.
+            boolean hasActiveMilestone = marchMilestoneId > 0 && !milestones.isEmpty();
+            boolean showStatus = shouldShowOperationStatus();
+            String activeStatusHint = hasActiveMilestone && showStatus
+                    ? ProjectOperationStatus.displayText(operationStatusWithProgress(), operationElapsedText())
+                    : "";
             List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(milestones, marchMilestoneId, taskItems,
-                    id -> repository == null ? null : repository.getBuildJob(id));
+                    id -> repository == null ? null : repository.getBuildJob(id), activeStatusHint);
             snapshot = ProjectTimelineSnapshot.create(
                     messages,
-                    shouldShowOperationStatus(),
+                    showStatus && !hasActiveMilestone,
                     latestPlan,
                     taskItems,
                     latestJob,
@@ -2150,6 +2157,15 @@ public class ProjectActivity extends BaseActivity {
             progress.setProgress(total > 0
                     ? (int) Math.round(done * 100.0 / total)
                     : (MilestoneStatus.DONE.equals(card.status) ? 100 : 0));
+
+            // Live activity hint for the active milestone (folded in from the old bottom status row).
+            TextView statusHint = view.findViewById(R.id.milestoneStatusHint);
+            if (card.statusHint.isEmpty()) {
+                statusHint.setVisibility(View.GONE);
+            } else {
+                statusHint.setVisibility(View.VISIBLE);
+                statusHint.setText(card.statusHint);
+            }
 
             // Always-visible task list (this is the collapsed state the user wants).
             container.removeAllViews();

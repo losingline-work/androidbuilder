@@ -22,10 +22,12 @@ final class MilestoneCardModel {
     final String buildResult;
     /** A short excerpt of the latest build's failure, or "". */
     final String buildError;
+    /** Live activity hint for the milestone currently being worked on (e.g. "修复中（第 2 轮）…"), else "". */
+    final String statusHint;
 
     MilestoneCardModel(long milestoneId, int orderIndex, String title, String status,
                        List<MilestoneTaskSnapshot> tasks,
-                       boolean hasBuild, int buildAttempts, String buildResult, String buildError) {
+                       boolean hasBuild, int buildAttempts, String buildResult, String buildError, String statusHint) {
         this.milestoneId = milestoneId;
         this.orderIndex = orderIndex;
         this.title = title == null ? "" : title;
@@ -35,6 +37,7 @@ final class MilestoneCardModel {
         this.buildAttempts = buildAttempts;
         this.buildResult = buildResult == null ? "" : buildResult;
         this.buildError = buildError == null ? "" : buildError;
+        this.statusHint = statusHint == null ? "" : statusHint;
     }
 
     int totalTasks() {

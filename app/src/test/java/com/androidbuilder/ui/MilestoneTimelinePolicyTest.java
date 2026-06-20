@@ -74,6 +74,17 @@ public class MilestoneTimelinePolicyTest {
     }
 
     @Test
+    public void statusHintLandsOnlyOnTheActiveMilestone() {
+        List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(Arrays.asList(
+                milestone(1, 0, MilestoneStatus.DONE, ""),
+                milestone(2, 1, MilestoneStatus.REPAIRING, "")),
+                2, null, id -> null, "里程碑 M1 自动修复中（第 2 轮）…");
+
+        assertEquals("", cards.get(0).statusHint);
+        assertTrue(cards.get(1).statusHint.contains("修复中"));
+    }
+
+    @Test
     public void noBuildJobMeansNoBuildSummary() {
         ProjectMilestoneRecord m = new ProjectMilestoneRecord(1, 1, 1, "M1", "", "", MilestoneStatus.GENERATING,
                 "", 0, 0, 0, 0, "");

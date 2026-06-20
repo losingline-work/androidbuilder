@@ -41,6 +41,10 @@ public final class ConversationContextPolicy {
                 text.contains("Build repair complete") || text.contains("已完成构建修复")) {
             return true;
         }
+        // Milestone-march status chatter — the milestone card carries this now.
+        if (text.contains("Generating milestone M") || text.contains("开始生成里程碑 M")) {
+            return true;
+        }
         // Per-task execute chatter.
         return text.contains("Executing next step:") || text.contains("执行下一步：") ||
                 text.contains("Executing next parallel batch:") || text.contains("并行执行下一批：") ||

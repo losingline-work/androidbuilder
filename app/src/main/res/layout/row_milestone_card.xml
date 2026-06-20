@@ -48,6 +48,15 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp" />
 
+                <TextView
+                    android:id="@+id/milestoneStatusHint"
+                    style="@style/TextBodyMedium"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="?attr/colorPrimary"
+                    android:visibility="gone" />
+
                 <ProgressBar
                     android:id="@+id/milestoneCardProgress"
                     style="?android:attr/progressBarStyleHorizontal"

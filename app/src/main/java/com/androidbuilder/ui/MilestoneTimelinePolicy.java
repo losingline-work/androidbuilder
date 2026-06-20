@@ -25,11 +25,16 @@ final class MilestoneTimelinePolicy {
     }
 
     static List<MilestoneCardModel> cards(List<ProjectMilestoneRecord> milestones, long activeMilestoneId, List<ProjectTaskRecord> liveTasks) {
-        return cards(milestones, activeMilestoneId, liveTasks, null);
+        return cards(milestones, activeMilestoneId, liveTasks, null, "");
     }
 
     static List<MilestoneCardModel> cards(List<ProjectMilestoneRecord> milestones, long activeMilestoneId,
                                           List<ProjectTaskRecord> liveTasks, BuildLookup builds) {
+        return cards(milestones, activeMilestoneId, liveTasks, builds, "");
+    }
+
+    static List<MilestoneCardModel> cards(List<ProjectMilestoneRecord> milestones, long activeMilestoneId,
+                                          List<ProjectTaskRecord> liveTasks, BuildLookup builds, String activeStatusHint) {
         List<MilestoneCardModel> cards = new ArrayList<>();
         if (milestones == null) {
             return cards;
@@ -37,13 +42,16 @@ final class MilestoneTimelinePolicy {
         for (ProjectMilestoneRecord milestone : milestones) {
             BuildJobRecord build = builds != null && milestone.buildJobId != 0 ? builds.get(milestone.buildJobId) : null;
             boolean hasBuild = build != null;
+            // The live status hint lands on the milestone currently being worked on (the march's active one).
+            String hint = milestone.id == activeMilestoneId && activeStatusHint != null ? activeStatusHint : "";
             cards.add(new MilestoneCardModel(
                     milestone.id, milestone.orderIndex, milestone.title, milestone.status,
                     tasksFor(milestone, activeMilestoneId, liveTasks),
                     hasBuild,
                     hasBuild ? Math.max(1, milestone.repairRounds + 1) : 0,
                     hasBuild ? build.status : "",
-                    hasBuild ? excerpt(build.errorSummary) : ""));
+                    hasBuild ? excerpt(build.errorSummary) : "",
+                    hint));
         }
         return cards;
     }
