@@ -405,16 +405,20 @@ public class ProjectActivity extends BaseActivity {
         updateMarchMenu();
         updateKeepScreenOn();
         if (marchMilestoneId > 0) {
-            // During a march, follow the active milestone card instead of jumping to the bottom; scroll only
-            // when the active milestone actually changes so the view doesn't fight a user who scrolled away.
-            if (marchMilestoneId != lastScrolledMilestoneId) {
-                lastScrolledMilestoneId = marchMilestoneId;
-                scrollToActiveMilestone();
-            }
+            // During a march, follow the active milestone card instead of jumping to the bottom.
+            maybeScrollToActiveMilestone();
         } else if (!messages.isEmpty() || shouldShowOperationStatus()) {
             scrollMessagesToBottom();
         }
         updateElapsedTicker();
+    }
+
+    /** Scroll to the active milestone card once when it changes (so it doesn't fight a user who scrolled away). */
+    private void maybeScrollToActiveMilestone() {
+        if (marchMilestoneId > 0 && marchMilestoneId != lastScrolledMilestoneId) {
+            lastScrolledMilestoneId = marchMilestoneId;
+            scrollToActiveMilestone();
+        }
     }
 
     private void refreshLiveState() {
@@ -956,6 +960,8 @@ public class ProjectActivity extends BaseActivity {
         if (adapter != null) {
             adapter.notifyDataSetChanged();
         }
+        // Scroll to (and expand) the new active milestone immediately, not only after its generation finishes.
+        maybeScrollToActiveMilestone();
         agentService.generateMilestoneAsync(projectId, next.id, new AgentService.Callback() {
             @Override
             public void onComplete(BuildJobRecord job) {
