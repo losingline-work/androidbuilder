@@ -443,6 +443,14 @@ public class AppRepository {
         helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
     }
 
+    /** Persist a milestone's task-list snapshot (title+status JSON) so its card survives clearProjectTasks. */
+    public synchronized void saveMilestoneTasks(long id, String tasksJson) {
+        ContentValues values = new ContentValues();
+        values.put("tasks_json", tasksJson == null ? "" : tasksJson);
+        values.put("updated_at", System.currentTimeMillis());
+        helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
     public synchronized void updateMilestoneRepairRounds(long id, int repairRounds) {
         ContentValues values = new ContentValues();
         values.put("repair_rounds", repairRounds);
@@ -880,7 +888,8 @@ public class AppRepository {
                 cursor.getLong(cursor.getColumnIndexOrThrow("build_job_id")),
                 cursor.getInt(cursor.getColumnIndexOrThrow("repair_rounds")),
                 cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
-                cursor.getLong(cursor.getColumnIndexOrThrow("updated_at"))
+                cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
+                cursor.getString(cursor.getColumnIndexOrThrow("tasks_json"))
         );
     }
 

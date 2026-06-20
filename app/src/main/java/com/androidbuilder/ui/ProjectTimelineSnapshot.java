@@ -19,20 +19,23 @@ final class ProjectTimelineSnapshot {
     private final List<ProjectTimelinePolicy.Entry> entries;
     private final Map<Long, BuildJobRecord> buildJobsById;
     private final BuildJobRecord latestJob;
+    private final List<MilestoneCardModel> milestoneCards;
 
     private ProjectTimelineSnapshot(
             List<ChatMessage> messages,
             List<ProjectTimelinePolicy.Entry> entries,
             Map<Long, BuildJobRecord> buildJobsById,
-            BuildJobRecord latestJob) {
+            BuildJobRecord latestJob,
+            List<MilestoneCardModel> milestoneCards) {
         this.messages = messages;
         this.entries = entries;
         this.buildJobsById = buildJobsById;
         this.latestJob = latestJob;
+        this.milestoneCards = milestoneCards == null ? new ArrayList<>() : milestoneCards;
     }
 
     static ProjectTimelineSnapshot empty() {
-        return new ProjectTimelineSnapshot(new ArrayList<>(), new ArrayList<>(), new HashMap<>(), null);
+        return new ProjectTimelineSnapshot(new ArrayList<>(), new ArrayList<>(), new HashMap<>(), null, new ArrayList<>());
     }
 
     static ProjectTimelineSnapshot create(
@@ -41,6 +44,7 @@ final class ProjectTimelineSnapshot {
             ProjectPlanRecord plan,
             List<ProjectTaskRecord> tasks,
             BuildJobRecord latestJob,
+            List<MilestoneCardModel> milestoneCards,
             BuildJobResolver resolver) {
         List<ChatMessage> safeMessages = messages == null ? new ArrayList<>() : new ArrayList<>(messages);
         Map<Long, BuildJobRecord> buildJobsById = resolveLinkedBuildJobs(safeMessages, resolver);
@@ -64,8 +68,9 @@ final class ProjectTimelineSnapshot {
                 plan,
                 tasks,
                 latestJob,
-                ProjectBuildLogContentPolicy.hasFailureSummary(latestJob));
-        return new ProjectTimelineSnapshot(safeMessages, entries, buildJobsById, latestJob);
+                ProjectBuildLogContentPolicy.hasFailureSummary(latestJob),
+                milestoneCards == null ? 0 : milestoneCards.size());
+        return new ProjectTimelineSnapshot(safeMessages, entries, buildJobsById, latestJob, milestoneCards);
     }
 
     /**
@@ -112,6 +117,14 @@ final class ProjectTimelineSnapshot {
 
     ProjectTimelinePolicy.Entry entryAt(int position) {
         return position >= 0 && position < entries.size() ? entries.get(position) : null;
+    }
+
+    MilestoneCardModel milestoneCard(ProjectTimelinePolicy.Entry entry) {
+        if (entry == null || entry.kind != ProjectTimelinePolicy.Kind.MILESTONE_CARD) {
+            return null;
+        }
+        int index = entry.sourceIndex;
+        return index >= 0 && index < milestoneCards.size() ? milestoneCards.get(index) : null;
     }
 
     int positionForTaskIndex(int taskIndex) {

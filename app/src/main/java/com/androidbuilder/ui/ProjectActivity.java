@@ -43,6 +43,7 @@ import com.androidbuilder.model.HermesAgentRunRecord;
 import com.androidbuilder.model.ProjectLogEntry;
 import com.androidbuilder.model.ProjectPlanRecord;
 import com.androidbuilder.model.ProjectRecord;
+import com.androidbuilder.model.MilestoneTaskSnapshot;
 import com.androidbuilder.model.ProjectMilestoneRecord;
 import com.androidbuilder.model.ProjectTaskRecord;
 import com.androidbuilder.server.LocalBuildServer;
@@ -1100,6 +1101,42 @@ public class ProjectActivity extends BaseActivity {
         strip.setVisibility(View.VISIBLE);
     }
 
+    private String milestoneStatusLabel(String status) {
+        boolean zh = AppSettings.isChinese(this);
+        if (MilestoneStatus.DONE.equals(status)) {
+            return zh ? "已完成" : "Done";
+        }
+        if (MilestoneStatus.GENERATING.equals(status)) {
+            return zh ? "生成中" : "Generating";
+        }
+        if (MilestoneStatus.BUILDING.equals(status)) {
+            return zh ? "构建中" : "Building";
+        }
+        if (MilestoneStatus.REPAIRING.equals(status)) {
+            return zh ? "修复中" : "Repairing";
+        }
+        if (MilestoneStatus.FAILED.equals(status)) {
+            return zh ? "失败" : "Failed";
+        }
+        if (MilestoneStatus.PAUSED.equals(status)) {
+            return zh ? "已暂停" : "Paused";
+        }
+        return zh ? "待做" : "Pending";
+    }
+
+    private String taskStatusGlyph(String status) {
+        if ("done".equals(status)) {
+            return "✓";
+        }
+        if ("running".equals(status)) {
+            return "▶";
+        }
+        if ("failed".equals(status)) {
+            return "✗";
+        }
+        return "○";
+    }
+
     private String milestoneGlyph(String status) {
         if (MilestoneStatus.DONE.equals(status)) {
             return "✓";
@@ -1897,6 +1934,7 @@ public class ProjectActivity extends BaseActivity {
         private static final int TYPE_TASK = 2;
         private static final int TYPE_BUILD_LOG = 3;
         private static final int TYPE_PLAN_CARD = 4;
+        private static final int TYPE_MILESTONE_CARD = 5;
         private ProjectTimelineSnapshot snapshot = ProjectTimelineSnapshot.empty();
 
         TimelineAdapter() {
@@ -1910,12 +1948,17 @@ public class ProjectActivity extends BaseActivity {
         }
 
         private void rebuildSnapshot() {
+            List<ProjectMilestoneRecord> milestones = repository == null
+                    ? java.util.Collections.<ProjectMilestoneRecord>emptyList()
+                    : repository.listProjectMilestones(projectId);
+            List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(milestones, marchMilestoneId, taskItems);
             snapshot = ProjectTimelineSnapshot.create(
                     messages,
                     shouldShowOperationStatus(),
                     latestPlan,
                     taskItems,
                     latestJob,
+                    cards,
                     id -> repository == null ? null : repository.getBuildJob(id));
         }
 
@@ -1969,7 +2012,7 @@ public class ProjectActivity extends BaseActivity {
 
         @Override
         public int getViewTypeCount() {
-            return 5;
+            return 6;
         }
 
         @Override
@@ -1989,6 +2032,9 @@ public class ProjectActivity extends BaseActivity {
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.PLAN_CARD) {
                 return TYPE_PLAN_CARD;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.MILESTONE_CARD) {
+                return TYPE_MILESTONE_CARD;
             }
             return TYPE_MESSAGE;
         }
@@ -2010,6 +2056,9 @@ public class ProjectActivity extends BaseActivity {
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.PLAN_CARD) {
                 return bindPlanCard(entry, convertView, parent);
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.MILESTONE_CARD) {
+                return bindMilestoneCard(snapshot.milestoneCard(entry), convertView, parent);
             }
             return bindMessage(entry, convertView, parent);
         }
@@ -2073,6 +2122,50 @@ public class ProjectActivity extends BaseActivity {
             toggle.setOnClickListener(toggleListener);
             view.setOnClickListener(toggleListener);
             return view;
+        }
+
+        private View bindMilestoneCard(MilestoneCardModel card, View convertView, ViewGroup parent) {
+            View view = convertView == null || convertView.findViewById(R.id.milestoneCardTitle) == null
+                    ? getLayoutInflater().inflate(R.layout.row_milestone_card, parent, false)
+                    : convertView;
+            if (card == null) {
+                return view;
+            }
+            TextView icon = view.findViewById(R.id.milestoneStatusIcon);
+            TextView title = view.findViewById(R.id.milestoneCardTitle);
+            TextView summary = view.findViewById(R.id.milestoneCardSummary);
+            ProgressBar progress = view.findViewById(R.id.milestoneCardProgress);
+            LinearLayout container = view.findViewById(R.id.milestoneTasksContainer);
+
+            boolean chinese = AppSettings.isChinese(ProjectActivity.this);
+            icon.setText(milestoneGlyph(card.status));
+            title.setText("M" + card.orderIndex + " · " + card.title);
+            int total = card.totalTasks();
+            int done = card.doneTasks();
+            String label = milestoneStatusLabel(card.status);
+            summary.setText(total > 0 ? label + " · " + done + "/" + total + (chinese ? " 任务" : " tasks") : label);
+            progress.setProgress(total > 0
+                    ? (int) Math.round(done * 100.0 / total)
+                    : (MilestoneStatus.DONE.equals(card.status) ? 100 : 0));
+
+            container.removeAllViews();
+            if (total > 0) {
+                container.setVisibility(View.VISIBLE);
+                for (MilestoneTaskSnapshot task : card.tasks) {
+                    container.addView(milestoneTaskRow(task));
+                }
+            } else {
+                container.setVisibility(View.GONE);
+            }
+            return view;
+        }
+
+        private TextView milestoneTaskRow(MilestoneTaskSnapshot task) {
+            TextView row = new TextView(ProjectActivity.this);
+            row.setText(taskStatusGlyph(task.status) + "  " + task.title);
+            row.setTextSize(13);
+            row.setPadding(0, dp(3), 0, dp(3));
+            return row;
         }
 
         private View bindTaskGroup(View convertView, ViewGroup parent) {

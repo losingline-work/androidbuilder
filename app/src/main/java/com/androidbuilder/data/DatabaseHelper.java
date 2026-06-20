@@ -17,7 +17,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     static final String TABLE_HERMES_AGENT_RUNS = "hermes_agent_runs";
 
     private static final String DB_NAME = "android_builder.db";
-    private static final int DB_VERSION = 7;
+    private static final int DB_VERSION = 8;
 
     public DatabaseHelper(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -102,6 +102,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 7) {
             createProjectMilestonesTable(db);
         }
+        if (oldVersion < 8) {
+            db.execSQL("ALTER TABLE project_milestones ADD COLUMN tasks_json TEXT NOT NULL DEFAULT ''");
+        }
     }
 
     @Override
@@ -155,6 +158,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "checkpoint_path TEXT NOT NULL DEFAULT ''," +
                 "build_job_id INTEGER NOT NULL DEFAULT 0," +
                 "repair_rounds INTEGER NOT NULL DEFAULT 0," +
+                "tasks_json TEXT NOT NULL DEFAULT ''," +
                 "created_at INTEGER NOT NULL," +
                 "updated_at INTEGER NOT NULL," +
                 "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE" +

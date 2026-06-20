@@ -22,10 +22,19 @@ public class ProjectMilestoneRecord {
     public final int repairRounds;
     public final long createdAt;
     public final long updatedAt;
+    /** Snapshot of this milestone's task list (title+status JSON), captured when it finished. "" while pending. */
+    public final String tasksJson;
 
     public ProjectMilestoneRecord(long id, long projectId, int orderIndex, String title, String description,
                                   String slice, String status, String checkpointPath, long buildJobId,
                                   int repairRounds, long createdAt, long updatedAt) {
+        this(id, projectId, orderIndex, title, description, slice, status, checkpointPath, buildJobId,
+                repairRounds, createdAt, updatedAt, "");
+    }
+
+    public ProjectMilestoneRecord(long id, long projectId, int orderIndex, String title, String description,
+                                  String slice, String status, String checkpointPath, long buildJobId,
+                                  int repairRounds, long createdAt, long updatedAt, String tasksJson) {
         this.id = id;
         this.projectId = projectId;
         this.orderIndex = orderIndex;
@@ -38,5 +47,6 @@ public class ProjectMilestoneRecord {
         this.repairRounds = repairRounds;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.tasksJson = tasksJson == null ? "" : tasksJson;
     }
 }

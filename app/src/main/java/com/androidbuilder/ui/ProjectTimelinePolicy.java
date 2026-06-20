@@ -15,7 +15,8 @@ public final class ProjectTimelinePolicy {
         PLAN_CARD,
         OPERATION_STATUS,
         TASK_GROUP,
-        BUILD_LOG
+        BUILD_LOG,
+        MILESTONE_CARD
     }
 
     public static final class Entry {
@@ -41,7 +42,7 @@ public final class ProjectTimelinePolicy {
             List<ProjectTaskRecord> tasks,
             BuildJobRecord latestJob,
             boolean buildLogVisible) {
-        return entries(messageCount, linkedBuildJobIds, messageVisible, null, taskAnchorIndex, showOperationStatus, plan, tasks, latestJob, buildLogVisible);
+        return entries(messageCount, linkedBuildJobIds, messageVisible, null, taskAnchorIndex, showOperationStatus, plan, tasks, latestJob, buildLogVisible, 0);
     }
 
     public static List<Entry> entries(
@@ -55,6 +56,43 @@ public final class ProjectTimelinePolicy {
             List<ProjectTaskRecord> tasks,
             BuildJobRecord latestJob,
             boolean buildLogVisible) {
+        return entries(messageCount, linkedBuildJobIds, messageVisible, messagePlanCards, taskAnchorIndex,
+                showOperationStatus, plan, tasks, latestJob, buildLogVisible, 0);
+    }
+
+    public static List<Entry> entries(
+            int messageCount,
+            List<Long> linkedBuildJobIds,
+            List<Boolean> messageVisible,
+            List<Boolean> messagePlanCards,
+            int taskAnchorIndex,
+            boolean showOperationStatus,
+            ProjectPlanRecord plan,
+            List<ProjectTaskRecord> tasks,
+            BuildJobRecord latestJob,
+            boolean buildLogVisible,
+            int milestoneCardCount) {
+        // Incremental flow: replace the per-milestone task-group + per-build log rows with one card per
+        // milestone. Keep the real messages (plan, milestone list, terminal result) and the operation status.
+        if (milestoneCardCount > 0) {
+            List<Entry> entries = new ArrayList<>();
+            for (int i = 0; i < messageCount; i++) {
+                boolean visible = messageVisible == null || i >= messageVisible.size() || messageVisible.get(i);
+                if (visible) {
+                    boolean planCard = messagePlanCards != null
+                            && i < messagePlanCards.size()
+                            && Boolean.TRUE.equals(messagePlanCards.get(i));
+                    entries.add(new Entry(planCard ? Kind.PLAN_CARD : Kind.MESSAGE, i));
+                }
+            }
+            for (int card = 0; card < milestoneCardCount; card++) {
+                entries.add(new Entry(Kind.MILESTONE_CARD, card));
+            }
+            if (showOperationStatus) {
+                entries.add(new Entry(Kind.OPERATION_STATUS, -1));
+            }
+            return entries;
+        }
         List<Entry> entries = new ArrayList<>();
         // The task group is a record too: it is inserted at the chronological position where the
         // plan was split into tasks (taskAnchorIndex = number of messages created before it),

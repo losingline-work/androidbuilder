@@ -30,6 +30,7 @@ public class ProjectTimelineSnapshotTest {
                 plan,
                 Collections.singletonList(task),
                 null,
+                null,
                 id -> null);
 
         assertEquals(4, snapshot.size());
@@ -53,6 +54,7 @@ public class ProjectTimelineSnapshotTest {
                 null,
                 Collections.emptyList(),
                 job,
+                null,
                 id -> {
                     lookups.incrementAndGet();
                     return job;
@@ -78,6 +80,7 @@ public class ProjectTimelineSnapshotTest {
                 null,
                 Collections.emptyList(),
                 job,
+                null,
                 id -> job);
 
         assertEquals(1, snapshot.size());
@@ -100,6 +103,7 @@ public class ProjectTimelineSnapshotTest {
                 null,
                 Collections.emptyList(),
                 job,
+                null,
                 id -> job);
 
         assertEquals(1, snapshot.size());
@@ -118,6 +122,7 @@ public class ProjectTimelineSnapshotTest {
                 null,
                 Collections.emptyList(),
                 job,
+                null,
                 id -> null);
 
         assertEquals(2, snapshot.size());

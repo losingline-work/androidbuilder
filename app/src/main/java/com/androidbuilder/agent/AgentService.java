@@ -566,6 +566,9 @@ public class AgentService {
                 : () -> deriveMilestoneTasks(projectId, job.id, milestone, plan, chinese);
         try {
             BuildJobRecord ready = runGenerationToReadyForBuild(projectId, job, plan, chinese, true, step);
+            // Snapshot this milestone's (now-generated) task list onto the milestone row so it survives the
+            // next milestone's clearProjectTasks and can be shown in the milestone card.
+            repository.saveMilestoneTasks(milestoneId, MilestoneTasksCodec.encode(repository.listProjectTasks(projectId)));
             repository.updateMilestoneStatus(milestoneId, MilestoneStatus.BUILDING);
             return ready;
         } catch (Exception error) {
