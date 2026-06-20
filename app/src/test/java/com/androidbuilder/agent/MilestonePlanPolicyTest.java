@@ -84,4 +84,14 @@ public class MilestonePlanPolicyTest {
         assertTrue(prompt.contains("COMPILES and RUNS"));
         assertTrue(prompt.contains("dependency"));
     }
+
+    @Test
+    public void milestonePlanPrompt_demandsFineGrainedSlices() {
+        String prompt = OpenAiClient.milestonePlanSystemPromptForTest(false);
+        // tiny slices, not a whole data layer in one milestone
+        assertTrue(prompt.contains("TINY"));
+        assertTrue(prompt.contains("ONE core table"));
+        assertTrue(prompt.contains("one milestone per tab"));
+        assertTrue(prompt.contains("10 to 20"));
+    }
 }

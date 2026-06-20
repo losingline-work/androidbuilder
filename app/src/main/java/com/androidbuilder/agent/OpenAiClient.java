@@ -1164,7 +1164,7 @@ public class OpenAiClient {
     }
 
     private String milestonePlanSystemPrompt(boolean chinese) {
-        return milestonePlanSystemPromptText(chinese);
+        return milestonePlanSystemPromptText(chinese) + " " + dependencyPolicyPrompt();
     }
 
     static String milestonePlanSystemPromptForTest(boolean chinese) {
@@ -1177,14 +1177,17 @@ public class OpenAiClient {
                 "Return only compact JSON: {\"milestones\":[{\"order\":<int>,\"title\":<string>,\"description\":<string>,\"slice\":<string>}]}. Escape double quotes inside JSON string values, or use single quotes in prose. " +
                 "CRITICAL: do NOT include the runnable skeleton (Gradle config, AndroidManifest, launcher Activity, an empty home screen, base theme). That is milestone 0 and is added automatically. List ONLY the feature slices, starting from the first real feature that builds on top of the skeleton. " +
                 "Each milestone is ONE small VERTICAL slice — the screen(s) + data + wiring for a single coherent feature — small enough that, when added on top of all previous milestones, the app still COMPILES and RUNS. Never split a feature into a 'just the layout' milestone and a separate 'just the Java' milestone; a milestone that does not build on its own is wrong. " +
-                "Order strictly by dependency, each building on the previous and leaving the app runnable: foundational storage first (e.g. the database/helper plus one core entity and its DAO), then the core create/save flow, then the list/display of that data, then secondary features (editing, search, statistics, settings, theming polish). A later milestone may freely use classes/resources created by earlier ones. " +
-                "Prefer MORE SMALL milestones over a few big ones — a typical app is about 3 to 10 milestones, and each slice should touch only a handful of files. A weaker model must be able to generate each slice reliably in one pass. " +
+                "Order strictly by dependency, each building on the previous and leaving the app runnable: foundational storage first, then the core create/save flow, then the list/display of that data, then secondary features (editing, search, statistics, settings, theming polish). A later milestone may freely use classes/resources created by earlier ones. " +
+                "KEEP EACH MILESTONE TINY — at most about 4 to 5 files, and at most ONE of: one screen/Activity/Fragment, one data entity/table (with its DAO), one chart, or one dialog. A weaker model must finish a slice in a single pass with few cross-file errors, so a smaller slice is always better. " +
+                "Do NOT bundle a whole data layer into one milestone: the FIRST data milestone is the database helper plus ONE core table and its DAO; every additional table/entity gets its OWN later milestone. Split a multi-tab screen into one milestone per tab, and a multi-chart page into one milestone per chart. " +
+                "Prefer MANY small milestones over a few big ones — a full-featured app is often 10 to 20 milestones. " +
                 "title: a short feature name. description: what this milestone adds and that the app stays runnable afterwards. slice: a concrete one-line focus for this feature, used to scope which files to generate. " +
                 "Do not include build, install, or test milestones. " + language;
     }
 
     private String milestoneTasksSystemPrompt(boolean chinese) {
-        return milestoneTasksSystemPromptText(chinese);
+        return milestoneTasksSystemPromptText(chinese) + " " + dependencyPolicyPrompt()
+                + graphicsRestrictionClause(currentProvider(), currentModel(), chinese);
     }
 
     static String milestoneTasksSystemPromptForTest(boolean chinese) {
@@ -1530,8 +1533,13 @@ public class OpenAiClient {
         if (BuildBackendSettings.DEPENDENCY_ONLINE.equals(mode)) {
             return OnlineDependencyPolicy.prompt();
         }
-        if (BuildBackendSettings.DEPENDENCY_LOCAL_CACHE.equals(mode)) {
-            return "Dependency mode is local cache: use only dependencies that are already present in the local offline Maven cache. Do not invent new Maven dependencies. Avoid dataBinding, viewBinding, Compose, Room, Retrofit, and Material unless explicitly available in the cache.";
+        // Only claim the libraries are available when the cache is actually populated — telling the model a
+        // lib is cached when it is not would trigger the very download failure this mode exists to avoid.
+        if (BuildBackendSettings.DEPENDENCY_LOCAL_CACHE.equals(mode)
+                && PlanConstraintComposer.offlineCacheAvailable(BuildBackendSettings.offlineMavenDir(context))) {
+            return "Dependency mode is local cache: the following libraries ARE pre-seeded in the local offline Maven cache and you SHOULD use them when a feature needs one (use the exact coordinates; do NOT add any other Maven dependency). "
+                    + DependencyCatalog.promptSummary()
+                    + " Keep all code Java + XML; do not add Kotlin, Compose, Room, annotation processors, or KSP.";
         }
         return "Dependency mode is offline safe: do not add Maven dependencies, AndroidX libraries, Compose, Room, Retrofit, Material, AppCompat, dataBinding, or viewBinding. Use Android SDK APIs, Java, XML layouts, SQLiteOpenHelper, and findViewById.";
     }
@@ -1548,6 +1556,12 @@ public class OpenAiClient {
             return "Dependency capability for this plan (supersedes the generic no-third-party rule): " +
                     DependencyCatalog.promptSummary() +
                     " Plan features only around these libraries, the trusted androidx/material groups, or the Android SDK.";
+        }
+        if (BuildBackendSettings.DEPENDENCY_LOCAL_CACHE.equals(mode)
+                && PlanConstraintComposer.offlineCacheAvailable(BuildBackendSettings.offlineMavenDir(context))) {
+            return "Dependency capability for this plan (builds resolve from a local offline Maven cache that is already populated): " +
+                    DependencyCatalog.promptSummary() +
+                    " You MAY plan features around these cached libraries and the base androidx/material UI; do not promise any other third-party dependency.";
         }
         return "Dependency capability for this plan: builds run offline, so plan only Android SDK/Java/XML/SQLite features. Do not promise third-party chart, image, animation, or network libraries.";
     }

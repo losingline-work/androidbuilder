@@ -69,11 +69,42 @@ public final class DependencyCatalog {
                     "JSON via reflection only; do NOT add moshi codegen/KSP")
     );
 
+    /** AGP version the build pins — keep in sync with AndroidGradleNormalizer.ANDROID_GRADLE_PLUGIN_VERSION. */
+    private static final String AGP_VERSION = "8.7.3";
+
+    /**
+     * Base toolchain + UI coordinates the offline Maven bundle must contain in ADDITION to the capability
+     * libraries, so an offline build can resolve the Android Gradle Plugin and the common AndroidX/Material UI.
+     * Not advertised to prompts as "capability libraries"; only used to produce the offline bundle.
+     */
+    private static final List<String> BASE_COORDINATES = Arrays.asList(
+            "com.android.tools.build:gradle:" + AGP_VERSION,
+            "com.android.application:com.android.application.gradle.plugin:" + AGP_VERSION,
+            "androidx.appcompat:appcompat:1.7.0",
+            "androidx.core:core:1.13.1",
+            "androidx.recyclerview:recyclerview:1.3.2",
+            "androidx.constraintlayout:constraintlayout:2.2.0",
+            "com.google.android.material:material:1.12.0",
+            "org.jetbrains.kotlin:kotlin-stdlib:1.8.22");
+
     private DependencyCatalog() {
     }
 
     public static List<Entry> entries() {
         return new ArrayList<>(ENTRIES);
+    }
+
+    /**
+     * Every coordinate the offline Maven bundle must contain: the curated capability libraries plus the base
+     * toolchain/UI. Single source of truth for the host tooling (tools/offline-maven) that produces the bundle.
+     */
+    public static List<String> offlineBundleCoordinates() {
+        List<String> coordinates = new ArrayList<>();
+        for (Entry entry : ENTRIES) {
+            coordinates.add(entry.coordinate());
+        }
+        coordinates.addAll(BASE_COORDINATES);
+        return coordinates;
     }
 
     /** Exact coordinate match: cataloged libraries are always approved in online mode. */

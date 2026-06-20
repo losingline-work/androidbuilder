@@ -12,8 +12,9 @@ import java.util.List;
  * runaway guard. The model is instructed to return only feature slices (no skeleton).
  */
 public final class MilestonePlanPolicy {
-    /** Safety bound on feature slices (excluding the skeleton); a pathological list is truncated, not trusted. */
-    public static final int MAX_FEATURE_MILESTONES = 20;
+    /** Safety bound on feature slices (excluding the skeleton); a pathological list is truncated, not trusted.
+     *  Generous because fine-grained slicing (one entity/tab/chart per milestone) yields many small milestones. */
+    public static final int MAX_FEATURE_MILESTONES = 30;
 
     private MilestonePlanPolicy() {
     }

@@ -26,3 +26,7 @@ local.properties
 
 # Logs
 *.log
+
+# Offline maven bundle (large; produced by tools/build-offline-maven.sh)
+app/src/main/assets/offline-maven.zip
+.offline-maven-build/

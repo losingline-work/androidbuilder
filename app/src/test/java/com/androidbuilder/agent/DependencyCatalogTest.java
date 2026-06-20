@@ -46,4 +46,18 @@ public class DependencyCatalogTest {
         assertTrue(prompt.contains("INTERNET permission"));
         assertTrue(prompt.contains("Android SDK"));
     }
+
+    @Test
+    public void offlineBundleCoordinatesIncludeCapabilityLibsAndBaseToolchain() {
+        java.util.List<String> coords = DependencyCatalog.offlineBundleCoordinates();
+        // every capability library is in the bundle
+        for (DependencyCatalog.Entry entry : DependencyCatalog.entries()) {
+            assertTrue(entry.coordinate(), coords.contains(entry.coordinate()));
+        }
+        // base toolchain/UI the offline build also needs
+        assertTrue(coords.contains("com.android.tools.build:gradle:8.7.3"));
+        assertTrue(coords.contains("com.google.android.material:material:1.12.0"));
+        assertTrue(coords.contains("org.jetbrains.kotlin:kotlin-stdlib:1.8.22"));
+        assertTrue(coords.contains("com.github.PhilJay:MPAndroidChart:v3.1.0"));
+    }
 }
