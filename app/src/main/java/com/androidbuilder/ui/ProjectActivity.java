@@ -131,6 +131,7 @@ public class ProjectActivity extends BaseActivity {
     private boolean milestoneMarchPaused;
     private boolean milestoneSingleStep;
     private long marchMilestoneId = -1;
+    private long lastScrolledMilestoneId = -1;
     private long operationStartedAt;
     private long activeTaskStartedAt;
     private String statusSummary = "";
@@ -403,7 +404,14 @@ public class ProjectActivity extends BaseActivity {
         updateMilestoneStrip();
         updateMarchMenu();
         updateKeepScreenOn();
-        if (!messages.isEmpty() || shouldShowOperationStatus()) {
+        if (marchMilestoneId > 0) {
+            // During a march, follow the active milestone card instead of jumping to the bottom; scroll only
+            // when the active milestone actually changes so the view doesn't fight a user who scrolled away.
+            if (marchMilestoneId != lastScrolledMilestoneId) {
+                lastScrolledMilestoneId = marchMilestoneId;
+                scrollToActiveMilestone();
+            }
+        } else if (!messages.isEmpty() || shouldShowOperationStatus()) {
             scrollMessagesToBottom();
         }
         updateElapsedTicker();
@@ -1038,6 +1046,7 @@ public class ProjectActivity extends BaseActivity {
         milestoneMarchActive = false;
         milestoneSingleStep = false;
         marchMilestoneId = -1;
+        lastScrolledMilestoneId = -1;
         MilestoneMarchRegistry.setActive(projectId, false);
         setBusy(false);
         updateKeepScreenOn();
@@ -1217,6 +1226,18 @@ public class ProjectActivity extends BaseActivity {
         messageList.postDelayed(() -> messageList.smoothScrollToPositionFromTop(timelinePosition, dp(8)), 80);
     }
 
+    /** Scroll the timeline to the milestone currently being worked on (called once when it changes). */
+    private void scrollToActiveMilestone() {
+        if (messageList == null || adapter == null || marchMilestoneId <= 0) {
+            return;
+        }
+        int position = adapter.positionForMilestoneCard(marchMilestoneId);
+        if (position < 0) {
+            return;
+        }
+        messageList.postDelayed(() -> messageList.smoothScrollToPositionFromTop(position, dp(8)), 80);
+    }
+
     private int currentTaskIndex() {
         for (int i = 0; i < taskItems.size(); i++) {
             String status = taskItems.get(i).status == null ? "pending" : taskItems.get(i).status;
@@ -1309,6 +1330,11 @@ public class ProjectActivity extends BaseActivity {
      * back to the manual Repair button.
      */
     private void onBuildJobChanged(long jobId) {
+        if (milestoneMarchActive && marchMilestoneId > 0 && jobId > 0) {
+            // Point the active milestone at the latest build job so its card's build summary reflects the
+            // current build/repair instead of the earlier generation job.
+            repository.updateMilestoneBuildJob(marchMilestoneId, jobId);
+        }
         refresh();
         if (!autoLoopEnabled || jobId == autoLoopHandledBuildJobId) {
             return;
@@ -2072,6 +2098,10 @@ public class ProjectActivity extends BaseActivity {
             return snapshot.positionForTaskIndex(taskIndex);
         }
 
+        int positionForMilestoneCard(long milestoneId) {
+            return snapshot.positionForMilestoneCard(milestoneId);
+        }
+
         BuildJobRecord cachedBuildLogJob(ProjectTimelinePolicy.Entry entry) {
             return snapshot.buildLogJob(entry);
         }
@@ -2174,7 +2204,12 @@ public class ProjectActivity extends BaseActivity {
             TextView buildSummary = view.findViewById(R.id.milestoneBuildSummary);
             TextView buildError = view.findViewById(R.id.milestoneBuildError);
             TextView toggle = view.findViewById(R.id.milestoneCardToggle);
-            boolean expanded = expandedMilestoneIds.contains(card.milestoneId);
+            // The milestone currently being worked on is auto-expanded so its status + build process are
+            // visible without a tap; other milestones expand on tap.
+            boolean active = MilestoneStatus.GENERATING.equals(card.status)
+                    || MilestoneStatus.BUILDING.equals(card.status)
+                    || MilestoneStatus.REPAIRING.equals(card.status);
+            boolean expanded = active || expandedMilestoneIds.contains(card.milestoneId);
             toggle.setText(card.hasBuild ? (expanded ? "▾" : "▸") : "");
             if (card.hasBuild && expanded) {
                 buildSection.setVisibility(View.VISIBLE);

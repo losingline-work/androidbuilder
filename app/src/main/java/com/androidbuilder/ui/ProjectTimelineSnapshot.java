@@ -127,6 +127,16 @@ final class ProjectTimelineSnapshot {
         return index >= 0 && index < milestoneCards.size() ? milestoneCards.get(index) : null;
     }
 
+    int positionForMilestoneCard(long milestoneId) {
+        for (int i = 0; i < entries.size(); i++) {
+            MilestoneCardModel card = milestoneCard(entries.get(i));
+            if (card != null && card.milestoneId == milestoneId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     int positionForTaskIndex(int taskIndex) {
         for (int i = 0; i < entries.size(); i++) {
             ProjectTimelinePolicy.Entry entry = entries.get(i);
