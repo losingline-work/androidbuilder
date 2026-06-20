@@ -401,6 +401,7 @@ public class ProjectActivity extends BaseActivity {
         }
         updateBuildLogPanel();
         updateActionButtons();
+        updateMilestoneStrip();
         updateMarchMenu();
         updateKeepScreenOn();
         if (!messages.isEmpty() || shouldShowOperationStatus()) {
@@ -1007,12 +1008,16 @@ public class ProjectActivity extends BaseActivity {
         if (milestoneId > 0) {
             repository.updateMilestoneStatus(milestoneId, MilestoneStatus.FAILED);
         }
+        // Distinguish an unfixable network/dependency outage from a real code failure: the former is not a
+        // code problem and no amount of repair helps — tell the user to reconnect and resume.
+        final boolean network = isNetworkFailure(repository.latestBuildJob(projectId));
         setOperationStatus(getString(R.string.milestone_rolling_back));
         agentService.rollbackToLastCheckpointAsync(projectId, () -> runOnUiThread(() -> {
             ProjectMilestoneRecord failed = milestoneId > 0 ? repository.getMilestone(milestoneId) : null;
             String title = failed == null ? "" : ("M" + failed.orderIndex + " · " + failed.title);
             refresh();
-            finishMilestoneMarch(getString(R.string.milestone_failed_rolled_back, title));
+            finishMilestoneMarch(getString(
+                    network ? R.string.milestone_failed_network : R.string.milestone_failed_rolled_back, title));
         }));
     }
 
@@ -1046,6 +1051,53 @@ public class ProjectActivity extends BaseActivity {
             }
         }
         return false;
+    }
+
+    /** Render the milestone progress strip above the timeline: current milestone + a compact status line. */
+    private void updateMilestoneStrip() {
+        TextView strip = findViewById(R.id.milestoneStrip);
+        if (strip == null) {
+            return;
+        }
+        List<ProjectMilestoneRecord> milestones = repository.listProjectMilestones(projectId);
+        if (milestones.isEmpty()) {
+            strip.setVisibility(View.GONE);
+            return;
+        }
+        ProjectMilestoneRecord current = null;
+        int done = 0;
+        StringBuilder glyphs = new StringBuilder();
+        for (ProjectMilestoneRecord milestone : milestones) {
+            if (MilestoneStatus.DONE.equals(milestone.status)) {
+                done++;
+            } else if (current == null) {
+                current = milestone;
+            }
+            glyphs.append(milestoneGlyph(milestone.status)).append(' ');
+        }
+        String header = current == null
+                ? getString(R.string.milestone_strip_done, milestones.size())
+                : getString(R.string.milestone_strip_progress, current.orderIndex, current.title, done, milestones.size());
+        strip.setText(header + "\n" + glyphs.toString().trim());
+        strip.setVisibility(View.VISIBLE);
+    }
+
+    private String milestoneGlyph(String status) {
+        if (MilestoneStatus.DONE.equals(status)) {
+            return "✓";
+        }
+        if (MilestoneStatus.FAILED.equals(status)) {
+            return "✗";
+        }
+        if (MilestoneStatus.PAUSED.equals(status)) {
+            return "⏸";
+        }
+        if (MilestoneStatus.GENERATING.equals(status)
+                || MilestoneStatus.BUILDING.equals(status)
+                || MilestoneStatus.REPAIRING.equals(status)) {
+            return "▶";
+        }
+        return "○";
     }
 
     private void updateMarchMenu() {
@@ -1554,6 +1606,14 @@ public class ProjectActivity extends BaseActivity {
         return result.repairableByModel;
     }
 
+    private boolean isNetworkFailure(BuildJobRecord failed) {
+        if (failed == null) {
+            return false;
+        }
+        String error = failed.errorSummary == null ? "" : failed.errorSummary;
+        return BuildFailureClassifier.classify(failed.phase, error).kind == BuildFailureClassifier.Kind.DEPENDENCY_NETWORK;
+    }
+
     private void setBusy(boolean busy) {
         if (busy && !this.busy) {
             operationStartedAt = System.currentTimeMillis();
@@ -1736,7 +1796,19 @@ public class ProjectActivity extends BaseActivity {
         // spawn a competing build that corrupts the march's per-milestone state (busy can briefly be false
         // between a repair completing and the next build starting).
         boolean locked = busy || milestoneMarchActive;
+        boolean apkReady = repository.latestBuildJobWithApk(projectId) != null;
         sendButton.setEnabled(!busy);
+        if (milestoneMarchActive) {
+            // The auto-march owns generate/build/repair end to end; hide the manual actions entirely so the
+            // row isn't ambiguous mid-flow. Pause / single-step live in the toolbar overflow menu, and the
+            // milestone strip shows progress. Install reappears once the march pauses or finishes.
+            executePlanButton.setVisibility(View.GONE);
+            buildButton.setVisibility(View.GONE);
+            repairButton.setVisibility(View.GONE);
+            installButton.setVisibility(View.GONE);
+            return;
+        }
+        executePlanButton.setVisibility(View.VISIBLE);
         executePlanButton.setEnabled(!locked && canExecutePlan);
         buildButton.setVisibility(showRepairAction ? View.GONE : View.VISIBLE);
         repairButton.setVisibility(showRepairAction ? View.VISIBLE : View.GONE);
@@ -1748,7 +1820,9 @@ public class ProjectActivity extends BaseActivity {
                     && !ProjectJobStatePolicy.isTaskExecutionFailure(latestJob);
             ((TextView) buildButton).setText(actualBuildFailure ? R.string.rebuild : R.string.build);
         }
-        installButton.setEnabled(!locked && repository.latestBuildJobWithApk(projectId) != null);
+        // Install only surfaces when there is a runnable APK (and no march is running).
+        installButton.setVisibility(apkReady ? View.VISIBLE : View.GONE);
+        installButton.setEnabled(!locked && apkReady);
     }
 
     private void scrollMessagesToBottom() {

@@ -240,6 +240,9 @@
     <string name="milestone_single_step">Single-step: next milestone</string>
     <string name="milestone_pause_pending">Will pause after the current milestone completes.</string>
     <string name="milestone_requires_embedded">Incremental milestone build needs the embedded build runtime. Switch the build backend to embedded in Settings.</string>
+    <string name="milestone_strip_progress">Milestone M%1$d · %2$s  (%3$d/%4$d done)</string>
+    <string name="milestone_strip_done">All %1$d milestones done ✓</string>
+    <string name="milestone_failed_network">Milestone %1$s could not build: dependencies need network (Google Maven / Maven Central). This is not a code problem — reconnect and resume, or switch dependency mode to offline in Settings.</string>
     <string name="streaming_thinking">Thinking… %1$s</string>
     <string name="streaming_writing">Writing… %1$s</string>
     <string name="source_generated_from_plan">One plan task completed.</string>

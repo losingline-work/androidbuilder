@@ -240,6 +240,9 @@
     <string name="milestone_single_step">单步：下一个里程碑</string>
     <string name="milestone_pause_pending">将在当前里程碑完成后暂停。</string>
     <string name="milestone_requires_embedded">增量里程碑构建需要内置构建运行时。请在设置中将构建后端切换为内置。</string>
+    <string name="milestone_strip_progress">里程碑 M%1$d · %2$s （已完成 %3$d/%4$d）</string>
+    <string name="milestone_strip_done">全部 %1$d 个里程碑已完成 ✓</string>
+    <string name="milestone_failed_network">里程碑 %1$s 构建失败：依赖需要联网下载（Google Maven / Maven Central）。这不是代码问题——请联网后继续，或在设置中把依赖模式切到离线。</string>
     <string name="streaming_thinking">思考中…%1$s 字</string>
     <string name="streaming_writing">正在写入…%1$s 字</string>
     <string name="source_generated_from_plan">已完成一个计划任务。</string>

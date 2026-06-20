@@ -527,7 +527,7 @@ public class AgentService {
             throw new IllegalStateException(assessment.message(chinese));
         }
         BuildJobRecord job = repository.createBuildJob(projectId);
-        return runGenerationToReadyForBuild(projectId, job, plan, chinese,
+        return runGenerationToReadyForBuild(projectId, job, plan, chinese, false,
                 () -> ensureImplementationTasks(projectId, job.id, plan, chinese));
     }
 
@@ -565,7 +565,7 @@ public class AgentService {
                 ? () -> scaffoldSkeletonMilestone(projectId, job.id, chinese)
                 : () -> deriveMilestoneTasks(projectId, job.id, milestone, plan, chinese);
         try {
-            BuildJobRecord ready = runGenerationToReadyForBuild(projectId, job, plan, chinese, step);
+            BuildJobRecord ready = runGenerationToReadyForBuild(projectId, job, plan, chinese, true, step);
             repository.updateMilestoneStatus(milestoneId, MilestoneStatus.BUILDING);
             return ready;
         } catch (Exception error) {
@@ -612,7 +612,7 @@ public class AgentService {
      * ready_for_build. Failure handling (mark running tasks failed, fail the job) is shared by both callers.
      */
     private BuildJobRecord runGenerationToReadyForBuild(long projectId, BuildJobRecord job, ProjectPlanRecord plan,
-                                                        boolean chinese, GenerationStep deriveTasks) throws Exception {
+                                                        boolean chinese, boolean quietTimeline, GenerationStep deriveTasks) throws Exception {
         File jobDir = repository.jobDir(projectId, job.id);
         File logs = new File(jobDir, "build.log");
         File agentsRoot = new File(jobDir, "agents");
@@ -665,7 +665,11 @@ public class AgentService {
                 String dispatchMessage = batch.tasks.size() == 1
                         ? (chinese ? "执行下一步：" : "Executing next step: ") + batch.tasks.get(0).title
                         : (chinese ? "并行执行下一批：" : "Executing next parallel batch: ") + taskTitles(batch.tasks);
-                repository.addMessage(projectId, "assistant", dispatchMessage, job.id);
+                // In the milestone march, per-task dispatch lines are noise — the milestone strip + the
+                // "开始生成里程碑" message carry the narrative. Keep them in the build log, not the timeline.
+                if (!quietTimeline) {
+                    repository.addMessage(projectId, "assistant", dispatchMessage, job.id);
+                }
                 recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
                         job.id + ":batch-" + executionRun.id + "-" + batchIndex,
                         "parallel_batch",
@@ -753,7 +757,11 @@ public class AgentService {
                         ? "；仍有 " + failedTasks + " 个任务失败，可查看日志后再次执行计划重试。"
                         : "; " + failedTasks + " task(s) still failed. Review the logs and run the plan again to retry.";
             }
-            repository.addMessage(projectId, "assistant", message, job.id);
+            // In the milestone march suppress the generic "all tasks done, next build" line (the march builds
+            // automatically); only surface it on a genuine partial failure that the user must act on.
+            if (!quietTimeline || exhaustedFailure != null || failedTasks > 0) {
+                repository.addMessage(projectId, "assistant", message, job.id);
+            }
             // Pre-build code-review gate: only when generation is genuinely complete (nothing pending/failed).
             // Non-fatal — a review failure never blocks the build.
             if (next == null && failedTasks == 0) {
@@ -3052,7 +3060,8 @@ public class AgentService {
         List<ProjectTaskRecord> tasks = ImplementationTaskNormalizer.normalize(ImplementationTaskParser.fromJson(tasksJson), chinese);
         repository.replaceProjectTasks(projectId, tasks);
         deleteAllTaskDraftsSafely(projectId);
-        repository.addMessage(projectId, "assistant", taskListMessage(tasks, chinese), linkedBuildJobId);
+        // The per-milestone task split is internal detail; the milestone strip shows progress, so keep this
+        // out of the timeline (it stays available in the AI-call record/logs).
     }
 
     private String taskListMessage(List<ProjectTaskRecord> tasks, boolean chinese) {
