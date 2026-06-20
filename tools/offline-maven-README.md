@@ -23,18 +23,20 @@ The coordinate list lives in two synced places:
 It is the curated capability libraries (charts, image loading, http, json, qrcode, datetime, …) plus the base
 toolchain/UI (AGP 8.7.3, base AndroidX, Material, kotlin-stdlib 1.8.22). To add a lib, update BOTH.
 
-## Install it on the device
+## Ship it — OUT OF THE BOX
 
-Two paths:
-1. **Manual (works today):** copy `offline-maven.zip` to the device, then in the app go to
-   **Settings → Import offline-maven.zip**. It unzips into the app's `offline-maven` cache.
-2. **As an app asset:** ship `app/src/main/assets/offline-maven.zip` in the APK (it is git-ignored, so build
-   it locally before assembling the release).
+The script writes `app/src/main/assets/offline-maven.zip`. Just **build the APK** with that asset present (it
+is git-ignored, so produce it locally before `assembleRelease`/`assembleDebug`). Then it is fully automatic:
+- on first run `OfflineMavenInstaller.installBundledIfPresent` extracts the bundle into the app's
+  `offline-maven` cache (idempotent, version-stamped);
+- `BuildBackendSettings.effectiveDependencyMode` auto-selects **Local cache** when the cache is populated (no
+  Settings toggle needed — an explicit user choice still wins);
+- the build adds the offline-maven directory as the first Maven repository (no network for cached libs), and
+  the planner/milestone generator are told these libraries ARE available and may use them (e.g. real
+  `MPAndroidChart` charts instead of hand-drawn Canvas).
 
-Then set **Settings → Dependency mode → Local cache**. From then on:
-- the build adds the offline-maven directory as the first Maven repository (no network for cached libs);
-- the planner and the milestone generator are told these libraries ARE available and may use them
-  (e.g. real `MPAndroidChart` charts instead of hand-drawn Canvas).
+**Manual fallback:** the **Settings → Import offline-maven.zip** path still works to import a zip onto an
+already-installed device.
 
 ## Caveats
 

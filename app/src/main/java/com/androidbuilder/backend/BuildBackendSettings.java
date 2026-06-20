@@ -41,6 +41,44 @@ public final class BuildBackendSettings {
         prefs(context).edit().putString(KEY_DEPENDENCY_MODE, mode).apply();
     }
 
+    /**
+     * The dependency mode the build/prompts should actually use: an explicit user choice always wins; with no
+     * choice, default to {@code local_cache} when the offline Maven cache is populated (so a bundled offline
+     * cache works out of the box without the user toggling anything), else {@code offline_safe}.
+     */
+    public static String effectiveDependencyMode(Context context) {
+        SharedPreferences prefs = prefs(context);
+        if (prefs.contains(KEY_DEPENDENCY_MODE)) {
+            return prefs.getString(KEY_DEPENDENCY_MODE, DEPENDENCY_OFFLINE_SAFE);
+        }
+        return offlineCacheAvailable(context) ? DEPENDENCY_LOCAL_CACHE : DEPENDENCY_OFFLINE_SAFE;
+    }
+
+    /** True when the offline Maven cache directory holds at least one resolvable artifact (.pom/.aar/.jar). */
+    public static boolean offlineCacheAvailable(Context context) {
+        return hasArtifact(offlineMavenDir(context));
+    }
+
+    private static boolean hasArtifact(File dir) {
+        File[] children = dir == null ? null : dir.listFiles();
+        if (children == null) {
+            return false;
+        }
+        for (File child : children) {
+            if (child.isDirectory()) {
+                if (hasArtifact(child)) {
+                    return true;
+                }
+            } else {
+                String name = child.getName();
+                if (name.endsWith(".pom") || name.endsWith(".aar") || name.endsWith(".jar")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public static boolean confirmRiskyPlanChoices(Context context) {
         return prefs(context).getBoolean(KEY_CONFIRM_RISKY_PLAN_CHOICES, true);
     }

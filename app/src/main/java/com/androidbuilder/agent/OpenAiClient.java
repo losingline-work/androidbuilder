@@ -1529,7 +1529,7 @@ public class OpenAiClient {
     }
 
     private String dependencyPolicyPrompt() {
-        String mode = BuildBackendSettings.dependencyMode(context);
+        String mode = BuildBackendSettings.effectiveDependencyMode(context);
         if (BuildBackendSettings.DEPENDENCY_ONLINE.equals(mode)) {
             return OnlineDependencyPolicy.prompt();
         }
@@ -1551,7 +1551,7 @@ public class OpenAiClient {
     }
 
     private String planDependencyCapabilityPrompt() {
-        String mode = BuildBackendSettings.dependencyMode(context);
+        String mode = BuildBackendSettings.effectiveDependencyMode(context);
         if (BuildBackendSettings.DEPENDENCY_ONLINE.equals(mode)) {
             return "Dependency capability for this plan (supersedes the generic no-third-party rule): " +
                     DependencyCatalog.promptSummary() +

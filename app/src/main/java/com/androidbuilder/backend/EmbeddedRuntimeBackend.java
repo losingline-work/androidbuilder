@@ -335,7 +335,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
     }
 
     private File dependencyInitScript(File sourceWorkDir) throws Exception {
-        if (!BuildBackendSettings.DEPENDENCY_LOCAL_CACHE.equals(BuildBackendSettings.dependencyMode(context))) {
+        if (!BuildBackendSettings.DEPENDENCY_LOCAL_CACHE.equals(BuildBackendSettings.effectiveDependencyMode(context))) {
             return null;
         }
         File offlineMaven = BuildBackendSettings.offlineMavenDir(context);
