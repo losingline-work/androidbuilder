@@ -2177,8 +2177,32 @@ public class ProjectActivity extends BaseActivity {
             boolean chinese = AppSettings.isChinese(ProjectActivity.this);
             icon.setText(milestoneGlyph(card.status));
             title.setText("M" + card.orderIndex + " · " + card.title);
-            int total = card.totalTasks();
-            int done = card.doneTasks();
+
+            // The milestone currently being worked on shows LIVE detail (which task is running and what it
+            // is generating, plus the build-log tail). taskItems holds exactly this milestone's live tasks
+            // (the march clears+recreates tasks per milestone), so it is the source of truth while active.
+            boolean active = MilestoneStatus.GENERATING.equals(card.status)
+                    || MilestoneStatus.BUILDING.equals(card.status)
+                    || MilestoneStatus.REPAIRING.equals(card.status);
+            boolean isActiveMilestone = marchMilestoneId > 0 && marchMilestoneId == card.milestoneId;
+            List<ProjectTaskRecord> liveOrdered = active && isActiveMilestone && !taskItems.isEmpty()
+                    ? ProjectTaskListDisplayPolicy.ordered(taskItems)
+                    : null;
+
+            int total;
+            int done;
+            if (liveOrdered != null) {
+                total = liveOrdered.size();
+                done = 0;
+                for (ProjectTaskRecord t : liveOrdered) {
+                    if ("done".equals(t.status)) {
+                        done++;
+                    }
+                }
+            } else {
+                total = card.totalTasks();
+                done = card.doneTasks();
+            }
             String label = milestoneStatusLabel(card.status);
             summary.setText(total > 0 ? label + " · " + done + "/" + total + (chinese ? " 任务" : " tasks") : label);
             progress.setProgress(total > 0
@@ -2194,9 +2218,16 @@ public class ProjectActivity extends BaseActivity {
                 statusHint.setText(card.statusHint);
             }
 
-            // Always-visible task list (this is the collapsed state the user wants).
+            // Always-visible task list (this is the collapsed state the user wants). For the active
+            // milestone we render from the LIVE task records so the running task shows what it is doing
+            // right now (phase / batch / the file being generated) — the granular "data change" view.
             container.removeAllViews();
-            if (total > 0) {
+            if (liveOrdered != null) {
+                container.setVisibility(View.VISIBLE);
+                for (int i = 0; i < liveOrdered.size(); i++) {
+                    container.addView(milestoneLiveTaskRow(liveOrdered.get(i), i));
+                }
+            } else if (total > 0) {
                 container.setVisibility(View.VISIBLE);
                 for (MilestoneTaskSnapshot task : card.tasks) {
                     container.addView(milestoneTaskRow(task));
@@ -2209,22 +2240,34 @@ public class ProjectActivity extends BaseActivity {
             View buildSection = view.findViewById(R.id.milestoneBuildSection);
             TextView buildSummary = view.findViewById(R.id.milestoneBuildSummary);
             TextView buildError = view.findViewById(R.id.milestoneBuildError);
+            TextView buildLog = view.findViewById(R.id.milestoneBuildLog);
             TextView toggle = view.findViewById(R.id.milestoneCardToggle);
+            // While THIS milestone's build/repair is live, show the most recent build-log lines (aapt /
+            // javac / Gradle) so "构建中" is backed by visible progress rather than a single static line.
+            String liveBuildLog = isActiveMilestone && isRunningJob(latestJob)
+                    ? milestoneBuildLogTail(latestJob, 8)
+                    : "";
+            boolean hasBuildSection = card.hasBuild || !liveBuildLog.isEmpty();
             // The milestone currently being worked on is auto-expanded so its status + build process are
             // visible without a tap; other milestones expand on tap.
-            boolean active = MilestoneStatus.GENERATING.equals(card.status)
-                    || MilestoneStatus.BUILDING.equals(card.status)
-                    || MilestoneStatus.REPAIRING.equals(card.status);
             boolean expanded = active || expandedMilestoneIds.contains(card.milestoneId);
-            toggle.setText(card.hasBuild ? (expanded ? "▾" : "▸") : "");
-            if (card.hasBuild && expanded) {
+            toggle.setText(hasBuildSection ? (expanded ? "▾" : "▸") : "");
+            if (hasBuildSection && expanded) {
                 buildSection.setVisibility(View.VISIBLE);
-                buildSummary.setText(milestoneBuildSummaryText(card, chinese));
+                buildSummary.setText(card.hasBuild
+                        ? milestoneBuildSummaryText(card, chinese)
+                        : (chinese ? "构建中…" : "Building…"));
                 if (!card.buildError.isEmpty() && "failed".equals(card.buildResult)) {
                     buildError.setVisibility(View.VISIBLE);
                     buildError.setText(card.buildError);
                 } else {
                     buildError.setVisibility(View.GONE);
+                }
+                if (!liveBuildLog.isEmpty()) {
+                    buildLog.setVisibility(View.VISIBLE);
+                    buildLog.setText(liveBuildLog);
+                } else {
+                    buildLog.setVisibility(View.GONE);
                 }
             } else {
                 buildSection.setVisibility(View.GONE);
@@ -2265,6 +2308,68 @@ public class ProjectActivity extends BaseActivity {
             row.setTextSize(13);
             row.setPadding(0, dp(3), 0, dp(3));
             return row;
+        }
+
+        /** A task row for the active milestone, backed by the live record so the running task can show
+         * its current phase / batch and the narration line (e.g. "✍️ 生成第 3/8 批：MainActivity.java"). */
+        private View milestoneLiveTaskRow(ProjectTaskRecord task, int index) {
+            String status = task.status == null ? "pending" : task.status;
+            boolean running = "running".equals(status);
+
+            LinearLayout row = new LinearLayout(ProjectActivity.this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(0, dp(3), 0, dp(3));
+
+            TextView titleRow = new TextView(ProjectActivity.this);
+            titleRow.setText(taskStatusGlyph(status) + "  " + task.title);
+            titleRow.setTextSize(13);
+            titleRow.setTextColor(getResources().getColor(
+                    running ? R.color.colorPrimary : R.color.colorOnSurface));
+            row.addView(titleRow);
+
+            if (running) {
+                // The granular "data change" lines: what the model is writing now + the live progress.
+                addMilestoneLiveLine(row, taskNarrationText(task), R.color.colorPrimary);
+                addMilestoneLiveLine(row, taskProgressText(task), R.color.colorOnSurfaceVariant);
+            }
+            return row;
+        }
+
+        private void addMilestoneLiveLine(LinearLayout row, String text, int colorRes) {
+            if (text == null || text.trim().isEmpty()) {
+                return;
+            }
+            TextView tv = new TextView(ProjectActivity.this);
+            tv.setText(text.trim());
+            tv.setTextSize(12);
+            tv.setTextColor(getResources().getColor(colorRes));
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            p.setMargins(dp(20), dp(2), 0, 0);
+            row.addView(tv, p);
+        }
+
+        /** The last {@code maxLines} lines of a live build's log — the most recent aapt/javac/Gradle output,
+         * shown compactly inside the milestone's build section while it is building/repairing. */
+        private String milestoneBuildLogTail(BuildJobRecord job, int maxLines) {
+            String logs = readBuildLogText(job);
+            if (logs == null || logs.trim().isEmpty()) {
+                return "";
+            }
+            String[] lines = logs.split("\n");
+            StringBuilder sb = new StringBuilder();
+            int start = Math.max(0, lines.length - maxLines);
+            for (int i = start; i < lines.length; i++) {
+                String line = lines[i];
+                if (line == null || line.trim().isEmpty()) {
+                    continue;
+                }
+                if (sb.length() > 0) {
+                    sb.append('\n');
+                }
+                sb.append(line.trim());
+            }
+            return sb.toString();
         }
 
         private View bindTaskGroup(View convertView, ViewGroup parent) {

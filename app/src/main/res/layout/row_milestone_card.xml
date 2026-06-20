@@ -109,6 +109,16 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/milestoneBuildLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:fontFamily="monospace"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="11sp"
+                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>
