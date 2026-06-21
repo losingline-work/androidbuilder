@@ -59,6 +59,9 @@ public class OpenAiClient {
     // Mainstream OpenAI-compatible providers (same /chat/completions wire format; only base URL + model differ).
     public static final String PROVIDER_ZHIPU = "zhipu";
     public static final String PROVIDER_MOONSHOT = "moonshot";
+    // Kimi Code (kimi.com/code) — the membership coding plan, distinct from the moonshot pay-as-you-go
+    // Open Platform. OpenAI-compatible endpoint, single unified model id "kimi-for-coding".
+    public static final String PROVIDER_KIMI_CODE = "kimi_code";
     public static final String PROVIDER_QWEN = "qwen";
     public static final String PROVIDER_DOUBAO = "doubao";
     public static final String PROVIDER_OPENROUTER = "openrouter";
@@ -117,6 +120,11 @@ public class OpenAiClient {
         SPECS.put(PROVIDER_MOONSHOT, new ProviderSpec(PROVIDER_MOONSHOT,
                 "https://api.moonshot.cn/v1/chat/completions", "kimi-k2-0905-preview",
                 new String[]{"kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-128k", "moonshot-v1-32k"}));
+        // Kimi Code: OpenAI-compatible base https://api.kimi.com/coding/v1 + unified model id "kimi-for-coding"
+        // (the Anthropic-compatible base is https://api.kimi.com/coding/v1/messages; we use the OpenAI path).
+        SPECS.put(PROVIDER_KIMI_CODE, new ProviderSpec(PROVIDER_KIMI_CODE,
+                "https://api.kimi.com/coding/v1/chat/completions", "kimi-for-coding",
+                new String[]{"kimi-for-coding"}));
         SPECS.put(PROVIDER_QWEN, new ProviderSpec(PROVIDER_QWEN,
                 "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "qwen-plus",
                 new String[]{"qwen-max", "qwen-plus", "qwen-turbo", "qwen3-coder-plus"}));

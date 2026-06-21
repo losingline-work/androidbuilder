@@ -630,13 +630,24 @@ public class OpenAiClientTest {
             assertTrue(provider + " default in list",
                     java.util.Arrays.asList(models).contains(OpenAiClient.defaultModel(provider)));
         }
-        // The six expected providers are present, in UI order.
+        // The expected providers are present, in UI order.
         assertEquals(java.util.Arrays.asList(
-                OpenAiClient.PROVIDER_ZHIPU, OpenAiClient.PROVIDER_MOONSHOT, OpenAiClient.PROVIDER_QWEN,
-                OpenAiClient.PROVIDER_DOUBAO, OpenAiClient.PROVIDER_OPENROUTER, OpenAiClient.PROVIDER_GROQ),
+                OpenAiClient.PROVIDER_ZHIPU, OpenAiClient.PROVIDER_MOONSHOT, OpenAiClient.PROVIDER_KIMI_CODE,
+                OpenAiClient.PROVIDER_QWEN, OpenAiClient.PROVIDER_DOUBAO, OpenAiClient.PROVIDER_OPENROUTER,
+                OpenAiClient.PROVIDER_GROQ),
                 java.util.Arrays.asList(OpenAiClient.mainstreamCompatibleProviders()));
         assertEquals("https://openrouter.ai/api/v1/chat/completions",
                 OpenAiClient.defaultEndpoint(OpenAiClient.PROVIDER_OPENROUTER));
+    }
+
+    @Test
+    public void kimiCodeResolvesToTheCodingEndpointAndUnifiedModel() {
+        assertEquals("https://api.kimi.com/coding/v1/chat/completions",
+                OpenAiClient.defaultEndpoint(OpenAiClient.PROVIDER_KIMI_CODE));
+        assertEquals("kimi-for-coding", OpenAiClient.defaultModel(OpenAiClient.PROVIDER_KIMI_CODE));
+        // A hand-pasted bare base (…/coding/v1) gets the chat path appended.
+        assertEquals("https://api.kimi.com/coding/v1/chat/completions",
+                OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_KIMI_CODE, "https://api.kimi.com/coding/v1"));
     }
 
     @Test

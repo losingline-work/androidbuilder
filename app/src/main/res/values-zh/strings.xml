@@ -61,6 +61,7 @@
     <string name="provider_minimax">MiniMax</string>
     <string name="provider_zhipu">智谱 GLM</string>
     <string name="provider_moonshot">月之暗面 Kimi</string>
+    <string name="provider_kimi_code">Kimi Code 编程</string>
     <string name="provider_qwen">通义千问</string>
     <string name="provider_doubao">豆包</string>
     <string name="provider_openrouter">OpenRouter</string>

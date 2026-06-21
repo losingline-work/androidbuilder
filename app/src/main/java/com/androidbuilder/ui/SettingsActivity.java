@@ -731,6 +731,8 @@ public class SettingsActivity extends BaseActivity {
                 return R.string.provider_zhipu;
             case OpenAiClient.PROVIDER_MOONSHOT:
                 return R.string.provider_moonshot;
+            case OpenAiClient.PROVIDER_KIMI_CODE:
+                return R.string.provider_kimi_code;
             case OpenAiClient.PROVIDER_QWEN:
                 return R.string.provider_qwen;
             case OpenAiClient.PROVIDER_DOUBAO:
