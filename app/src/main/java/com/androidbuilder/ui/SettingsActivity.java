@@ -206,10 +206,13 @@ public class SettingsActivity extends BaseActivity {
         ProviderDraft draft = providerDraft(provider);
         apiKey.setText(draft.apiKey);
         endpoint.setText(draft.endpoint);
-        // The free-text model field also offers the provider's curated models as a dropdown (e.g. Moonshot
-        // Kimi's 4 ids); the user can still type any model id not in the list. Set the suggestions, then the
-        // saved value without re-filtering the popup.
-        configureDropdown(model, OpenAiClient.modelsForProvider(provider));
+        // A provider with a curated model list is a tap-to-pick dropdown with NO soft keyboard (consistent
+        // with the openai/deepseek/minimax spinners); only "custom" (no preset list) stays a typed field.
+        String[] models = OpenAiClient.modelsForProvider(provider);
+        configureDropdown(model, models);
+        model.setInputType(models.length > 0
+                ? android.text.InputType.TYPE_NULL
+                : android.text.InputType.TYPE_CLASS_TEXT);
         model.setText(draft.model, false);
         select(openaiModelSpinner, openaiModelLabels, openaiModelIndex(draft.model));
         select(deepseekModelSpinner, deepseekModelLabels, deepseekModelIndex(draft.model));
