@@ -504,6 +504,9 @@ public class OpenAiClient {
         connection.setReadTimeout(readTimeoutMs);
         connection.setDoOutput(true);
         connection.setRequestProperty("Content-Type", "application/json");
+        // Identify the app honestly. Some gateways 429/refuse a missing User-Agent; we never spoof another
+        // client's identity (e.g. to pass Kimi Code's coding-agent allowlist) — that violates their terms.
+        connection.setRequestProperty("User-Agent", "AndroidBuilder/" + com.androidbuilder.BuildConfig.VERSION_NAME);
         if (PROVIDER_ANTHROPIC.equals(provider)) {
             // Anthropic uses x-api-key + a version header, NOT Authorization: Bearer.
             connection.setRequestProperty("x-api-key", apiKey);
@@ -784,6 +787,25 @@ public class OpenAiClient {
     }
 
     private static String httpErrorMessage(String provider, int code, String response, boolean chinese) {
+        if (PROVIDER_KIMI_CODE.equals(provider)
+                && (code == 403 || response.contains("access_terminated") || response.contains("Coding Agents"))) {
+            // Kimi Code (kimi-for-coding) is gated to an allowlist of approved coding agents by User-Agent;
+            // the model name is fine — this app simply isn't on the list, and spoofing the UA is a ToS
+            // violation. Point the user at the Open Platform key, which has no such gate.
+            if (chinese) {
+                return "Kimi Code 拒绝了请求（HTTP 403）。模型名没问题；Kimi Code 只对白名单内的编程 Agent"
+                        + "（Kimi CLI、Claude Code、Roo Code 等）开放，本应用不在白名单内。请改用「Moonshot Kimi」"
+                        + "provider + Moonshot 开放平台 API Key（platform.moonshot.cn，可选 kimi-k2.6 / kimi-k2.7-code），"
+                        + "或向 Moonshot 申请把本应用加入白名单。注意：伪造 User-Agent 绕过属于违规，可能导致会员被封停。原始响应: "
+                        + response;
+            }
+            return "Kimi Code rejected the request (HTTP 403). The model name is fine; Kimi Code only serves "
+                    + "allowlisted coding agents (Kimi CLI, Claude Code, Roo Code, …) and this app is not on the "
+                    + "list. Use the 'Moonshot Kimi' provider with a Moonshot Open Platform API key "
+                    + "(platform.moonshot.cn; kimi-k2.6 / kimi-k2.7-code) instead, or ask Moonshot to allowlist "
+                    + "this app. Spoofing the User-Agent to bypass this violates Kimi's terms and may suspend your "
+                    + "membership. Raw response: " + response;
+        }
         if (PROVIDER_MINIMAX.equals(provider) && code == 401) {
             if (chinese) {
                 return "MiniMax API 认证失败（HTTP 401）。如果使用 Token Plan，请在 MiniMax 开放平台「接口密钥」里创建 Token Plan Key，通常以 sk-cp- 开头；不要粘贴网页登录态 token。Base URL 可在设置里切换：中国大陆/内网用 https://api.minimaxi.com/v1，国际/外网用 https://api.minimax.io/v1。模型可先选 MiniMax-M3 或 MiniMax-M2.7。原始响应: " + response;

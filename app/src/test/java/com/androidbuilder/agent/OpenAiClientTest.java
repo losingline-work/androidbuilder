@@ -634,6 +634,18 @@ public class OpenAiClientTest {
     }
 
     @Test
+    public void kimiCode403ExplainsTheCodingAgentAllowlistInsteadOfBlamingTheModel() {
+        String raw = "{\"error\":{\"message\":\"Kimi For Coding is currently only available for Coding Agents "
+                + "such as Kimi CLI, Claude Code, Roo Code, Kilo Code, etc.\",\"type\":\"access_terminated_error\"}}";
+        String zh = OpenAiClient.httpErrorMessageForTest(OpenAiClient.PROVIDER_KIMI_CODE, 403, raw, true);
+        assertTrue(zh.contains("Moonshot Kimi"));
+        assertTrue(zh.contains("platform.moonshot.cn"));
+        String en = OpenAiClient.httpErrorMessageForTest(OpenAiClient.PROVIDER_KIMI_CODE, 403, raw, false);
+        assertTrue(en.contains("allowlist"));
+        assertTrue(en.contains("Open Platform"));
+    }
+
+    @Test
     public void kimiCodeResolvesToTheCodingEndpointAndUnifiedModel() {
         assertEquals("https://api.kimi.com/coding/v1/chat/completions",
                 OpenAiClient.defaultEndpoint(OpenAiClient.PROVIDER_KIMI_CODE));
