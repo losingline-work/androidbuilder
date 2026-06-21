@@ -35,6 +35,19 @@ final class MilestoneTimelinePolicy {
 
     static List<MilestoneCardModel> cards(List<ProjectMilestoneRecord> milestones, long activeMilestoneId,
                                           List<ProjectTaskRecord> liveTasks, BuildLookup builds, String activeStatusHint) {
+        return cards(milestones, activeMilestoneId, activeMilestoneId, liveTasks, builds, activeStatusHint);
+    }
+
+    /**
+     * @param activeMilestoneId      the milestone the march is generating/building — drives the LIVE task list.
+     * @param statusHostMilestoneId  the milestone whose card should display the operation-status hint. Usually
+     *                               equal to {@code activeMilestoneId}, but during a manual repair (no march)
+     *                               it is the milestone owning the running build, so the status never spills
+     *                               out into a separate bottom card.
+     */
+    static List<MilestoneCardModel> cards(List<ProjectMilestoneRecord> milestones, long activeMilestoneId,
+                                          long statusHostMilestoneId, List<ProjectTaskRecord> liveTasks,
+                                          BuildLookup builds, String activeStatusHint) {
         List<MilestoneCardModel> cards = new ArrayList<>();
         if (milestones == null) {
             return cards;
@@ -42,8 +55,8 @@ final class MilestoneTimelinePolicy {
         for (ProjectMilestoneRecord milestone : milestones) {
             BuildJobRecord build = builds != null && milestone.buildJobId != 0 ? builds.get(milestone.buildJobId) : null;
             boolean hasBuild = build != null;
-            // The live status hint lands on the milestone currently being worked on (the march's active one).
-            String hint = milestone.id == activeMilestoneId && activeStatusHint != null ? activeStatusHint : "";
+            // The live status hint lands on the milestone hosting the current operation.
+            String hint = milestone.id == statusHostMilestoneId && activeStatusHint != null ? activeStatusHint : "";
             cards.add(new MilestoneCardModel(
                     milestone.id, milestone.orderIndex, milestone.title, milestone.status,
                     tasksFor(milestone, activeMilestoneId, liveTasks),

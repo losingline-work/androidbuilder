@@ -85,6 +85,19 @@ public class MilestoneTimelinePolicyTest {
     }
 
     @Test
+    public void statusHintCanLandOnADifferentHostThanTheActiveMilestone() {
+        // No march active (activeMilestoneId = 0), but a manual repair targets milestone 2: the hint must
+        // land on the host (2), not spill out — and NOT on the active-id path (which is 0 / none).
+        List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(Arrays.asList(
+                milestone(1, 0, MilestoneStatus.DONE, ""),
+                milestone(2, 1, MilestoneStatus.FAILED, "")),
+                0, 2, null, id -> null, "正在修复失败构建… · 思考中…1.1k 字");
+
+        assertEquals("", cards.get(0).statusHint);
+        assertTrue(cards.get(1).statusHint.contains("正在修复失败构建"));
+    }
+
+    @Test
     public void noBuildJobMeansNoBuildSummary() {
         ProjectMilestoneRecord m = new ProjectMilestoneRecord(1, 1, 1, "M1", "", "", MilestoneStatus.GENERATING,
                 "", 0, 0, 0, 0, "");

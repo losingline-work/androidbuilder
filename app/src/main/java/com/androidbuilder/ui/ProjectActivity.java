@@ -1961,6 +1961,8 @@ public class ProjectActivity extends BaseActivity {
         private static final int TYPE_PLAN_CARD = 4;
         private static final int TYPE_MILESTONE_CARD = 5;
         private ProjectTimelineSnapshot snapshot = ProjectTimelineSnapshot.empty();
+        /** The milestone whose card currently hosts the operation-status hint + live build-log tail. */
+        private long statusHostMilestoneId;
 
         TimelineAdapter() {
             rebuildSnapshot();
@@ -1976,23 +1978,52 @@ public class ProjectActivity extends BaseActivity {
             List<ProjectMilestoneRecord> milestones = repository == null
                     ? java.util.Collections.<ProjectMilestoneRecord>emptyList()
                     : repository.listProjectMilestones(projectId);
-            // The live status hint goes INTO the active milestone's card; the bottom status row is then
-            // suppressed so the activity isn't shown twice.
-            boolean hasActiveMilestone = marchMilestoneId > 0 && !milestones.isEmpty();
+            // The live status hint goes INTO a milestone's card (the one being worked on, or — during a
+            // manual repair with no march — the one owning the running build); the bottom status row is
+            // then suppressed so the activity isn't shown twice.
             boolean showStatus = shouldShowOperationStatus();
-            String activeStatusHint = hasActiveMilestone && showStatus
+            statusHostMilestoneId = showStatus ? statusHostMilestone(milestones) : 0;
+            boolean hasStatusHost = statusHostMilestoneId > 0;
+            String activeStatusHint = hasStatusHost
                     ? ProjectOperationStatus.displayText(operationStatusWithProgress(), operationElapsedText())
                     : "";
-            List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(milestones, marchMilestoneId, taskItems,
+            List<MilestoneCardModel> cards = MilestoneTimelinePolicy.cards(milestones, marchMilestoneId,
+                    statusHostMilestoneId, taskItems,
                     id -> repository == null ? null : repository.getBuildJob(id), activeStatusHint);
             snapshot = ProjectTimelineSnapshot.create(
                     messages,
-                    showStatus && !hasActiveMilestone,
+                    showStatus && !hasStatusHost,
                     latestPlan,
                     taskItems,
                     latestJob,
                     cards,
                     id -> repository == null ? null : repository.getBuildJob(id));
+        }
+
+        /** Pick the milestone card that should host the live operation status, so it never spills into a
+         * separate bottom card while any milestone exists. Priority: the march's active milestone → the
+         * milestone owning the currently-running build (manual repair) → the next unfinished milestone →
+         * the last one. Returns 0 only when there are no milestones (e.g. still planning). */
+        private long statusHostMilestone(List<ProjectMilestoneRecord> milestones) {
+            if (milestones == null || milestones.isEmpty()) {
+                return 0;
+            }
+            if (marchMilestoneId > 0) {
+                return marchMilestoneId;
+            }
+            if (latestJob != null) {
+                for (ProjectMilestoneRecord m : milestones) {
+                    if (m.buildJobId == latestJob.id) {
+                        return m.id;
+                    }
+                }
+            }
+            for (ProjectMilestoneRecord m : milestones) {
+                if (!MilestoneStatus.DONE.equals(m.status)) {
+                    return m.id;
+                }
+            }
+            return milestones.get(milestones.size() - 1).id;
         }
 
         @Override
@@ -2244,13 +2275,15 @@ public class ProjectActivity extends BaseActivity {
             TextView toggle = view.findViewById(R.id.milestoneCardToggle);
             // While THIS milestone's build/repair is live, show the most recent build-log lines (aapt /
             // javac / Gradle) so "构建中" is backed by visible progress rather than a single static line.
-            String liveBuildLog = isActiveMilestone && isRunningJob(latestJob)
-                    ? milestoneBuildLogTail(latestJob, 8)
-                    : "";
+            // "Hosts the live build" covers both the march's active milestone and a manual repair, where
+            // the status host is the milestone owning the running build.
+            boolean hostsLiveBuild = (isActiveMilestone || card.milestoneId == statusHostMilestoneId)
+                    && isRunningJob(latestJob);
+            String liveBuildLog = hostsLiveBuild ? milestoneBuildLogTail(latestJob, 8) : "";
             boolean hasBuildSection = card.hasBuild || !liveBuildLog.isEmpty();
-            // The milestone currently being worked on is auto-expanded so its status + build process are
-            // visible without a tap; other milestones expand on tap.
-            boolean expanded = active || expandedMilestoneIds.contains(card.milestoneId);
+            // The milestone currently being worked on (or hosting a live build) is auto-expanded so its
+            // status + build process are visible without a tap; other milestones expand on tap.
+            boolean expanded = active || hostsLiveBuild || expandedMilestoneIds.contains(card.milestoneId);
             toggle.setText(hasBuildSection ? (expanded ? "▾" : "▸") : "");
             if (hasBuildSection && expanded) {
                 buildSection.setVisibility(View.VISIBLE);
