@@ -117,7 +117,8 @@ public class ProjectActivity extends BaseActivity {
     private View fileDrawerScrim;
     private boolean busy;
     private boolean autoExecutingPlan;
-    private static final int MAX_AUTO_REPAIR_ROUNDS = 6;
+    // Up to 5 auto-repair rounds per failed build; the counter resets on success and at each new milestone.
+    private static final int MAX_AUTO_REPAIR_ROUNDS = 5;
     private int autoRepairRounds;
     private long autoLoopHandledBuildJobId = -1;
     private boolean autoLoopEnabled;
@@ -132,6 +133,16 @@ public class ProjectActivity extends BaseActivity {
     private boolean milestoneSingleStep;
     private long marchMilestoneId = -1;
     private long lastScrolledMilestoneId = -1;
+    // Per-milestone action routing (computed each rebuildSnapshot): which card hosts 执行/继续, 安装, and
+    // whether the project is in milestone-card mode (so the bottom action bar yields to the cards).
+    private boolean hasMilestones;
+    private boolean anyMilestoneDone;
+    private long firstUnfinishedMilestoneId;
+    private long latestDoneMilestoneId;
+    // The milestone card the timeline should follow on any refresh in milestone-card mode (march active →
+    // its milestone; manual repair → the milestone owning the running build; else the next unfinished one).
+    // Distinct from statusHostMilestoneId, which is gated on showStatus; this drives scrolling regardless.
+    private long relevantMilestoneId;
     private long operationStartedAt;
     private long activeTaskStartedAt;
     private String statusSummary = "";
@@ -404,8 +415,10 @@ public class ProjectActivity extends BaseActivity {
         updateMilestoneStrip();
         updateMarchMenu();
         updateKeepScreenOn();
-        if (marchMilestoneId > 0) {
-            // During a march, follow the active milestone card instead of jumping to the bottom.
+        if (hasMilestones) {
+            // In milestone-card mode follow the relevant milestone card; never jump to the bottom (a failed
+            // build / completed repair / failed task must land on its card, not the list end). This also
+            // covers a MANUAL repair, where no march is active (marchMilestoneId == 0).
             maybeScrollToActiveMilestone();
         } else if (!messages.isEmpty() || shouldShowOperationStatus()) {
             scrollMessagesToBottom();
@@ -413,10 +426,11 @@ public class ProjectActivity extends BaseActivity {
         updateElapsedTicker();
     }
 
-    /** Scroll to the active milestone card once when it changes (so it doesn't fight a user who scrolled away). */
+    /** Scroll to the relevant milestone card once when it changes (so it doesn't fight a user who scrolled
+     * away, and so events like a failed build / completed repair never yank the list to the bottom). */
     private void maybeScrollToActiveMilestone() {
-        if (marchMilestoneId > 0 && marchMilestoneId != lastScrolledMilestoneId) {
-            lastScrolledMilestoneId = marchMilestoneId;
+        if (relevantMilestoneId > 0 && relevantMilestoneId != lastScrolledMilestoneId) {
+            lastScrolledMilestoneId = relevantMilestoneId;
             scrollToActiveMilestone();
         }
     }
@@ -1234,10 +1248,10 @@ public class ProjectActivity extends BaseActivity {
 
     /** Scroll the timeline to the milestone currently being worked on (called once when it changes). */
     private void scrollToActiveMilestone() {
-        if (messageList == null || adapter == null || marchMilestoneId <= 0) {
+        if (messageList == null || adapter == null || relevantMilestoneId <= 0) {
             return;
         }
-        int position = adapter.positionForMilestoneCard(marchMilestoneId);
+        int position = adapter.positionForMilestoneCard(relevantMilestoneId);
         if (position < 0) {
             return;
         }
@@ -1720,10 +1734,9 @@ public class ProjectActivity extends BaseActivity {
         if (adapter != null) {
             adapter.notifyDataSetChanged();
         }
-        if (marchMilestoneId > 0) {
-            // During a march the status lives INSIDE the active milestone card, so follow that card
-            // instead of yanking the timeline to the bottom (which was overriding the milestone scroll
-            // — the status update fired a 120ms scroll-to-bottom that beat the 80ms scroll-to-milestone).
+        if (hasMilestones) {
+            // In milestone-card mode the status lives INSIDE a milestone card, so follow that card instead
+            // of yanking the timeline to the bottom — for a march AND for a manual repair (no march active).
             maybeScrollToActiveMilestone();
         } else if (shouldShowOperationStatus()) {
             scrollMessagesToBottom();
@@ -1883,10 +1896,11 @@ public class ProjectActivity extends BaseActivity {
         boolean locked = busy || milestoneMarchActive;
         boolean apkReady = repository.latestBuildJobWithApk(projectId) != null;
         sendButton.setEnabled(!busy);
-        if (milestoneMarchActive) {
-            // The auto-march owns generate/build/repair end to end; hide the manual actions entirely so the
-            // row isn't ambiguous mid-flow. Pause / single-step live in the toolbar overflow menu, and the
-            // milestone strip shows progress. Install reappears once the march pauses or finishes.
+        if (milestoneMarchActive || hasMilestones) {
+            // In milestone-card mode the actions live ON the cards (执行/继续, 修复, 安装) — see
+            // bindMilestoneActionButton — and a running march owns generate/build/repair end to end. Either
+            // way the bottom bar would duplicate or be ambiguous, so hide it. Legacy (no-milestone) projects
+            // keep the bottom bar below.
             executePlanButton.setVisibility(View.GONE);
             buildButton.setVisibility(View.GONE);
             repairButton.setVisibility(View.GONE);
@@ -1983,11 +1997,28 @@ public class ProjectActivity extends BaseActivity {
             List<ProjectMilestoneRecord> milestones = repository == null
                     ? java.util.Collections.<ProjectMilestoneRecord>emptyList()
                     : repository.listProjectMilestones(projectId);
+            // Routing for the per-milestone action buttons + bottom-bar suppression. Milestones are ordered
+            // by orderIndex, so the last DONE is the current runnable checkpoint and the first non-DONE is
+            // what 执行/继续 should target.
+            hasMilestones = !milestones.isEmpty();
+            anyMilestoneDone = false;
+            firstUnfinishedMilestoneId = 0;
+            latestDoneMilestoneId = 0;
+            for (ProjectMilestoneRecord m : milestones) {
+                if (MilestoneStatus.DONE.equals(m.status)) {
+                    latestDoneMilestoneId = m.id;
+                    anyMilestoneDone = true;
+                } else if (firstUnfinishedMilestoneId == 0) {
+                    firstUnfinishedMilestoneId = m.id;
+                }
+            }
             // The live status hint goes INTO a milestone's card (the one being worked on, or — during a
             // manual repair with no march — the one owning the running build); the bottom status row is
             // then suppressed so the activity isn't shown twice.
             boolean showStatus = shouldShowOperationStatus();
-            statusHostMilestoneId = showStatus ? statusHostMilestone(milestones) : 0;
+            long host = statusHostMilestone(milestones);
+            relevantMilestoneId = host;               // scroll target, independent of showStatus
+            statusHostMilestoneId = showStatus ? host : 0;
             boolean hasStatusHost = statusHostMilestoneId > 0;
             String activeStatusHint = hasStatusHost
                     ? ProjectOperationStatus.displayText(operationStatusWithProgress(), operationElapsedText())
@@ -2323,7 +2354,52 @@ public class ProjectActivity extends BaseActivity {
                 }
                 adapter.notifyDataSetChanged();
             });
+            bindMilestoneActionButton(view, card, chinese);
             return view;
+        }
+
+        /**
+         * The per-milestone contextual action that replaces the bottom action bar in milestone-card mode.
+         * Only shown when no march is running (the march owns generate/build/repair end to end). Priority:
+         * a failed build → 修复; the next unfinished milestone → 执行/继续; the latest checkpoint → 安装.
+         */
+        private void bindMilestoneActionButton(View view, MilestoneCardModel card, boolean chinese) {
+            com.google.android.material.button.MaterialButton button =
+                    view.findViewById(R.id.milestoneActionButton);
+            String label = null;
+            Runnable action = null;
+            if (!milestoneMarchActive) {
+                BuildJobRecord repairTarget = repairTargetJob();
+                // A code-generation/merge failure (phase coding_failed) is NOT repairable from a build log —
+                // "修复" would do nothing. It must be re-generated, so route it to 重试 (executePlan), and keep
+                // 修复 only for a genuine compile/aapt build failure.
+                boolean genFailure = repairTarget != null && ProjectJobStatePolicy.isTaskExecutionFailure(repairTarget);
+                boolean buildFailure = "failed".equals(card.buildResult) && !genFailure
+                        && repairTarget != null && isRepairableFailure(repairTarget);
+                boolean planReady = latestPlan != null && !latestPlan.content.trim().isEmpty();
+                if (buildFailure) {
+                    label = chinese ? "修复" : "Repair";
+                    action = ProjectActivity.this::repairLatest;
+                } else if (card.milestoneId == firstUnfinishedMilestoneId && planReady) {
+                    label = "failed".equals(card.buildResult)
+                            ? (chinese ? "重试" : "Retry")
+                            : (anyMilestoneDone ? (chinese ? "继续" : "Continue") : (chinese ? "执行" : "Run"));
+                    action = ProjectActivity.this::executePlan;
+                } else if (card.milestoneId == latestDoneMilestoneId
+                        && repository.latestBuildJobWithApk(projectId) != null) {
+                    label = chinese ? "安装" : "Install";
+                    action = ProjectActivity.this::installLatest;
+                }
+            }
+            if (label != null && action != null) {
+                final Runnable run = action;
+                button.setVisibility(View.VISIBLE);
+                button.setText(label);
+                button.setOnClickListener(v -> run.run());
+            } else {
+                button.setVisibility(View.GONE);
+                button.setOnClickListener(null);
+            }
         }
 
         private String milestoneBuildSummaryText(MilestoneCardModel card, boolean chinese) {
