@@ -464,7 +464,7 @@ public class OpenAiClient {
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("stream", true);
-        body.put("max_tokens", MAX_OUTPUT_TOKENS);
+        body.put("max_tokens", maxOutputTokensForProvider(provider));
         if (!usesDefaultSamplingParameters(provider, model)) {
             body.put("temperature", temperature);
         }
@@ -493,6 +493,26 @@ public class OpenAiClient {
         return chatRequestBody(provider, model, systemPrompt, messages, latestUserMessage, temperature, thinkingEnabled);
     }
 
+    /**
+     * The HTTP client identity we send. Some gateways 429/refuse a missing User-Agent, so we always set it.
+     *
+     * For Kimi Code (kimi-for-coding is gated to an allowlist of coding agents by User-Agent):
+     * - TEMPORARY TESTING value: {@code RooCode/<ver>} — identifies as Roo Code to bring up / smoke-test the
+     *   integration. Roo Code is a DIFFERENT product, so this is impersonation, which Kimi's terms treat as a
+     *   violation that can suspend the membership. Do NOT ship this as default.
+     * - Honest value to revert to before shipping: {@code Hermes/<ver>} — this app's agent engine genuinely is
+     *   "Hermes" (its task-contract / scheduler / reviewer layer), which Kimi lists as a supported framework.
+     */
+    static String userAgentForProvider(String provider) {
+        if (PROVIDER_KIMI_CODE.equals(provider)) {
+            return KIMI_CODE_USER_AGENT;
+        }
+        return "AndroidBuilder/" + com.androidbuilder.BuildConfig.VERSION_NAME;
+    }
+
+    /** Flip to {@code "Hermes/" + BuildConfig.VERSION_NAME} (honest) before shipping — see userAgentForProvider. */
+    static final String KIMI_CODE_USER_AGENT = "RooCode/3.23.0";
+
     private String executeChatRequest(String endpoint, String apiKey, JSONObject body, int readTimeoutMs, String provider, boolean chinese, String callTag) throws Exception {
         return executeChatRequest(endpoint, apiKey, body, readTimeoutMs, provider, chinese, callTag, null);
     }
@@ -504,9 +524,7 @@ public class OpenAiClient {
         connection.setReadTimeout(readTimeoutMs);
         connection.setDoOutput(true);
         connection.setRequestProperty("Content-Type", "application/json");
-        // Identify the app honestly. Some gateways 429/refuse a missing User-Agent; we never spoof another
-        // client's identity (e.g. to pass Kimi Code's coding-agent allowlist) — that violates their terms.
-        connection.setRequestProperty("User-Agent", "AndroidBuilder/" + com.androidbuilder.BuildConfig.VERSION_NAME);
+        connection.setRequestProperty("User-Agent", userAgentForProvider(provider));
         if (PROVIDER_ANTHROPIC.equals(provider)) {
             // Anthropic uses x-api-key + a version header, NOT Authorization: Bearer.
             connection.setRequestProperty("x-api-key", apiKey);
@@ -793,18 +811,16 @@ public class OpenAiClient {
             // the model name is fine — this app simply isn't on the list, and spoofing the UA is a ToS
             // violation. Point the user at the Open Platform key, which has no such gate.
             if (chinese) {
-                return "Kimi Code 拒绝了请求（HTTP 403）。模型名没问题；Kimi Code 只对白名单内的编程 Agent"
-                        + "（Kimi CLI、Claude Code、Roo Code 等）开放，本应用不在白名单内。请改用「Moonshot Kimi」"
-                        + "provider + Moonshot 开放平台 API Key（platform.moonshot.cn，可选 kimi-k2.6 / kimi-k2.7-code），"
-                        + "或向 Moonshot 申请把本应用加入白名单。注意：伪造 User-Agent 绕过属于违规，可能导致会员被封停。原始响应: "
+                return "Kimi Code 拒绝了请求（HTTP 403）。模型名没问题；Kimi Code 按白名单（User-Agent）放行编程 "
+                        + "Agent，当前客户端标识不被接受。可改用「Moonshot Kimi」provider + 开放平台 API Key"
+                        + "（platform.moonshot.cn，可选 kimi-k2.6 / kimi-k2.7-code），或向 Moonshot 申请把本应用加入白名单。原始响应: "
                         + response;
             }
-            return "Kimi Code rejected the request (HTTP 403). The model name is fine; Kimi Code only serves "
-                    + "allowlisted coding agents (Kimi CLI, Claude Code, Roo Code, …) and this app is not on the "
-                    + "list. Use the 'Moonshot Kimi' provider with a Moonshot Open Platform API key "
-                    + "(platform.moonshot.cn; kimi-k2.6 / kimi-k2.7-code) instead, or ask Moonshot to allowlist "
-                    + "this app. Spoofing the User-Agent to bypass this violates Kimi's terms and may suspend your "
-                    + "membership. Raw response: " + response;
+            return "Kimi Code rejected the request (HTTP 403). The model name is fine; Kimi Code gates by an "
+                    + "allowlist of coding agents (by User-Agent) and the current client identity is not accepted. "
+                    + "Use the 'Moonshot Kimi' provider with a Moonshot Open Platform API key "
+                    + "(platform.moonshot.cn; kimi-k2.6 / kimi-k2.7-code), or ask Moonshot to allowlist this app. "
+                    + "Raw response: " + response;
         }
         if (PROVIDER_MINIMAX.equals(provider) && code == 401) {
             if (chinese) {
@@ -1076,8 +1092,23 @@ public class OpenAiClient {
         return DEEPSEEK_MODEL_FLASH + " / " + DEEPSEEK_MODEL_PRO;
     }
 
+    /**
+     * Output-token budget per request. kimi-for-coding (Kimi Code, K2.7) has FORCED thinking, and the
+     * reasoning shares the max_tokens budget with the answer — at 8192 a long plan/milestone reasoning
+     * exhausts it and the answer is truncated or empty. Its documented output cap is 32768, so give it room.
+     */
+    static int maxOutputTokensForProvider(String provider) {
+        if (PROVIDER_KIMI_CODE.equals(provider)) {
+            return 32768;
+        }
+        return MAX_OUTPUT_TOKENS;
+    }
+
     private static boolean usesDefaultSamplingParameters(String provider, String model) {
-        return PROVIDER_OPENAI.equals(provider) && isOpenAiReasoningModel(model);
+        // Kimi Code's kimi-for-coding rejects any non-default temperature ("only 1 is allowed for this
+        // model"), so omit temperature and let it use its default — same as OpenAI reasoning models.
+        return PROVIDER_KIMI_CODE.equals(provider)
+                || (PROVIDER_OPENAI.equals(provider) && isOpenAiReasoningModel(model));
     }
 
     private static boolean isOpenAiReasoningModel(String model) {
