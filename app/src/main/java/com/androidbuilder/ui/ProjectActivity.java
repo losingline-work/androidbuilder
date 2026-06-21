@@ -1720,7 +1720,12 @@ public class ProjectActivity extends BaseActivity {
         if (adapter != null) {
             adapter.notifyDataSetChanged();
         }
-        if (shouldShowOperationStatus()) {
+        if (marchMilestoneId > 0) {
+            // During a march the status lives INSIDE the active milestone card, so follow that card
+            // instead of yanking the timeline to the bottom (which was overriding the milestone scroll
+            // — the status update fired a 120ms scroll-to-bottom that beat the 80ms scroll-to-milestone).
+            maybeScrollToActiveMilestone();
+        } else if (shouldShowOperationStatus()) {
             scrollMessagesToBottom();
         }
     }
