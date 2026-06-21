@@ -39,8 +39,12 @@ final class CrossReferenceReconciler {
     // @type/name references in XML. The android: framework namespace is naturally excluded: "@android:color/x"
     // does not start with "@color", so the type alternative never matches at that position.
     private static final Pattern XML_RESOURCE_REFERENCE =
-            Pattern.compile("@(color|string|drawable|mipmap|menu)/([A-Za-z_][A-Za-z0-9_]*)");
+            Pattern.compile("@(color|string|drawable|mipmap|menu|dimen)/([A-Za-z_][A-Za-z0-9_]*)");
     private static final Pattern R_MENU = Pattern.compile("(?<![A-Za-z0-9_.])R\\.menu\\.([A-Za-z_][A-Za-z0-9_]*)");
+    private static final Pattern R_DIMEN = Pattern.compile("(?<![A-Za-z0-9_.])R\\.dimen\\.([A-Za-z_][A-Za-z0-9_]*)");
+    // Declared <dimen name="..">: AndroidSourceGuard.NAMED_VALUE_RESOURCE only covers string/color/style.
+    private static final Pattern DIMEN_VALUE =
+            Pattern.compile("<\\s*dimen\\b[^>]*\\bname\\s*=\\s*[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
     private static final Pattern NAMESPACE =
             Pattern.compile("namespace\\s*(?:=\\s*)?[\"']([A-Za-z_][A-Za-z0-9_.]*)[\"']");
     // Names that look like an app class but are framework-generated (no .java) and must never be stubbed.
@@ -82,18 +86,21 @@ final class CrossReferenceReconciler {
         Set<String> declaredDrawables = new HashSet<>();
         Set<String> declaredMipmaps = new HashSet<>();
         Set<String> declaredMenus = new HashSet<>();
+        Set<String> declaredDimens = new HashSet<>();
         collectFileResourceNames(resDir, "drawable", declaredDrawables);
         collectFileResourceNames(resDir, "color", declaredColors); // file-based ColorStateList selectors
         collectFileResourceNames(resDir, "mipmap", declaredMipmaps);
         collectFileResourceNames(resDir, "menu", declaredMenus);
         collectValueResourceNames(resDir, "color", declaredColors);
         collectValueResourceNames(resDir, "string", declaredStrings);
+        collectDimenNames(resDir, declaredDimens);
 
         Set<String> missingColors = new TreeSet<>();
         Set<String> missingStrings = new TreeSet<>();
         Set<String> missingDrawables = new TreeSet<>();
         Set<String> missingMipmaps = new TreeSet<>();
         Set<String> missingMenus = new TreeSet<>();
+        Set<String> missingDimens = new TreeSet<>();
         for (String reference : collectResourceReferences(sourceDir)) {
             int slash = reference.indexOf('/');
             String type = reference.substring(0, slash);
@@ -108,11 +115,14 @@ final class CrossReferenceReconciler {
                 missingMipmaps.add(name);
             } else if ("menu".equals(type) && !declaredMenus.contains(name)) {
                 missingMenus.add(name);
+            } else if ("dimen".equals(type) && !declaredDimens.contains(name)) {
+                missingDimens.add(name);
             }
         }
 
         appendValueResources(resDir, "colors.xml", "color", missingColors, "#FF000000", seeded);
         appendValueResources(resDir, "strings.xml", "string", missingStrings, null, seeded);
+        appendDimenResources(resDir, missingDimens, seeded);
         for (String name : missingDrawables) {
             writeXmlFile(new File(resDir, "drawable/" + name + ".xml"), placeholderShapeXml(), "@drawable/" + name, seeded);
         }
@@ -139,8 +149,75 @@ final class CrossReferenceReconciler {
             addRReferences(text, AndroidSourceGuard.R_DRAWABLE, "drawable", references);
             addRReferences(text, AndroidSourceGuard.R_MIPMAP, "mipmap", references);
             addRReferences(text, R_MENU, "menu", references);
+            addRReferences(text, R_DIMEN, "dimen", references);
         }
         return references;
+    }
+
+    private static void collectDimenNames(File resDir, Set<String> names) {
+        File[] children = resDir == null ? null : resDir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File dir : children) {
+            if (!dir.isDirectory() || !dir.getName().startsWith("values")) {
+                continue;
+            }
+            for (File xml : filesWithExtension(dir, ".xml")) {
+                Matcher matcher = DIMEN_VALUE.matcher(readText(xml));
+                while (matcher.find()) {
+                    names.add(matcher.group(1));
+                }
+            }
+        }
+    }
+
+    /** Appends {@code <dimen name="..">VALUE</dimen>} for each missing dimension into values/dimens.xml. */
+    private static void appendDimenResources(File resDir, Set<String> names, List<String> seeded) {
+        if (names.isEmpty()) {
+            return;
+        }
+        File file = new File(resDir, "values/dimens.xml");
+        boolean existed = file.isFile();
+        String content = existed ? readText(file) : "<resources>\n</resources>\n";
+        int close = content.lastIndexOf("</resources>");
+        if (close < 0) {
+            return; // never clobber a malformed pre-existing file
+        }
+        StringBuilder elements = new StringBuilder();
+        List<String> added = new ArrayList<>();
+        for (String name : names) {
+            elements.append("    <dimen name=\"").append(name).append("\">").append(dimenDefault(name))
+                    .append("</dimen>\n");
+            added.add("@dimen/" + name);
+        }
+        String updated = content.substring(0, close) + elements + content.substring(close);
+        if (TaskOperationsPreflight.xmlError(updated) != null) {
+            return;
+        }
+        try {
+            FileUtils.writeText(file, updated);
+            seeded.addAll(added);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** A sensible placeholder dimension by name shape — valid wherever a @dimen is referenced; the model's
+     * own dimens.xml (if it later adds them) is never overwritten (additive). */
+    private static String dimenDefault(String name) {
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("text") || lower.contains("title") || lower.contains("font") || lower.endsWith("sp")) {
+            return "16sp";
+        }
+        if (lower.contains("height") || lower.contains("width") || lower.contains("size")) {
+            return "48dp";
+        }
+        if (lower.contains("padding") || lower.contains("margin") || lower.contains("gap")
+                || lower.contains("spacing") || lower.contains("radius") || lower.contains("elevation")
+                || lower.contains("stroke")) {
+            return "8dp";
+        }
+        return "16dp";
     }
 
     private static void addRReferences(String text, Pattern pattern, String type, Set<String> references) {

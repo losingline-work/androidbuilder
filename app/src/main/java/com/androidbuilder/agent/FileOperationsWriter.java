@@ -80,15 +80,25 @@ public class FileOperationsWriter {
             applyToDirectory(tempDir, taskOperations, lenient, report);
             DatabaseContractNormalizer.normalize(tempDir);
             JavaApiReconciler.reconcile(tempDir);
+            // Add a proper static singleton getInstance to a class callers use as one (X.getInstance(...)) but
+            // that never declared it — a frequent javac-loop sink. Runs BEFORE StubReconciler so its broken
+            // non-static stub never wins; only generates a singleton that provably compiles from X's ctor.
+            List<String> singletons = stubReconciliation
+                    ? SingletonGetInstanceReconciler.reconcile(tempDir) : new ArrayList<String>();
             // Last resort: splice compiling stubs for genuinely-missing members the model never closed,
             // so the tree builds instead of looping. Runs BEFORE the guard, which still validates the
             // result - a stub never bypasses the guard.
             lastStubs = stubReconciliation ? StubReconciler.reconcile(tempDir, sourceGuard) : new ArrayList<String>();
+            lastStubs.addAll(singletons);
             // Seed minimal valid producers for resources/classes the source references but never declares
             // (a missing colour, menu, launcher icon, or Intent-target Activity), so the build reaches a
             // shallower hole instead of looping aapt/javac repairs to dig it out. Additive + self-validating;
             // a no-op when the tree is already whole.
             if (stubReconciliation) {
+                // Fix aapt-rejected layout values (width/height="100%" → match_parent; private framework
+                // ic_menu_* drawables → a local @drawable/fw_* ref). Runs BEFORE CrossReferenceReconciler so
+                // the rewritten local drawable is then seeded with a valid placeholder.
+                lastStubs.addAll(LayoutValueReconciler.reconcile(tempDir));
                 lastStubs.addAll(CrossReferenceReconciler.reconcile(tempDir));
                 // Prevent the #1 launch crash: if the code uses AppCompat/Material (and the dependency is on
                 // the classpath) but the applied theme is a framework Theme.Material*, rewrite the theme

@@ -51,6 +51,35 @@ public class CrossReferenceReconcilerTest {
     }
 
     @Test
+    public void seedsMissingDimenReferencesFromLayoutAndJava() throws Exception {
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/res/layout/item_row.xml",
+                "<TextView xmlns:android=\"http://schemas.android.com/apk/res/android\" "
+                        + "android:minHeight=\"@dimen/list_item_min_height\" "
+                        + "android:padding=\"@dimen/list_item_padding\" "
+                        + "android:textSize=\"@dimen/text_title\" />");
+        write(root, "app/src/main/java/com/x/Sizer.java",
+                "package com.x;\nclass Sizer { int g() { return R.dimen.card_radius; } }\n");
+        // An already-declared dimen must NOT be re-seeded.
+        write(root, "app/src/main/res/values/dimens.xml",
+                "<resources>\n    <dimen name=\"text_title\">20sp</dimen>\n</resources>\n");
+
+        List<String> seeded = CrossReferenceReconciler.reconcile(root);
+
+        String dimens = FileUtils.readText(new File(root, "app/src/main/res/values/dimens.xml"));
+        assertNull("seeded XML must be valid", TaskOperationsPreflight.xmlError(dimens));
+        assertTrue(dimens.contains("name=\"list_item_min_height\""));
+        assertTrue(dimens.contains("name=\"list_item_padding\""));
+        assertTrue(dimens.contains("name=\"card_radius\""));
+        // text_title was already declared (20sp) and is left untouched / not duplicated.
+        assertTrue(dimens.contains("20sp"));
+        assertFalse(seeded.contains("@dimen/text_title"));
+        assertTrue(seeded.contains("@dimen/list_item_min_height"));
+        // Every seeded dimen carries a valid dimension unit so aapt links it.
+        assertTrue(dimens.contains("dp") || dimens.contains("sp"));
+    }
+
+    @Test
     public void seedsEmptyMenuForReference() throws Exception {
         File root = temporaryFolder.newFolder("source");
         write(root, "app/src/main/res/layout/activity_main.xml",
