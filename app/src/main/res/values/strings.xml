@@ -99,8 +99,6 @@
     <string name="minimax_model_m3">MiniMax-M3</string>
     <string name="thinking_mode">Thinking mode</string>
     <string name="thinking_mode_hint">Turn off for faster, non-reasoning replies. Some MiniMax models may still think.</string>
-    <string name="batched_generation">Batched generation</string>
-    <string name="batched_generation_hint">Use a file manifest and small batches to reduce large-task retries. Turn off to use the old single-response flow.</string>
     <string name="minimax_model_m27">MiniMax-M2.7</string>
     <string name="minimax_model_m27_highspeed">MiniMax-M2.7-highspeed</string>
     <string name="minimax_model_m25">MiniMax-M2.5</string>

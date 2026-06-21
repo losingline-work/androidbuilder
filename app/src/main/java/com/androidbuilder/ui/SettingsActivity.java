@@ -47,7 +47,7 @@ public class SettingsActivity extends BaseActivity {
 
     private EditText apiKey;
     private EditText endpoint;
-    private EditText model;
+    private AutoCompleteTextView model;
     private AutoCompleteTextView openaiModelSpinner;
     private AutoCompleteTextView deepseekModelSpinner;
     private AutoCompleteTextView minimaxModelSpinner;
@@ -63,7 +63,6 @@ public class SettingsActivity extends BaseActivity {
     private View minimaxModelLayout;
     private androidx.appcompat.widget.SwitchCompat thinkingModeSwitch;
     private View thinkingModeHint;
-    private androidx.appcompat.widget.SwitchCompat batchedGenerationSwitch;
     private View modelInputLayout;
     private View endpointPresetLayout;
     private EditText runtimeBootstrapUrlInput;
@@ -91,7 +90,6 @@ public class SettingsActivity extends BaseActivity {
         minimaxModelLayout = findViewById(R.id.minimaxModelLayout);
         thinkingModeSwitch = findViewById(R.id.thinkingModeSwitch);
         thinkingModeHint = findViewById(R.id.thinkingModeHint);
-        batchedGenerationSwitch = findViewById(R.id.batchedGenerationSwitch);
         modelInputLayout = findViewById(R.id.modelInputLayout);
         endpointPresetLayout = findViewById(R.id.endpointPresetLayout);
         providerSpinner = findViewById(R.id.providerSpinner);
@@ -112,7 +110,6 @@ public class SettingsActivity extends BaseActivity {
         select(backendSpinner, backendLabels, backendIndex(BuildBackendSettings.selected(this)));
         select(dependencyModeSpinner, dependencyModeLabels, dependencyModeIndex(BuildBackendSettings.dependencyMode(this)));
         select(parallelAgentSpinner, parallelAgentLabels, parallelAgentIndex(BuildBackendSettings.parallelAgentLimit(this)));
-        batchedGenerationSwitch.setChecked(OpenAiClient.batchedGenerationEnabled(cloudPrefs));
         runtimeBootstrapUrlInput.setText(BuildBackendSettings.prefs(this).getString(BuildBackendSettings.KEY_BOOTSTRAP_URL, ""));
         findViewById(R.id.saveSettingsButton).setOnClickListener(v -> save());
         findViewById(R.id.importOfflineMavenButton).setOnClickListener(v -> importOfflineMaven());
@@ -209,7 +206,11 @@ public class SettingsActivity extends BaseActivity {
         ProviderDraft draft = providerDraft(provider);
         apiKey.setText(draft.apiKey);
         endpoint.setText(draft.endpoint);
-        model.setText(draft.model);
+        // The free-text model field also offers the provider's curated models as a dropdown (e.g. Moonshot
+        // Kimi's 4 ids); the user can still type any model id not in the list. Set the suggestions, then the
+        // saved value without re-filtering the popup.
+        configureDropdown(model, OpenAiClient.modelsForProvider(provider));
+        model.setText(draft.model, false);
         select(openaiModelSpinner, openaiModelLabels, openaiModelIndex(draft.model));
         select(deepseekModelSpinner, deepseekModelLabels, deepseekModelIndex(draft.model));
         select(minimaxModelSpinner, minimaxModelLabels, minimaxModelIndex(draft.model));
@@ -363,8 +364,7 @@ public class SettingsActivity extends BaseActivity {
                 .putString(OpenAiClient.KEY_PROVIDER, provider)
                 .putString(OpenAiClient.KEY_API_KEY, selectedDraft.apiKey)
                 .putString(OpenAiClient.KEY_ENDPOINT, selectedDraft.endpoint)
-                .putString(OpenAiClient.KEY_MODEL, selectedDraft.model)
-                .putString(OpenAiClient.KEY_BATCHED_GENERATION, batchedGenerationSwitch.isChecked() ? "true" : "false");
+                .putString(OpenAiClient.KEY_MODEL, selectedDraft.model);
         for (Map.Entry<String, ProviderDraft> entry : providerDrafts.entrySet()) {
             writeProviderDraft(editor, entry.getKey(), entry.getValue());
         }

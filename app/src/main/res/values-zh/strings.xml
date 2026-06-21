@@ -109,8 +109,6 @@
     <string name="minimax_model_m1">MiniMax-M1</string>
     <string name="minimax_model_text_01">MiniMax-Text-01</string>
     <string name="deepseek_model_invalid">DeepSeek 仅支持 deepseek-v4-flash 和 deepseek-v4-pro。</string>
-    <string name="batched_generation">分批生成</string>
-    <string name="batched_generation_hint">用文件清单 + 小批次来减少大任务的重试。关闭则使用旧的单次响应流程。</string>
     <string name="save_settings">保存设置</string>
     <string name="embedded_runtime">内置运行环境</string>
     <string name="runtime_bootstrap_url">运行环境引导包下载地址</string>

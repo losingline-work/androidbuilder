@@ -248,32 +248,16 @@
                         android:textSize="12sp"
                         android:visibility="gone" />
 
-                    <androidx.appcompat.widget.SwitchCompat
-                        android:id="@+id/batchedGenerationSwitch"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
-                        android:text="@string/batched_generation"
-                        android:textColor="?attr/colorOnSurface"
-                        android:textSize="15sp" />
-
-                    <TextView
-                        style="@style/TextBodyMedium"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="@string/batched_generation_hint"
-                        android:textSize="12sp" />
-
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/modelInputLayout"
                         style="@style/Widget.AndroidBuilder.TextInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
-                        android:hint="@string/model">
+                        android:hint="@string/model"
+                        app:endIconMode="dropdown_menu">
 
-                        <com.google.android.material.textfield.TextInputEditText
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/modelInput"
                             style="@style/InputField"
                             android:layout_width="match_parent"

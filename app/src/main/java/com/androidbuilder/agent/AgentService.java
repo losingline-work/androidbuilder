@@ -1983,9 +1983,8 @@ public class AgentService {
     }
 
     private boolean shouldUseBatchedGeneration(TaskOperations previousDraft, boolean correctionMode, String taskTitle) {
-        if (!OpenAiClient.batchedGenerationEnabled(context.getSharedPreferences(OpenAiClient.PREFS, Context.MODE_PRIVATE))) {
-            return false;
-        }
+        // Batched generation (file manifest + small weight-bounded batches) is always on: the old
+        // single-response flow truncated high-volume phases mid-array, so there is no off switch.
         if (ManifestResumePolicy.shouldResume(previousDraft)) {
             return true;
         }

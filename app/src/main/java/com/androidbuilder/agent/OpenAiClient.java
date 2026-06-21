@@ -52,7 +52,6 @@ public class OpenAiClient {
     public static final String KEY_MODEL = "model";
     public static final String KEY_PROVIDER = "provider";
     public static final String KEY_THINKING = "thinking_enabled";
-    public static final String KEY_BATCHED_GENERATION = "batched_generation";
     public static final String PROVIDER_OPENAI = "openai";
     public static final String PROVIDER_DEEPSEEK = "deepseek";
     public static final String PROVIDER_MINIMAX = "minimax";
@@ -967,9 +966,6 @@ public class OpenAiClient {
         return !"false".equals(scopedValue(prefs, provider, KEY_THINKING, "true"));
     }
 
-    public static boolean batchedGenerationEnabled(SharedPreferences prefs) {
-        return prefs == null || !"false".equals(prefs.getString(KEY_BATCHED_GENERATION, "true"));
-    }
 
     static boolean effectiveThinkingForTest(boolean userEnabled, boolean structuredOutput) {
         return effectiveThinking(userEnabled, structuredOutput);

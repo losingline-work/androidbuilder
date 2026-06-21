@@ -327,13 +327,6 @@ public class OpenAiClientTest {
     }
 
     @Test
-    public void batchedGenerationIsEnabledByDefaultAndCanBeDisabled() {
-        assertTrue(OpenAiClient.batchedGenerationEnabled(new FakeSharedPreferences()));
-        assertFalse(OpenAiClient.batchedGenerationEnabled(new FakeSharedPreferences()
-                .put(OpenAiClient.KEY_BATCHED_GENERATION, "false")));
-    }
-
-    @Test
     public void generatedProjectPromptsUseApi24Minimum() {
         String projectPrompt = OpenAiClient.projectFilesSystemPromptForTest(false);
         String taskPrompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
