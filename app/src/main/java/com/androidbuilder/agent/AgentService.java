@@ -715,7 +715,9 @@ public class AgentService {
                 if (merge.mergedResults.isEmpty() && !batch.tasks.isEmpty()) {
                     if (!anyMerged) {
                         repository.updateHermesExecutionRun(executionRun.id, "failed", baseSourceHash);
-                        throw new IllegalStateException(mergeFailureSummary(merge, null), failedAgentError);
+                        // Pass the real agent error so its message lands in the summary (the build card shows
+                        // this) — not just the bare "Merged 0 … failed N" count with no reason.
+                        throw new IllegalStateException(mergeFailureSummary(merge, failedAgentError), failedAgentError);
                     }
                     FileUtils.appendText(logs, chinese
                             ? "本批次未合并任何任务；保留失败任务并继续检查其它可执行任务。\n"
@@ -768,14 +770,15 @@ public class AgentService {
             // Pre-build code-review gate: only when generation is genuinely complete (nothing pending/failed).
             // Non-fatal — a review failure never blocks the build.
             if (next == null && failedTasks == 0) {
-                codeReviewGate(projectId, job, logs, chinese);
+                codeReviewGate(projectId, job, logs, chinese, quietTimeline);
             }
             repository.updateBuildJob(job.id, "generated", "ready_for_build", logs.getAbsolutePath(), null, null, 0);
             return repository.getBuildJob(job.id);
         } catch (Exception error) {
             HermesScratchCleanup.afterMerge(agentsRoot, false);
             String rawErrorMessage = error.getMessage() == null ? error.toString() : error.getMessage();
-            String errorMessage = HermesParallelExecutionPolicy.userMessageForBatchFailure(rawErrorMessage, chinese);
+            String errorMessage = HermesParallelExecutionPolicy.userMessageForBatchFailure(
+                    rawErrorMessage, chinese, BuildBackendSettings.parallelAgentLimit(context));
             for (ProjectTaskRecord runningTask : runningTasks) {
                 ProjectTaskRecord latest = repository.getProjectTask(runningTask.id);
                 if (latest != null && "running".equals(latest.status)) {
@@ -805,7 +808,7 @@ public class AgentService {
      * path before the build runs. Non-fatal and single-pass — never blocks generation, and the build +
      * runtime tiers remain the authorities behind it.
      */
-    private void codeReviewGate(long projectId, BuildJobRecord job, File logs, boolean chinese) {
+    private void codeReviewGate(long projectId, BuildJobRecord job, File logs, boolean chinese, boolean quietTimeline) {
         if (!AppSettings.isCodeReviewEnabled(context)) {
             return;
         }
@@ -815,7 +818,11 @@ public class AgentService {
             String planContent = plan == null || plan.content.trim().isEmpty() ? fallbackRepairPlan(chinese) : plan.content;
             String snapshot = sourceSnapshot(sourceDir, "");
             FileUtils.appendText(logs, chinese ? "正在进行构建前代码评审。\n" : "Running pre-build code review.\n");
-            repository.addMessage(projectId, "assistant", chinese ? "正在进行构建前代码评审。" : "Running a pre-build code review.", job.id);
+            // During a milestone march these phase lines are folded into the milestone card (its status hint
+            // + build-log tail), so keep them out of the timeline to avoid separate chatter bubbles.
+            if (!quietTimeline) {
+                repository.addMessage(projectId, "assistant", chinese ? "正在进行构建前代码评审。" : "Running a pre-build code review.", job.id);
+            }
             String response = openAiClient.reviewGeneratedCode(snapshot, chinese, job.id + ":code-review");
             List<CodeReviewParser.Finding> findings = CodeReviewParser.parse(response);
             String instruction = CodeReviewParser.toRepairInstruction(findings, chinese);
@@ -826,7 +833,9 @@ public class AgentService {
             int count = CodeReviewParser.actionable(findings).size();
             String found = (chinese ? "代码评审发现 " : "Code review found ") + count + (chinese ? " 个问题，正在修复。" : " issue(s); repairing.");
             FileUtils.appendText(logs, found + "\n");
-            repository.addMessage(projectId, "assistant", found, job.id);
+            if (!quietTimeline) {
+                repository.addMessage(projectId, "assistant", found, job.id);
+            }
             createAndApplyTaskOperations(projectId, job.id, sourceDir, planContent,
                     chinese ? "代码评审修复" : "Code review fix", instruction, snapshot, logs, chinese, instruction, true);
             FileUtils.appendText(logs, chinese ? "代码评审修复完成。\n" : "Code review fixes applied.\n");
@@ -1356,13 +1365,21 @@ public class AgentService {
         }
         if (merge != null && merge.failedResults != null) {
             for (HermesMergeCoordinator.FailedResult failed : merge.failedResults) {
-                if (failed == null || failed.reason.isEmpty()) {
+                if (failed == null) {
                     continue;
+                }
+                // Never drop a failed result silently: if no reason was captured, at least name the task so
+                // the card has something concrete instead of a bare "Merged 0 … failed 1" count.
+                String reason = failed.reason;
+                if (reason == null || reason.isEmpty()) {
+                    String title = failed.result != null && failed.result.task != null ? failed.result.task.title : "";
+                    reason = title.isEmpty() ? "task generation failed (no detail captured)"
+                            : "task \"" + title + "\" failed during generation (no detail captured)";
                 }
                 if (summary.length() > 0) {
                     summary.append('\n');
                 }
-                summary.append(failed.reason);
+                summary.append(reason);
             }
         }
         if (failedAgentError != null) {
@@ -2997,7 +3014,8 @@ public class AgentService {
                     + "不要使用 Java lambda 或箭头语法，监听器必须写成匿名内部类；注释、Javadoc、字符串示例里也不要写箭头式示例；"
                     + "如果是 Java 引用错误：Fragment 中不要直接调用 findViewById，要使用 inflated root view.findViewById 或 requireView().findViewById；"
                     + "不要使用 Kotlin synthetic 视图变量（例如 btn_save.setOnClickListener），必须先从 dialog/root view 中 findViewById 声明局部变量；"
-                    + "所有 R.* 代码引用和 XML 中的 @mipmap/@style/@drawable/@string/@color/@layout 引用都必须有对应资源，缺失时补资源或改用已有资源。\n\n构建日志：\n" + log;
+                    + "所有 R.* 代码引用和 XML 中的 @mipmap/@style/@drawable/@string/@color/@layout 引用都必须有对应资源，缺失时补资源或改用已有资源。"
+                    + "对于 R.id.X 找不到符号：必须在对应布局里给真实视图加 android:id=\"@+id/X\"（不要只在 values 里声明一个空 id 资源——那样能编译但 findViewById 会运行时返回 null 导致闪退），且 findViewById 的声明类型要与该视图的真实类型一致。\n\n构建日志：\n" + log;
         }
         return escalationClause
                 + "Repair the current source based on the build failure log below. Make the smallest necessary changes, do not regenerate the whole project, and do not remove unrelated features. "
@@ -3010,7 +3028,8 @@ public class AgentService {
                 + "Do not use Java lambdas or arrow syntax; listeners must use anonymous inner classes, and comments/Javadocs/string examples must not include arrow-style examples. "
                 + "For Java reference errors: in Fragments, do not call findViewById directly; use the inflated root view.findViewById or requireView().findViewById. "
                 + "Do not use Kotlin synthetic view variables such as btn_save.setOnClickListener; first declare local variables from the dialog/root view using findViewById. "
-                + "Every R.* code reference and every XML @mipmap/@style/@drawable/@string/@color/@layout reference must have a matching resource; add the resource or use an existing one.\n\nBuild log:\n" + log;
+                + "Every R.* code reference and every XML @mipmap/@style/@drawable/@string/@color/@layout reference must have a matching resource; add the resource or use an existing one. "
+                + "For a missing R.id.X symbol, add android:id=\"@+id/X\" to the actual view in the right layout (do NOT just declare a bare id resource in values — that compiles but findViewById returns null at runtime and crashes), and make the findViewById declared type match that view's real type.\n\nBuild log:\n" + log;
     }
 
     private String fallbackRepairPlan(boolean chinese) {
