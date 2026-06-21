@@ -117,8 +117,8 @@ public class OpenAiClient {
                 "https://open.bigmodel.cn/api/paas/v4/chat/completions", "glm-4.6",
                 new String[]{"glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4-flash"}));
         SPECS.put(PROVIDER_MOONSHOT, new ProviderSpec(PROVIDER_MOONSHOT,
-                "https://api.moonshot.cn/v1/chat/completions", "kimi-k2-0905-preview",
-                new String[]{"kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-128k", "moonshot-v1-32k"}));
+                "https://api.moonshot.cn/v1/chat/completions", "kimi-k2.6",
+                new String[]{"kimi-k2.6", "kimi-k2.7-code", "kimi-k2-thinking", "kimi-k2-turbo-preview"}));
         // Kimi Code: OpenAI-compatible base https://api.kimi.com/coding/v1 + unified model id "kimi-for-coding"
         // (the Anthropic-compatible base is https://api.kimi.com/coding/v1/messages; we use the OpenAI path).
         SPECS.put(PROVIDER_KIMI_CODE, new ProviderSpec(PROVIDER_KIMI_CODE,
