@@ -56,6 +56,21 @@ public class SingletonGetInstanceReconcilerTest {
     }
 
     @Test
+    public void doesNotSynthesizeGetInstanceForAnApplicationSubclass() throws Exception {
+        // new App() compiles but NPEs at runtime (its onCreate never ran); leave it to the model.
+        File root = temporaryFolder.newFolder("source");
+        write(root, "app/src/main/java/com/x/App.java",
+                "package com.x;\npublic class App extends android.app.Application {\n}\n");
+        write(root, "app/src/main/java/com/x/Caller.java",
+                "package com.x;\nclass Caller { Object f() { return App.getInstance(); } }\n");
+
+        List<String> added = SingletonGetInstanceReconciler.reconcile(root);
+
+        assertTrue(added.isEmpty());
+        assertFalse(FileUtils.readText(new File(root, "app/src/main/java/com/x/App.java")).contains("getInstance"));
+    }
+
+    @Test
     public void skipsWhenNoConstructorMatchesTheCallArity() throws Exception {
         File root = temporaryFolder.newFolder("source");
         // Repo only has a 2-arg ctor; a getInstance(context) singleton cannot be built safely → leave it.

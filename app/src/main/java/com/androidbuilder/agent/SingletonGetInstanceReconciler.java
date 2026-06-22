@@ -69,6 +69,13 @@ final class SingletonGetInstanceReconciler {
     /** A compiling static singleton, or null when X's constructors can't form one we can prove compiles. */
     private static String singletonMember(String className, String content, int arity) {
         String quoted = Pattern.quote(className);
+        // An Application/Activity/Fragment/View is created by the framework, never with `new X()`; its
+        // getInstance must return the onCreate-set instance, which we cannot synthesize. Leave it to the
+        // model (a `new App()` singleton compiles but NPEs at runtime — onCreate never ran on it).
+        if (Pattern.compile("\\bclass\\s+" + quoted
+                + "\\s+extends\\s+[A-Za-z0-9_.]*(?:Application|Activity|Fragment|View|Service)\\b").matcher(content).find()) {
+            return null;
+        }
         boolean contextCtor = Pattern.compile(
                 "\\b" + quoted + "\\s*\\(\\s*(?:android\\.content\\.)?Context\\s+\\w+\\s*\\)").matcher(content).find();
         boolean noArgCtor = Pattern.compile("\\b" + quoted + "\\s*\\(\\s*\\)").matcher(content).find();
