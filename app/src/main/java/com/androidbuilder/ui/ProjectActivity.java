@@ -243,6 +243,7 @@ public class ProjectActivity extends BaseActivity {
         });
         fileDrawerScrim.setOnClickListener(v -> closeDrawers());
         findViewById(R.id.closeFilesButton).setOnClickListener(v -> closeFileBrowser());
+        findViewById(R.id.exportProjectButton).setOnClickListener(v -> exportProjectFiles());
         findViewById(R.id.closeLogsButton).setOnClickListener(v -> closeLogQuery());
         exportLogsButton.setOnClickListener(v -> exportProjectLogs());
         findViewById(R.id.executePlanButton).setOnClickListener(v -> executePlan());
@@ -681,6 +682,22 @@ public class ProjectActivity extends BaseActivity {
         try {
             File exportFile = prepareProjectLogsExportFile();
             requestSaveLogFile(exportFile, ProjectLogExportPolicy.projectLogExportName(projectId));
+        } catch (Exception error) {
+            Toast.makeText(this, getString(R.string.export_log_failed, error.getMessage()), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void exportProjectFiles() {
+        if (sourceRoot == null || !hasSourceFiles()) {
+            Toast.makeText(this, R.string.no_source_files, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            File exportDir = exportLogCacheDir();
+            String name = ProjectLogExportPolicy.projectSourceExportName(projectId);
+            File exportFile = new File(exportDir, name);
+            FileUtils.zipDirectory(sourceRoot, exportFile);
+            requestSaveLogFile(exportFile, name);
         } catch (Exception error) {
             Toast.makeText(this, getString(R.string.export_log_failed, error.getMessage()), Toast.LENGTH_LONG).show();
         }

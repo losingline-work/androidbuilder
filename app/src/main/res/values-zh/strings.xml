@@ -28,6 +28,7 @@
     <string name="message">消息</string>
     <string name="status">状态</string>
     <string name="source_files">源码文件</string>
+    <string name="export_project">导出项目</string>
     <string name="log_query">AI 对话日志</string>
     <string name="search_logs">搜索用户、云端模型和诊断日志</string>
     <string name="log_query_count">显示 %1$d / %2$d 条记录</string>

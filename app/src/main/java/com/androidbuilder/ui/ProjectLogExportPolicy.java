@@ -29,7 +29,14 @@ final class ProjectLogExportPolicy {
         return "androidbuilder-project-" + projectId + "-logs.txt";
     }
 
+    static String projectSourceExportName(long projectId) {
+        return "androidbuilder-project-" + projectId + "-source.zip";
+    }
+
     static String exportMimeType(String name) {
+        if (name != null && name.toLowerCase().endsWith(".zip")) {
+            return "application/zip";
+        }
         return "text/plain";
     }
 

@@ -48,6 +48,14 @@ public class ProjectLogExportPolicyTest {
     }
 
     @Test
+    public void projectSourceExportIsAZipArchive() {
+        assertEquals("androidbuilder-project-7-source.zip", ProjectLogExportPolicy.projectSourceExportName(7));
+        assertEquals("application/zip", ProjectLogExportPolicy.exportMimeType("androidbuilder-project-7-source.zip"));
+        // case-insensitive on the extension
+        assertEquals("application/zip", ProjectLogExportPolicy.exportMimeType("PROJECT.ZIP"));
+    }
+
+    @Test
     public void projectLogExportTextPreservesEntryOrderAndCopyText() {
         ProjectLogEntry first = entry(ProjectLogEntry.Kind.AI, 1, "Cloud model", "metadata", "request\nresponse");
         ProjectLogEntry second = entry(ProjectLogEntry.Kind.MESSAGE, 2, "User conversation", "chat", "Add export");

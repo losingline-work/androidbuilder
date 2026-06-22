@@ -210,6 +210,18 @@
                 android:textColor="?attr/colorPrimary" />
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/exportProjectButton"
+                style="@style/Widget.AndroidBuilder.Button.Outlined"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginEnd="8dp"
+                android:minWidth="0dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:text="@string/export_project"
+                android:textSize="12sp" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/closeFilesButton"
                 style="@style/Widget.AndroidBuilder.Button.Outlined"
                 android:layout_width="wrap_content"

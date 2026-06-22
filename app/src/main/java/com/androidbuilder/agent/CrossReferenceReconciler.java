@@ -127,7 +127,11 @@ final class CrossReferenceReconciler {
             writeXmlFile(new File(resDir, "drawable/" + name + ".xml"), placeholderShapeXml(), "@drawable/" + name, seeded);
         }
         for (String name : missingMipmaps) {
-            writeXmlFile(new File(resDir, "mipmap/" + name + ".xml"), placeholderShapeXml(), "@mipmap/" + name, seeded);
+            // The launcher icon gets a real, visible default (a colored mark) instead of a transparent
+            // placeholder, so a generated app installs with an icon rather than a blank square.
+            boolean launcher = "ic_launcher".equals(name) || "ic_launcher_round".equals(name);
+            writeXmlFile(new File(resDir, "mipmap/" + name + ".xml"),
+                    launcher ? defaultLauncherIconXml() : placeholderShapeXml(), "@mipmap/" + name, seeded);
         }
         for (String name : missingMenus) {
             writeXmlFile(new File(resDir, "menu/" + name + ".xml"), emptyMenuXml(), "@menu/" + name, seeded);
@@ -273,6 +277,17 @@ final class CrossReferenceReconciler {
             seeded.add(debtLabel);
         } catch (Exception ignored) {
         }
+    }
+
+    /** A visible default launcher icon: an indigo tile with a white "list" mark. Vector (rectangles only,
+     * always valid), works at minSdk 24 without adaptive-icon resources. */
+    private static String defaultLauncherIconXml() {
+        return "<vector xmlns:android=\"http://schemas.android.com/apk/res/android\"\n"
+                + "    android:width=\"108dp\" android:height=\"108dp\"\n"
+                + "    android:viewportWidth=\"108\" android:viewportHeight=\"108\">\n"
+                + "    <path android:fillColor=\"#3F51B5\" android:pathData=\"M0,0h108v108H0z\" />\n"
+                + "    <path android:fillColor=\"#FFFFFF\" android:pathData=\"M34,40h40v7h-40z M34,53h40v7h-40z M34,66h26v7h-26z\" />\n"
+                + "</vector>\n";
     }
 
     private static String placeholderShapeXml() {

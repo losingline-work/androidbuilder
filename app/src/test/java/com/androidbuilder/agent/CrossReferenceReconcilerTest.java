@@ -106,9 +106,15 @@ public class CrossReferenceReconcilerTest {
 
         CrossReferenceReconciler.reconcile(root);
 
-        assertTrue(new File(root, "app/src/main/res/mipmap/ic_launcher.xml").isFile());
+        File launcher = new File(root, "app/src/main/res/mipmap/ic_launcher.xml");
+        assertTrue(launcher.isFile());
         assertTrue(new File(root, "app/src/main/res/mipmap/ic_launcher_round.xml").isFile());
         assertTrue(new File(root, "app/src/main/res/drawable/bg_circle_light.xml").isFile());
+        // The launcher icon is a real visible default (colored), not a transparent placeholder.
+        String launcherXml = FileUtils.readText(launcher);
+        assertTrue(launcherXml.contains("fillColor"));
+        assertTrue(launcherXml.contains("#3F51B5"));
+        assertNull(TaskOperationsPreflight.xmlError(launcherXml));
     }
 
     @Test
