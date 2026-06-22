@@ -237,7 +237,6 @@
     <string name="milestone_paused_failed_task">里程碑构建通过，但有任务失败，已暂停（不会自动进入下一个）。请重试该里程碑修复失败任务，或检查后手动继续。</string>
     <string name="milestone_all_done">所有里程碑已完成，app 可运行。</string>
     <string name="milestone_failed_rolled_back">里程碑 %1$s 构建失败，已回滚到上一个可运行检查点。</string>
-    <string name="milestone_pause">暂停推进</string>
     <string name="milestone_single_step">单步：下一个里程碑</string>
     <string name="milestone_pause_pending">将在当前里程碑完成后暂停。</string>
     <string name="milestone_requires_embedded">增量里程碑构建需要内置构建运行时。请在设置中将构建后端切换为内置。</string>

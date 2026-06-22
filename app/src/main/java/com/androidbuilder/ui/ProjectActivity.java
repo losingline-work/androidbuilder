@@ -187,10 +187,6 @@ public class ProjectActivity extends BaseActivity {
                 toggleLogQuery();
                 return true;
             }
-            if (item.getItemId() == R.id.action_pause_march) {
-                pauseMilestoneMarch();
-                return true;
-            }
             return false;
         });
         repository = ((AndroidBuilderApp) getApplication()).repository();
@@ -430,7 +426,6 @@ public class ProjectActivity extends BaseActivity {
         updateBuildLogPanel();
         updateActionButtons();
         updateMilestoneStrip();
-        updateMarchMenu();
         updateKeepScreenOn();
         if (hasMilestones) {
             // In milestone-card mode follow the relevant milestone card; never jump to the bottom (a failed
@@ -976,7 +971,7 @@ public class ProjectActivity extends BaseActivity {
             // Already marching; a single-step request just unpauses to do exactly the next one.
             milestoneMarchPaused = false;
             milestoneSingleStep = singleStep;
-            updateMarchMenu();
+            refresh();
             return;
         }
         if (!new OpenAiClient(this).isConfigured()) {
@@ -1146,7 +1141,7 @@ public class ProjectActivity extends BaseActivity {
         milestoneMarchPaused = true;
         setOperationStatus(getString(R.string.milestone_pause_pending));
         Toast.makeText(this, R.string.milestone_pause_pending, Toast.LENGTH_SHORT).show();
-        updateMarchMenu();
+        refresh();
     }
 
     private boolean hasOtherUnfinishedMilestone(long exceptMilestoneId) {
@@ -1239,20 +1234,6 @@ public class ProjectActivity extends BaseActivity {
             return "▶";
         }
         return "○";
-    }
-
-    private void updateMarchMenu() {
-        if (projectToolbar == null) {
-            return;
-        }
-        android.view.Menu menu = projectToolbar.getMenu();
-        if (menu == null) {
-            return;
-        }
-        android.view.MenuItem pause = menu.findItem(R.id.action_pause_march);
-        if (pause != null) {
-            pause.setVisible(milestoneMarchActive && !milestoneMarchPaused);
-        }
     }
 
     private void executePlanStep() {

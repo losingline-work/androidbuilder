@@ -10,9 +10,4 @@
         android:icon="@drawable/ic_log_search"
         android:title="@string/log_query"
         app:showAsAction="always" />
-    <item
-        android:id="@+id/action_pause_march"
-        android:title="@string/milestone_pause"
-        android:visible="false"
-        app:showAsAction="never" />
 </menu>
