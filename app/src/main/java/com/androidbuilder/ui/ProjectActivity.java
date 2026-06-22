@@ -2378,16 +2378,23 @@ public class ProjectActivity extends BaseActivity {
         }
 
         /**
-         * The per-milestone contextual action that replaces the bottom action bar in milestone-card mode.
-         * Only shown when no march is running (the march owns generate/build/repair end to end). Priority:
-         * a failed build → 修复; the next unfinished milestone → 执行/继续; the latest checkpoint → 安装.
+         * The per-milestone contextual action on the card. During a march the active milestone shows 暂停;
+         * otherwise: a failed build → 修复; a failed generation / next unfinished → 重试/执行/继续; the latest
+         * checkpoint → 安装.
          */
         private void bindMilestoneActionButton(View view, MilestoneCardModel card, boolean chinese) {
             com.google.android.material.button.MaterialButton button =
                     view.findViewById(R.id.milestoneActionButton);
             String label = null;
             Runnable action = null;
-            if (!milestoneMarchActive) {
+            if (milestoneMarchActive) {
+                // The march owns generate/build/repair; the only control the user needs is 暂停 on the active
+                // milestone card (pauses after this milestone finishes — same as the toolbar menu).
+                if (marchMilestoneId == card.milestoneId && !milestoneMarchPaused) {
+                    label = chinese ? "暂停" : "Pause";
+                    action = ProjectActivity.this::pauseMilestoneMarch;
+                }
+            } else {
                 BuildJobRecord repairTarget = repairTargetJob();
                 // A code-generation/merge failure (phase coding_failed) is NOT repairable from a build log —
                 // "修复" would do nothing. It must be re-generated, so route it to 重试 (executePlan), and keep
