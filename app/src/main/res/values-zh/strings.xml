@@ -233,6 +233,7 @@
     <string name="milestone_repairing">里程碑 M%1$d 构建失败，自动修复中（第 %2$d 轮）…</string>
     <string name="milestone_rolling_back">里程碑无法构建，正在回滚到上一个检查点…</string>
     <string name="milestone_paused_at_checkpoint">已在当前里程碑检查点暂停。</string>
+    <string name="milestone_paused_failed_task">里程碑构建通过，但有任务失败，已暂停（不会自动进入下一个）。请重试该里程碑修复失败任务，或检查后手动继续。</string>
     <string name="milestone_all_done">所有里程碑已完成，app 可运行。</string>
     <string name="milestone_failed_rolled_back">里程碑 %1$s 构建失败，已回滚到上一个可运行检查点。</string>
     <string name="milestone_pause">暂停推进</string>

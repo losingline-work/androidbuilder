@@ -272,7 +272,7 @@ public class AgentService {
      * fails (rare IO error) — with an empty checkpoint_path — so it is never orphaned in 'building'; rollback
      * then simply targets an earlier green checkpoint.
      */
-    public void checkpointMilestoneAsync(long projectId, long milestoneId, long greenBuildJobId, Runnable onDone) {
+    public void checkpointMilestoneAsync(long projectId, long milestoneId, long greenBuildJobId, boolean markDone, Runnable onDone) {
         new Thread(() -> {
             ProjectMilestoneRecord milestone = repository.getMilestone(milestoneId);
             if (milestone != null) {
@@ -280,9 +280,11 @@ public class AgentService {
                 try {
                     path = checkpointMilestone(projectId, milestone.orderIndex);
                 } catch (Exception ignored) {
-                    // Snapshot failed; still mark DONE below so the milestone is not stuck in 'building'.
+                    // Snapshot failed; still set the status below so the milestone is not stuck in 'building'.
                 }
-                repository.markMilestoneCheckpoint(milestoneId, path, greenBuildJobId);
+                // Green build with a merged-failed task → save the checkpoint but mark "failed", so the march
+                // pauses instead of advancing onto a half-done milestone.
+                repository.markMilestoneCheckpoint(milestoneId, path, greenBuildJobId, markDone ? "done" : "failed");
             }
             if (onDone != null) {
                 onDone.run();

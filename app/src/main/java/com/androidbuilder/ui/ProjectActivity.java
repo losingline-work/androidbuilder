@@ -1007,14 +1007,22 @@ public class ProjectActivity extends BaseActivity {
     /** A march milestone built green: checkpoint it, then advance / pause / finish per the march policy. */
     private void onMilestoneBuildGreen(long greenBuildJobId) {
         final long milestoneId = marchMilestoneId;
+        // A milestone is only DONE if it built green AND every task merged. If a task failed to merge (its
+        // code is missing/stubbed) the build can still pass, but we must NOT silently advance onto a half-done
+        // milestone — keep the green checkpoint, but flag the milestone and pause for the user to retry it.
+        final boolean cleanComplete = !currentMilestoneHasFailedTask();
         final MilestoneMarchPolicy.Action action = MilestoneMarchPolicy.onBuildResult(
                 AutoRepairLoopPolicy.Decision.SUCCEEDED,
                 hasOtherUnfinishedMilestone(milestoneId),
                 milestoneMarchPaused,
                 milestoneSingleStep);
         setOperationStatus(getString(R.string.milestone_checkpointing));
-        agentService.checkpointMilestoneAsync(projectId, milestoneId, greenBuildJobId, () -> runOnUiThread(() -> {
+        agentService.checkpointMilestoneAsync(projectId, milestoneId, greenBuildJobId, cleanComplete, () -> runOnUiThread(() -> {
             refresh();
+            if (!cleanComplete) {
+                finishMilestoneMarch(getString(R.string.milestone_paused_failed_task));
+                return;
+            }
             switch (action) {
                 case CHECKPOINT_AND_ADVANCE:
                     advanceMilestoneMarch();
@@ -1028,6 +1036,17 @@ public class ProjectActivity extends BaseActivity {
                     break;
             }
         }));
+    }
+
+    /** True when the current milestone has a task that failed to merge — the build may still be green, but
+     * that task's code is missing/stubbed, so the milestone is not fully done. */
+    private boolean currentMilestoneHasFailedTask() {
+        for (ProjectTaskRecord task : repository.listProjectTasks(projectId)) {
+            if ("failed".equals(task.status)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** During a march, mark the current milestone REPAIRING and surface a transient round status (no timeline spam). */
@@ -2381,7 +2400,9 @@ public class ProjectActivity extends BaseActivity {
                     label = chinese ? "修复" : "Repair";
                     action = ProjectActivity.this::repairLatest;
                 } else if (card.milestoneId == firstUnfinishedMilestoneId && planReady) {
-                    label = "failed".equals(card.buildResult)
+                    boolean needsRetry = "failed".equals(card.buildResult)
+                            || MilestoneStatus.FAILED.equals(card.status);
+                    label = needsRetry
                             ? (chinese ? "重试" : "Retry")
                             : (anyMilestoneDone ? (chinese ? "继续" : "Continue") : (chinese ? "执行" : "Run"));
                     action = ProjectActivity.this::executePlan;

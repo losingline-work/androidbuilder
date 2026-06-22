@@ -233,6 +233,7 @@
     <string name="milestone_repairing">Milestone M%1$d build failed; auto-repairing (round %2$d)…</string>
     <string name="milestone_rolling_back">Milestone could not build; rolling back to the last checkpoint…</string>
     <string name="milestone_paused_at_checkpoint">Paused at the current milestone checkpoint.</string>
+    <string name="milestone_paused_failed_task">Milestone built, but a task failed — paused (it won\'t auto-advance to the next one). Retry this milestone to fix the failed task, or continue manually after checking.</string>
     <string name="milestone_all_done">All milestones done — the app is runnable.</string>
     <string name="milestone_failed_rolled_back">Milestone %1$s failed to build; rolled back to the last runnable checkpoint.</string>
     <string name="milestone_pause">Pause march</string>

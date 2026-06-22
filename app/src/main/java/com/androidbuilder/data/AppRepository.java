@@ -460,8 +460,15 @@ public class AppRepository {
 
     /** Mark a milestone green: store its checkpoint snapshot path + build job and set status DONE. */
     public synchronized void markMilestoneCheckpoint(long id, String checkpointPath, long buildJobId) {
+        markMilestoneCheckpoint(id, checkpointPath, buildJobId, "done");
+    }
+
+    /** Save the green checkpoint (path + build job) and set the milestone status. Status is normally "done",
+     * but a build that went green while a task failed to merge is saved with "failed" so the march does not
+     * advance onto a half-done milestone (the checkpoint is still a valid, runnable rollback point). */
+    public synchronized void markMilestoneCheckpoint(long id, String checkpointPath, long buildJobId, String status) {
         ContentValues values = new ContentValues();
-        values.put("status", "done");
+        values.put("status", status);
         values.put("checkpoint_path", checkpointPath == null ? "" : checkpointPath);
         values.put("build_job_id", buildJobId);
         values.put("updated_at", System.currentTimeMillis());
