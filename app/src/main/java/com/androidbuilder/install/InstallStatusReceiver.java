@@ -16,6 +16,7 @@ public class InstallStatusReceiver extends BroadcastReceiver {
         InstallStatusPolicy.Result result = InstallStatusPolicy.resultFor(status);
         if (result == InstallStatusPolicy.Result.SUCCESS) {
             Toast.makeText(context, R.string.install_success, Toast.LENGTH_LONG).show();
+            launchInstalledApp(context, intent.getStringExtra(ApkInstaller.EXTRA_EXPECTED_PACKAGE_NAME));
         } else if (result == InstallStatusPolicy.Result.PENDING_USER_ACTION) {
             Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
             if (confirm != null) {
@@ -24,6 +25,22 @@ public class InstallStatusReceiver extends BroadcastReceiver {
             }
         } else {
             Toast.makeText(context, context.getString(R.string.install_failed, message == null ? String.valueOf(status) : message), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Auto-open the freshly-installed generated app so the user sees it run without leaving this app. */
+    private static void launchInstalledApp(Context context, String packageName) {
+        if (packageName == null || packageName.trim().isEmpty()) {
+            return;
+        }
+        try {
+            Intent launch = context.getPackageManager().getLaunchIntentForPackage(packageName);
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(launch);
+            }
+        } catch (Exception ignored) {
+            // Best-effort: a launch failure just leaves the app installed (the success toast already showed).
         }
     }
 }
