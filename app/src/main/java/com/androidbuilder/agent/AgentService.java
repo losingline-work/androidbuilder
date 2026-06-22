@@ -877,8 +877,12 @@ public class AgentService {
                     : "Repairing current source from " + repairFromText + ".\n"));
             repository.updateBuildJob(job.id, "generating",
                     crashMode ? "repairing_launch_crash" : "repairing_build_failure", logs.getAbsolutePath(), null, null, 0);
-            repository.addMessage(projectId, "assistant", chinese ? "正在根据" + repairFromText + "修复当前源码。"
-                    : "Repairing the current source from " + repairFromText + ".", job.id);
+            // During a march the milestone card carries REPAIRING status + live log; keep the standalone
+            // "正在修复" bubble out of the timeline (the per-round repair chatter belongs in the card).
+            if (!MilestoneMarchRegistry.isActive(projectId)) {
+                repository.addMessage(projectId, "assistant", chinese ? "正在根据" + repairFromText + "修复当前源码。"
+                        : "Repairing the current source from " + repairFromText + ".", job.id);
+            }
             recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
                     job.id + ":repair",
                     "repair",
@@ -977,7 +981,11 @@ public class AgentService {
             } catch (Exception ignored) {
             }
             repository.updateBuildJob(job.id, "failed", "repair_failed", logs.getAbsolutePath(), null, message, job.retryCount);
-            repository.addMessage(projectId, "assistant", context.getString(com.androidbuilder.R.string.repair_build_failed, message), job.id);
+            // The reason is persisted on the job (above) → it surfaces in the milestone card's build error.
+            // In a march, skip the standalone failure bubble; the march/rollback handles the failed job.
+            if (!MilestoneMarchRegistry.isActive(projectId)) {
+                repository.addMessage(projectId, "assistant", context.getString(com.androidbuilder.R.string.repair_build_failed, message), job.id);
+            }
             throw error;
         }
     }
@@ -1025,9 +1033,12 @@ public class AgentService {
         FileUtils.deleteRecursively(agentsRoot);
         FileUtils.appendText(new File(jobDir, "build.log"),
                 (chinese ? "尝试并行修复分片：" : "Trying parallel repair shards: ") + repairShardTitles(shards) + "\n");
-        repository.addMessage(projectId, "assistant",
-                chinese ? "检测到多个独立构建错误，正在尝试并行修复。" : "Detected multiple independent build errors; trying parallel repair.",
-                job.id);
+        // March mode: the milestone card narrates repair; suppress the standalone parallel-repair bubble.
+        if (!MilestoneMarchRegistry.isActive(projectId)) {
+            repository.addMessage(projectId, "assistant",
+                    chinese ? "检测到多个独立构建错误，正在尝试并行修复。" : "Detected multiple independent build errors; trying parallel repair.",
+                    job.id);
+        }
         recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
                 job.id + ":repair-parallel",
                 "parallel_repair",
@@ -1071,7 +1082,11 @@ public class AgentService {
             String message = chinese
                     ? "并行修复中有冲突；已合并无冲突修复，未合并的剩余问题建议再用单 Agent 修复。"
                     : "Parallel repair had conflicts; merged non-conflicting fixes and left the remaining fixes unmerged. Use single Agent repair for the rest.";
-            repository.addMessage(projectId, "assistant", message, job.id);
+            // In a march this conflict note is per-round chatter (the card + log carry it); show it only for
+            // manual repair, where the user drives the next step.
+            if (!MilestoneMarchRegistry.isActive(projectId)) {
+                repository.addMessage(projectId, "assistant", message, job.id);
+            }
             return aggregateRepairOperations(partialMerge.mergedResults, message + "\n" + joinLines(plan.conflicts));
         }
 

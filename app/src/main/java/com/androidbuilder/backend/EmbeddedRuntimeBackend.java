@@ -68,7 +68,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 String error = context.getString(com.androidbuilder.R.string.embedded_runtime_toolchain_incomplete, runtime.missingTools()) + "\n";
                 FileUtils.appendText(log, error);
                 repository.updateBuildJob(job.id, "failed", "embedded_runtime_missing_tools", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                announceBuildOutcome(job, buildFailureMessage(error));
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -80,7 +80,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 String error = context.getString(com.androidbuilder.R.string.dependency_network_failed, "Google Maven / Maven Central");
                 FileUtils.appendText(log, error + "\n");
                 repository.updateBuildJob(job.id, "failed", "dependency_network_unavailable", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                announceBuildOutcome(job, buildFailureMessage(error));
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -96,7 +96,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                         new File(sourceWorkDir, "gradlew").getAbsolutePath()) + "\n";
                 FileUtils.appendText(log, error);
                 repository.updateBuildJob(job.id, "failed", "embedded_runtime_missing_tools", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                announceBuildOutcome(job, buildFailureMessage(error));
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -109,7 +109,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                         ? localized("Gradle 冒烟测试超时", "Gradle smoke test timed out")
                         : localized("Gradle 冒烟测试失败", "Gradle smoke test failed"), version);
                 repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "embedded_runtime_gradle_start_failed", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                announceBuildOutcome(job, buildFailureMessage(error));
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -132,7 +132,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                             : localized("依赖解析失败：声明的依赖无法从当前仓库解析", "dependency_resolution_failed: a declared dependency could not be resolved from the configured repositories"), resolve);
                     FileUtils.appendText(log, error + "\n");
                     repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "dependency_resolution_failed", log.getAbsolutePath(), null, error, job.retryCount);
-                    repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                    announceBuildOutcome(job, buildFailureMessage(error));
                     listener.onJobChanged(job.projectId, job.id);
                     return;
                 }
@@ -150,7 +150,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                         + tierDiagnostics;
                 FileUtils.appendText(log, error + "\n");
                 repository.updateBuildJob(job.id, "failed", "java_compile_failed", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                announceBuildOutcome(job, buildFailureMessage(error));
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -181,7 +181,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                         compile);
                 FileUtils.appendText(log, error + "\n");
                 repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "java_compile_failed", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                announceBuildOutcome(job, buildFailureMessage(error));
                 listener.onJobChanged(job.projectId, job.id);
                 return;
             }
@@ -204,7 +204,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                 FileUtils.copyRecursively(apk, artifact);
                 repository.addArtifact(job.projectId, job.id, "apk", artifact.getAbsolutePath());
                 repository.updateBuildJob(job.id, "success", "embedded_runtime_finished", log.getAbsolutePath(), artifact.getAbsolutePath(), null, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", context.getString(com.androidbuilder.R.string.build_summary_success), job.id);
+                announceBuildOutcome(job, context.getString(com.androidbuilder.R.string.build_summary_success));
             } else {
                 boolean timeout = build.exitCode == 124;
                 String error = summarizeFailure(timeout
@@ -215,7 +215,7 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
                         build);
                 FileUtils.appendText(log, error + "\n");
                 repository.updateBuildJob(job.id, "failed", timeout ? "embedded_runtime_timeout" : "embedded_runtime_finished", log.getAbsolutePath(), null, error, job.retryCount);
-                repository.addMessage(job.projectId, "assistant", buildFailureMessage(error), job.id);
+                announceBuildOutcome(job, buildFailureMessage(error));
             }
         } catch (Exception error) {
             String message = error.getMessage() == null ? error.toString() : error.getMessage();
@@ -224,9 +224,22 @@ public class EmbeddedRuntimeBackend implements BuildBackend {
             } catch (Exception ignored) {
             }
             repository.updateBuildJob(job.id, "failed", "embedded_runtime_error", log.getAbsolutePath(), null, message, job.retryCount);
-            repository.addMessage(job.projectId, "assistant", buildFailureMessage(message), job.id);
+            announceBuildOutcome(job, buildFailureMessage(message));
         }
         listener.onJobChanged(job.projectId, job.id);
+    }
+
+    /**
+     * Posts a build-outcome line ("构建完成：成功/失败") to the timeline — but stays SILENT during an
+     * auto-march, where the milestone card already carries the build status and the failure reason
+     * (job.errorSummary, which every caller persists via updateBuildJob before this). Mirrors the gating
+     * in {@link com.androidbuilder.server.LocalBuildServer} and the repair loop so a march shows ONE
+     * consolidated card per milestone instead of a standalone bubble per build attempt.
+     */
+    private void announceBuildOutcome(BuildJobRecord job, String message) {
+        if (!com.androidbuilder.agent.MilestoneMarchRegistry.isActive(job.projectId)) {
+            repository.addMessage(job.projectId, "assistant", message, job.id);
+        }
     }
 
     private String buildFailureMessage(String detail) {
