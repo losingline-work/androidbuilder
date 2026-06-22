@@ -721,7 +721,13 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private File exportLogCacheDir() {
-        return new File(getCacheDir(), "log-exports");
+        File dir = new File(getCacheDir(), "log-exports");
+        // Create it first — FileOutputStream/copyRecursively into a non-existent dir throws
+        // "No such file or directory", which surfaced as the export failure.
+        if (!dir.isDirectory()) {
+            dir.mkdirs();
+        }
+        return dir;
     }
 
     private void rebuildLogEntries() {

@@ -1362,21 +1362,18 @@ public class AgentService {
 
     private String mergeFailureSummary(HermesMergeCoordinator.MergeResult merge, Exception failedAgentError) {
         StringBuilder summary = new StringBuilder();
-        if (merge != null && merge.summary != null && !merge.summary.trim().isEmpty()) {
-            summary.append(merge.summary.trim());
-        }
+        // Lead with the concrete per-task reason — the card shows the FIRST line, so the generic
+        // "Merged 0 … failed 1" count must NOT be first or the user sees no reason.
         if (merge != null && merge.failedResults != null) {
             for (HermesMergeCoordinator.FailedResult failed : merge.failedResults) {
                 if (failed == null) {
                     continue;
                 }
-                // Never drop a failed result silently: if no reason was captured, at least name the task so
-                // the card has something concrete instead of a bare "Merged 0 … failed 1" count.
                 String reason = failed.reason;
                 if (reason == null || reason.isEmpty()) {
                     String title = failed.result != null && failed.result.task != null ? failed.result.task.title : "";
-                    reason = title.isEmpty() ? "task generation failed (no detail captured)"
-                            : "task \"" + title + "\" failed during generation (no detail captured)";
+                    reason = title.isEmpty() ? "任务生成失败（未捕获具体原因，可展开看构建日志或重试）"
+                            : "任务「" + title + "」生成失败（未捕获具体原因，可展开看构建日志或重试）";
                 }
                 if (summary.length() > 0) {
                     summary.append('\n');
@@ -1385,12 +1382,22 @@ public class AgentService {
             }
         }
         if (failedAgentError != null) {
+            String message = failedAgentError.getMessage() == null ? failedAgentError.toString() : failedAgentError.getMessage();
+            if (message != null && !message.trim().isEmpty() && summary.indexOf(message.trim()) < 0) {
+                if (summary.length() > 0) {
+                    summary.append('\n');
+                }
+                summary.append(message.trim());
+            }
+        }
+        // The generic count is context, not the headline — append it LAST.
+        if (merge != null && merge.summary != null && !merge.summary.trim().isEmpty()) {
             if (summary.length() > 0) {
                 summary.append('\n');
             }
-            summary.append(failedAgentError.getMessage() == null ? failedAgentError.toString() : failedAgentError.getMessage());
+            summary.append(merge.summary.trim());
         }
-        return summary.length() == 0 ? "Hermes merge failed." : summary.toString();
+        return summary.length() == 0 ? "Hermes 合并失败。" : summary.toString();
     }
 
     private boolean batchRequiresBuild(HermesParallelBatch batch) {
