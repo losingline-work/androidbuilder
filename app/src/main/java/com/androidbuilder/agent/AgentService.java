@@ -349,16 +349,18 @@ public class AgentService {
      * If the injected crash reporter captured a launch crash for this project's generated app, repair from
      * it (and clear the capture so it fires once). Returns false when nothing was captured.
      */
-    public boolean repairLatestCapturedCrashAsync(long projectId, Callback callback) {
+    /** Repairs from a captured launch crash and returns the crash text (so the UI can show it on a dedicated
+     * crash-repair card); returns null when nothing was captured. */
+    public String repairLatestCapturedCrashAsync(long projectId, Callback callback) {
         File sourceDir = repository.sourceDir(projectId);
         String appPackage = inferAppPackage(sourceDir);
         String crash = com.androidbuilder.crash.CrashReportStore.read(context, appPackage);
         if (crash == null || crash.trim().isEmpty()) {
-            return false;
+            return null;
         }
         com.androidbuilder.crash.CrashReportStore.clear(context, appPackage);
         repairCrashAsync(projectId, crash, callback);
-        return true;
+        return crash;
     }
 
     private static final java.util.regex.Pattern APP_NAMESPACE_PATTERN =
@@ -868,9 +870,15 @@ public class AgentService {
         File jobDir = repository.jobDir(projectId, job.id);
         File logs = new File(jobDir, "build.log");
         try {
-            FileUtils.writeText(logs, chinese ? "开始根据构建日志修复当前源码。\n" : "Repairing current source from build log.\n");
-            repository.updateBuildJob(job.id, "generating", "repairing_build_failure", logs.getAbsolutePath(), null, null, 0);
-            repository.addMessage(projectId, "assistant", chinese ? "正在根据构建日志修复当前源码。" : "Repairing the current source from the build log.", job.id);
+            String repairFromText = crashMode
+                    ? (chinese ? "闪退日志" : "the launch crash")
+                    : (chinese ? "构建日志" : "the build log");
+            FileUtils.writeText(logs, (chinese ? "开始根据" + repairFromText + "修复当前源码。\n"
+                    : "Repairing current source from " + repairFromText + ".\n"));
+            repository.updateBuildJob(job.id, "generating",
+                    crashMode ? "repairing_launch_crash" : "repairing_build_failure", logs.getAbsolutePath(), null, null, 0);
+            repository.addMessage(projectId, "assistant", chinese ? "正在根据" + repairFromText + "修复当前源码。"
+                    : "Repairing the current source from " + repairFromText + ".", job.id);
             recordHermesRunEvent(projectId, job.id, new HermesRunEvent(
                     job.id + ":repair",
                     "repair",

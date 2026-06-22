@@ -143,6 +143,9 @@ public class ProjectActivity extends BaseActivity {
     // its milestone; manual repair → the milestone owning the running build; else the next unfinished one).
     // Distinct from statusHostMilestoneId, which is gated on showStatus; this drives scrolling regardless.
     private long relevantMilestoneId;
+    // Post-install launch-crash capture + repair: shown on its own dedicated card, not folded into a milestone.
+    private boolean crashRepairActive;
+    private String crashRepairExcerpt = "";
     private long operationStartedAt;
     private long activeTaskStartedAt;
     private String statusSummary = "";
@@ -359,7 +362,7 @@ public class ProjectActivity extends BaseActivity {
         if (busy || agentService == null) {
             return;
         }
-        boolean started = agentService.repairLatestCapturedCrashAsync(projectId, new AgentService.Callback() {
+        String crash = agentService.repairLatestCapturedCrashAsync(projectId, new AgentService.Callback() {
             @Override
             public void onComplete(BuildJobRecord job) {
                 runOnUiThread(() -> {
@@ -378,11 +381,24 @@ public class ProjectActivity extends BaseActivity {
                 });
             }
         });
-        if (started) {
+        if (crash != null) {
+            // A launch crash was captured after install — show its capture + repair on a DEDICATED card,
+            // separate from the milestone/build cards.
+            crashRepairActive = true;
+            crashRepairExcerpt = CrashSummaryPolicy.excerpt(crash);
             setBusy(true);
             setOperationStatus(getString(R.string.repair_build_started));
             Toast.makeText(this, R.string.repair_build_started, Toast.LENGTH_SHORT).show();
             refresh();
+        }
+    }
+
+    /** The user started a fresh top-level operation, so the post-install crash-repair card is no longer the
+     * thing being worked on; clear it. */
+    private void clearCrashRepairCard() {
+        if (crashRepairActive) {
+            crashRepairActive = false;
+            crashRepairExcerpt = "";
         }
     }
 
@@ -923,6 +939,7 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void executePlan() {
+        clearCrashRepairCard();
         // Incremental flow: "execute" starts (or resumes) the milestone march. It is allowed whenever a plan
         // exists and a milestone is still pending — independent of plan.status, so it resumes after a paused
         // or partly-built run, not only from the initial "planned" state.
@@ -1324,6 +1341,7 @@ public class ProjectActivity extends BaseActivity {
     }
 
     private void buildLatest() {
+        clearCrashRepairCard();
         // A user-initiated build starts a fresh auto-repair budget.
         autoRepairRounds = 0;
         stalledRounds = 0;
@@ -2004,6 +2022,7 @@ public class ProjectActivity extends BaseActivity {
         private static final int TYPE_BUILD_LOG = 3;
         private static final int TYPE_PLAN_CARD = 4;
         private static final int TYPE_MILESTONE_CARD = 5;
+        private static final int TYPE_CRASH_REPAIR_CARD = 6;
         private ProjectTimelineSnapshot snapshot = ProjectTimelineSnapshot.empty();
         /** The milestone whose card currently hosts the operation-status hint + live build-log tail. */
         private long statusHostMilestoneId;
@@ -2058,7 +2077,8 @@ public class ProjectActivity extends BaseActivity {
                     taskItems,
                     latestJob,
                     cards,
-                    id -> repository == null ? null : repository.getBuildJob(id));
+                    id -> repository == null ? null : repository.getBuildJob(id),
+                    crashRepairActive);
         }
 
         /** Pick the milestone card that should host the live operation status, so it never spills into a
@@ -2137,7 +2157,7 @@ public class ProjectActivity extends BaseActivity {
 
         @Override
         public int getViewTypeCount() {
-            return 6;
+            return 7;
         }
 
         @Override
@@ -2160,6 +2180,9 @@ public class ProjectActivity extends BaseActivity {
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.MILESTONE_CARD) {
                 return TYPE_MILESTONE_CARD;
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.CRASH_REPAIR_CARD) {
+                return TYPE_CRASH_REPAIR_CARD;
             }
             return TYPE_MESSAGE;
         }
@@ -2184,6 +2207,9 @@ public class ProjectActivity extends BaseActivity {
             }
             if (entry.kind == ProjectTimelinePolicy.Kind.MILESTONE_CARD) {
                 return bindMilestoneCard(snapshot.milestoneCard(entry), convertView, parent);
+            }
+            if (entry.kind == ProjectTimelinePolicy.Kind.CRASH_REPAIR_CARD) {
+                return bindCrashRepairCard(convertView, parent);
             }
             return bindMessage(entry, convertView, parent);
         }
@@ -2250,6 +2276,62 @@ public class ProjectActivity extends BaseActivity {
             };
             toggle.setOnClickListener(toggleListener);
             view.setOnClickListener(toggleListener);
+            return view;
+        }
+
+        /** The dedicated post-install launch-crash capture + repair card (pinned at the top of the timeline,
+         * separate from the milestone/build cards). Reads live Activity state. */
+        private View bindCrashRepairCard(View convertView, ViewGroup parent) {
+            View view = convertView == null || convertView.findViewById(R.id.crashCardTitle) == null
+                    ? getLayoutInflater().inflate(R.layout.row_crash_repair_card, parent, false)
+                    : convertView;
+            boolean chinese = AppSettings.isChinese(ProjectActivity.this);
+            TextView title = view.findViewById(R.id.crashCardTitle);
+            TextView status = view.findViewById(R.id.crashCardStatus);
+            TextView detail = view.findViewById(R.id.crashCardDetail);
+            TextView log = view.findViewById(R.id.crashCardLog);
+            com.google.android.material.button.MaterialButton action = view.findViewById(R.id.crashCardAction);
+
+            title.setText(chinese ? "崩溃修复" : "Crash repair");
+            detail.setText(crashRepairExcerpt == null || crashRepairExcerpt.isEmpty()
+                    ? (chinese ? "安装后捕获到闪退，正在修复。" : "A launch crash was captured after install.")
+                    : crashRepairExcerpt);
+
+            boolean repairing = busy || isRunningJob(latestJob);
+            boolean failed = latestJob != null && "failed".equals(latestJob.status);
+            boolean apkReady = repository.latestBuildJobWithApk(projectId) != null;
+            status.setText(repairing ? (chinese ? "修复中…" : "Repairing…")
+                    : failed ? (chinese ? "修复失败" : "Repair failed")
+                    : (chinese ? "已修复" : "Repaired"));
+
+            String tail = repairing ? milestoneBuildLogTail(latestJob, 8) : "";
+            if (!tail.isEmpty()) {
+                log.setVisibility(View.VISIBLE);
+                log.setText(tail);
+            } else {
+                log.setVisibility(View.GONE);
+            }
+
+            String label = null;
+            Runnable run = null;
+            if (!repairing) {
+                if (failed) {
+                    label = chinese ? "重试" : "Retry";
+                    run = ProjectActivity.this::repairLatest;
+                } else if (apkReady) {
+                    label = chinese ? "安装" : "Install";
+                    run = ProjectActivity.this::installLatest;
+                }
+            }
+            if (label != null && run != null) {
+                final Runnable r = run;
+                action.setVisibility(View.VISIBLE);
+                action.setText(label);
+                action.setOnClickListener(v -> r.run());
+            } else {
+                action.setVisibility(View.GONE);
+                action.setOnClickListener(null);
+            }
             return view;
         }
 

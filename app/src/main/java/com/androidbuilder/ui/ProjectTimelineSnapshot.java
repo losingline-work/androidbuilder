@@ -46,6 +46,18 @@ final class ProjectTimelineSnapshot {
             BuildJobRecord latestJob,
             List<MilestoneCardModel> milestoneCards,
             BuildJobResolver resolver) {
+        return create(messages, showOperationStatus, plan, tasks, latestJob, milestoneCards, resolver, false);
+    }
+
+    static ProjectTimelineSnapshot create(
+            List<ChatMessage> messages,
+            boolean showOperationStatus,
+            ProjectPlanRecord plan,
+            List<ProjectTaskRecord> tasks,
+            BuildJobRecord latestJob,
+            List<MilestoneCardModel> milestoneCards,
+            BuildJobResolver resolver,
+            boolean crashRepairCard) {
         List<ChatMessage> safeMessages = messages == null ? new ArrayList<>() : new ArrayList<>(messages);
         Map<Long, BuildJobRecord> buildJobsById = resolveLinkedBuildJobs(safeMessages, resolver);
         List<Long> linkedBuildJobIds = new ArrayList<>();
@@ -69,7 +81,8 @@ final class ProjectTimelineSnapshot {
                 tasks,
                 latestJob,
                 ProjectBuildLogContentPolicy.hasFailureSummary(latestJob),
-                milestoneCards == null ? 0 : milestoneCards.size());
+                milestoneCards == null ? 0 : milestoneCards.size(),
+                crashRepairCard);
         return new ProjectTimelineSnapshot(safeMessages, entries, buildJobsById, latestJob, milestoneCards);
     }
 

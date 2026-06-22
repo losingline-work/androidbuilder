@@ -16,7 +16,8 @@ public final class ProjectTimelinePolicy {
         OPERATION_STATUS,
         TASK_GROUP,
         BUILD_LOG,
-        MILESTONE_CARD
+        MILESTONE_CARD,
+        CRASH_REPAIR_CARD
     }
 
     public static final class Entry {
@@ -42,7 +43,7 @@ public final class ProjectTimelinePolicy {
             List<ProjectTaskRecord> tasks,
             BuildJobRecord latestJob,
             boolean buildLogVisible) {
-        return entries(messageCount, linkedBuildJobIds, messageVisible, null, taskAnchorIndex, showOperationStatus, plan, tasks, latestJob, buildLogVisible, 0);
+        return entries(messageCount, linkedBuildJobIds, messageVisible, null, taskAnchorIndex, showOperationStatus, plan, tasks, latestJob, buildLogVisible, 0, false);
     }
 
     public static List<Entry> entries(
@@ -57,7 +58,7 @@ public final class ProjectTimelinePolicy {
             BuildJobRecord latestJob,
             boolean buildLogVisible) {
         return entries(messageCount, linkedBuildJobIds, messageVisible, messagePlanCards, taskAnchorIndex,
-                showOperationStatus, plan, tasks, latestJob, buildLogVisible, 0);
+                showOperationStatus, plan, tasks, latestJob, buildLogVisible, 0, false);
     }
 
     public static List<Entry> entries(
@@ -72,10 +73,32 @@ public final class ProjectTimelinePolicy {
             BuildJobRecord latestJob,
             boolean buildLogVisible,
             int milestoneCardCount) {
+        return entries(messageCount, linkedBuildJobIds, messageVisible, messagePlanCards, taskAnchorIndex,
+                showOperationStatus, plan, tasks, latestJob, buildLogVisible, milestoneCardCount, false);
+    }
+
+    public static List<Entry> entries(
+            int messageCount,
+            List<Long> linkedBuildJobIds,
+            List<Boolean> messageVisible,
+            List<Boolean> messagePlanCards,
+            int taskAnchorIndex,
+            boolean showOperationStatus,
+            ProjectPlanRecord plan,
+            List<ProjectTaskRecord> tasks,
+            BuildJobRecord latestJob,
+            boolean buildLogVisible,
+            int milestoneCardCount,
+            boolean crashRepairCard) {
         // Incremental flow: replace the per-milestone task-group + per-build log rows with one card per
         // milestone. Keep the real messages (plan, milestone list, terminal result) and the operation status.
         if (milestoneCardCount > 0) {
             List<Entry> entries = new ArrayList<>();
+            // The post-install launch-crash capture + repair gets its OWN card, pinned at the top (it is the
+            // most recent thing the user is acting on), separate from the milestone cards.
+            if (crashRepairCard) {
+                entries.add(new Entry(Kind.CRASH_REPAIR_CARD, -1));
+            }
             for (int i = 0; i < messageCount; i++) {
                 boolean visible = messageVisible == null || i >= messageVisible.size() || messageVisible.get(i);
                 if (visible) {
@@ -94,6 +117,9 @@ public final class ProjectTimelinePolicy {
             return entries;
         }
         List<Entry> entries = new ArrayList<>();
+        if (crashRepairCard) {
+            entries.add(new Entry(Kind.CRASH_REPAIR_CARD, -1));
+        }
         // The task group is a record too: it is inserted at the chronological position where the
         // plan was split into tasks (taskAnchorIndex = number of messages created before it),
         // not pinned at the top.
