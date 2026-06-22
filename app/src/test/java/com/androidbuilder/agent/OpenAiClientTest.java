@@ -625,48 +625,12 @@ public class OpenAiClientTest {
         }
         // The expected providers are present, in UI order.
         assertEquals(java.util.Arrays.asList(
-                OpenAiClient.PROVIDER_ZHIPU, OpenAiClient.PROVIDER_MOONSHOT, OpenAiClient.PROVIDER_KIMI_CODE,
+                OpenAiClient.PROVIDER_ZHIPU, OpenAiClient.PROVIDER_MOONSHOT,
                 OpenAiClient.PROVIDER_QWEN, OpenAiClient.PROVIDER_DOUBAO, OpenAiClient.PROVIDER_OPENROUTER,
                 OpenAiClient.PROVIDER_GROQ),
                 java.util.Arrays.asList(OpenAiClient.mainstreamCompatibleProviders()));
         assertEquals("https://openrouter.ai/api/v1/chat/completions",
                 OpenAiClient.defaultEndpoint(OpenAiClient.PROVIDER_OPENROUTER));
-    }
-
-    @Test
-    public void kimiCodeSendsADedicatedUserAgentOtherProvidersIdentifyAsTheApp() {
-        // kimi_code carries a coding-agent identity (Hermes when shipped, RooCode while testing); the exact
-        // value flips, so just assert it is non-empty and distinct from the plain app identity.
-        String kimi = OpenAiClient.userAgentForProvider(OpenAiClient.PROVIDER_KIMI_CODE);
-        assertFalse(kimi.isEmpty());
-        assertFalse(kimi.startsWith("AndroidBuilder/"));
-        assertTrue(OpenAiClient.userAgentForProvider(OpenAiClient.PROVIDER_MOONSHOT).startsWith("AndroidBuilder/"));
-        assertTrue(OpenAiClient.userAgentForProvider(OpenAiClient.PROVIDER_OPENAI).startsWith("AndroidBuilder/"));
-    }
-
-    @Test
-    public void kimiCode403ExplainsTheCodingAgentAllowlistInsteadOfBlamingTheModel() {
-        String raw = "{\"error\":{\"message\":\"Kimi For Coding is currently only available for Coding Agents "
-                + "such as Kimi CLI, Claude Code, Roo Code, Kilo Code, etc.\",\"type\":\"access_terminated_error\"}}";
-        String zh = OpenAiClient.httpErrorMessageForTest(OpenAiClient.PROVIDER_KIMI_CODE, 403, raw, true);
-        assertTrue(zh.contains("Moonshot Kimi"));
-        assertTrue(zh.contains("platform.moonshot.cn"));
-        String en = OpenAiClient.httpErrorMessageForTest(OpenAiClient.PROVIDER_KIMI_CODE, 403, raw, false);
-        assertTrue(en.contains("allowlist"));
-        assertTrue(en.contains("Open Platform"));
-    }
-
-    @Test
-    public void kimiCodeResolvesToTheCodingEndpointAndUnifiedModel() {
-        assertEquals("https://api.kimi.com/coding/v1/chat/completions",
-                OpenAiClient.defaultEndpoint(OpenAiClient.PROVIDER_KIMI_CODE));
-        assertEquals("kimi-for-coding", OpenAiClient.defaultModel(OpenAiClient.PROVIDER_KIMI_CODE));
-        // A hand-pasted bare base (…/coding/v1) gets the chat path appended.
-        assertEquals("https://api.kimi.com/coding/v1/chat/completions",
-                OpenAiClient.normalizedEndpoint(OpenAiClient.PROVIDER_KIMI_CODE, "https://api.kimi.com/coding/v1"));
-        // Forced-thinking model needs a larger output budget than the 8192 default, else the answer truncates.
-        assertEquals(32768, OpenAiClient.maxOutputTokensForProvider(OpenAiClient.PROVIDER_KIMI_CODE));
-        assertEquals(OpenAiClient.MAX_OUTPUT_TOKENS, OpenAiClient.maxOutputTokensForProvider(OpenAiClient.PROVIDER_MOONSHOT));
     }
 
     @Test
@@ -710,13 +674,8 @@ public class OpenAiClientTest {
                     Collections.emptyList(), "latest", 0.2, true);
             assertEquals(provider, OpenAiClient.defaultModel(provider), body.getString("model"));
             assertTrue(provider + " streams", body.getBoolean("stream"));
-            assertEquals(provider, OpenAiClient.maxOutputTokensForProvider(provider), body.getInt("max_tokens"));
-            if (OpenAiClient.PROVIDER_KIMI_CODE.equals(provider)) {
-                // kimi-for-coding rejects a non-default temperature ("only 1 is allowed for this model").
-                assertFalse(provider + " omits temperature", body.has("temperature"));
-            } else {
-                assertTrue(provider + " keeps temperature", body.has("temperature"));
-            }
+            assertEquals(provider, OpenAiClient.MAX_OUTPUT_TOKENS, body.getInt("max_tokens"));
+            assertTrue(provider + " keeps temperature", body.has("temperature"));
             assertFalse(provider + " has no reasoning_split", body.has("reasoning_split"));
             assertFalse(provider + " has no thinking key", body.has("thinking"));
         }

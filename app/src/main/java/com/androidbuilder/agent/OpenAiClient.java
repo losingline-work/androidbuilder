@@ -58,9 +58,6 @@ public class OpenAiClient {
     // Mainstream OpenAI-compatible providers (same /chat/completions wire format; only base URL + model differ).
     public static final String PROVIDER_ZHIPU = "zhipu";
     public static final String PROVIDER_MOONSHOT = "moonshot";
-    // Kimi Code (kimi.com/code) — the membership coding plan, distinct from the moonshot pay-as-you-go
-    // Open Platform. OpenAI-compatible endpoint, single unified model id "kimi-for-coding".
-    public static final String PROVIDER_KIMI_CODE = "kimi_code";
     public static final String PROVIDER_QWEN = "qwen";
     public static final String PROVIDER_DOUBAO = "doubao";
     public static final String PROVIDER_OPENROUTER = "openrouter";
@@ -119,11 +116,6 @@ public class OpenAiClient {
         SPECS.put(PROVIDER_MOONSHOT, new ProviderSpec(PROVIDER_MOONSHOT,
                 "https://api.moonshot.cn/v1/chat/completions", "kimi-k2.6",
                 new String[]{"kimi-k2.6", "kimi-k2.7-code", "kimi-k2-thinking", "kimi-k2-turbo-preview"}));
-        // Kimi Code: OpenAI-compatible base https://api.kimi.com/coding/v1 + unified model id "kimi-for-coding"
-        // (the Anthropic-compatible base is https://api.kimi.com/coding/v1/messages; we use the OpenAI path).
-        SPECS.put(PROVIDER_KIMI_CODE, new ProviderSpec(PROVIDER_KIMI_CODE,
-                "https://api.kimi.com/coding/v1/chat/completions", "kimi-for-coding",
-                new String[]{"kimi-for-coding"}));
         SPECS.put(PROVIDER_QWEN, new ProviderSpec(PROVIDER_QWEN,
                 "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "qwen-plus",
                 new String[]{"qwen-max", "qwen-plus", "qwen-turbo", "qwen3-coder-plus"}));
@@ -464,7 +456,7 @@ public class OpenAiClient {
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("stream", true);
-        body.put("max_tokens", maxOutputTokensForProvider(provider));
+        body.put("max_tokens", MAX_OUTPUT_TOKENS);
         if (!usesDefaultSamplingParameters(provider, model)) {
             body.put("temperature", temperature);
         }
@@ -493,25 +485,10 @@ public class OpenAiClient {
         return chatRequestBody(provider, model, systemPrompt, messages, latestUserMessage, temperature, thinkingEnabled);
     }
 
-    /**
-     * The HTTP client identity we send. Some gateways 429/refuse a missing User-Agent, so we always set it.
-     *
-     * For Kimi Code (kimi-for-coding is gated to an allowlist of coding agents by User-Agent):
-     * - TEMPORARY TESTING value: {@code RooCode/<ver>} — identifies as Roo Code to bring up / smoke-test the
-     *   integration. Roo Code is a DIFFERENT product, so this is impersonation, which Kimi's terms treat as a
-     *   violation that can suspend the membership. Do NOT ship this as default.
-     * - Honest value to revert to before shipping: {@code Hermes/<ver>} — this app's agent engine genuinely is
-     *   "Hermes" (its task-contract / scheduler / reviewer layer), which Kimi lists as a supported framework.
-     */
+    /** The HTTP client identity we send (some gateways 429/refuse a missing User-Agent, so always set it). */
     static String userAgentForProvider(String provider) {
-        if (PROVIDER_KIMI_CODE.equals(provider)) {
-            return KIMI_CODE_USER_AGENT;
-        }
         return "AndroidBuilder/" + com.androidbuilder.BuildConfig.VERSION_NAME;
     }
-
-    /** Flip to {@code "Hermes/" + BuildConfig.VERSION_NAME} (honest) before shipping — see userAgentForProvider. */
-    static final String KIMI_CODE_USER_AGENT = "RooCode/3.23.0";
 
     private String executeChatRequest(String endpoint, String apiKey, JSONObject body, int readTimeoutMs, String provider, boolean chinese, String callTag) throws Exception {
         return executeChatRequest(endpoint, apiKey, body, readTimeoutMs, provider, chinese, callTag, null);
@@ -805,23 +782,6 @@ public class OpenAiClient {
     }
 
     private static String httpErrorMessage(String provider, int code, String response, boolean chinese) {
-        if (PROVIDER_KIMI_CODE.equals(provider)
-                && (code == 403 || response.contains("access_terminated") || response.contains("Coding Agents"))) {
-            // Kimi Code (kimi-for-coding) is gated to an allowlist of approved coding agents by User-Agent;
-            // the model name is fine — this app simply isn't on the list, and spoofing the UA is a ToS
-            // violation. Point the user at the Open Platform key, which has no such gate.
-            if (chinese) {
-                return "Kimi Code 拒绝了请求（HTTP 403）。模型名没问题；Kimi Code 按白名单（User-Agent）放行编程 "
-                        + "Agent，当前客户端标识不被接受。可改用「Moonshot Kimi」provider + 开放平台 API Key"
-                        + "（platform.moonshot.cn，可选 kimi-k2.6 / kimi-k2.7-code），或向 Moonshot 申请把本应用加入白名单。原始响应: "
-                        + response;
-            }
-            return "Kimi Code rejected the request (HTTP 403). The model name is fine; Kimi Code gates by an "
-                    + "allowlist of coding agents (by User-Agent) and the current client identity is not accepted. "
-                    + "Use the 'Moonshot Kimi' provider with a Moonshot Open Platform API key "
-                    + "(platform.moonshot.cn; kimi-k2.6 / kimi-k2.7-code), or ask Moonshot to allowlist this app. "
-                    + "Raw response: " + response;
-        }
         if (PROVIDER_MINIMAX.equals(provider) && code == 401) {
             if (chinese) {
                 return "MiniMax API 认证失败（HTTP 401）。如果使用 Token Plan，请在 MiniMax 开放平台「接口密钥」里创建 Token Plan Key，通常以 sk-cp- 开头；不要粘贴网页登录态 token。Base URL 可在设置里切换：中国大陆/内网用 https://api.minimaxi.com/v1，国际/外网用 https://api.minimax.io/v1。模型可先选 MiniMax-M3 或 MiniMax-M2.7。原始响应: " + response;
@@ -1092,23 +1052,8 @@ public class OpenAiClient {
         return DEEPSEEK_MODEL_FLASH + " / " + DEEPSEEK_MODEL_PRO;
     }
 
-    /**
-     * Output-token budget per request. kimi-for-coding (Kimi Code, K2.7) has FORCED thinking, and the
-     * reasoning shares the max_tokens budget with the answer — at 8192 a long plan/milestone reasoning
-     * exhausts it and the answer is truncated or empty. Its documented output cap is 32768, so give it room.
-     */
-    static int maxOutputTokensForProvider(String provider) {
-        if (PROVIDER_KIMI_CODE.equals(provider)) {
-            return 32768;
-        }
-        return MAX_OUTPUT_TOKENS;
-    }
-
     private static boolean usesDefaultSamplingParameters(String provider, String model) {
-        // Kimi Code's kimi-for-coding rejects any non-default temperature ("only 1 is allowed for this
-        // model"), so omit temperature and let it use its default — same as OpenAI reasoning models.
-        return PROVIDER_KIMI_CODE.equals(provider)
-                || (PROVIDER_OPENAI.equals(provider) && isOpenAiReasoningModel(model));
+        return PROVIDER_OPENAI.equals(provider) && isOpenAiReasoningModel(model);
     }
 
     private static boolean isOpenAiReasoningModel(String model) {

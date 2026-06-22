@@ -61,7 +61,6 @@
     <string name="provider_minimax">MiniMax</string>
     <string name="provider_zhipu">Zhipu GLM</string>
     <string name="provider_moonshot">Moonshot Kimi</string>
-    <string name="provider_kimi_code">Kimi Code</string>
     <string name="provider_qwen">Tongyi Qwen</string>
     <string name="provider_doubao">Doubao</string>
     <string name="provider_openrouter">OpenRouter</string>
