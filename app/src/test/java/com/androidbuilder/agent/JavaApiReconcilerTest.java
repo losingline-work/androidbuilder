@@ -31,6 +31,57 @@ public class JavaApiReconcilerTest {
     }
 
     @Test
+    public void rewritesBareAccessorToTheDeclaredGetter() throws Exception {
+        // The model called category.isSystem() but Category declares getIsSystem() (field isSystem).
+        File root = temporaryFolder.newFolder("src");
+        write(root, "app/src/main/java/com/example/model/Category.java",
+                "package com.example.model;\npublic class Category { private int isSystem;\n"
+                        + " public int getIsSystem() { return isSystem; } }");
+        File caller = write(root, "app/src/main/java/com/example/db/CategoryDao.java",
+                "package com.example.db;\nimport com.example.model.Category;\n"
+                        + "class CategoryDao { int f(Category category) { return category.isSystem(); } }");
+
+        JavaApiReconciler.reconcile(root);
+
+        String fixed = FileUtils.readText(caller);
+        assertTrue(fixed.contains("category.getIsSystem()"));
+        assertFalse(fixed.contains("category.isSystem()"));
+    }
+
+    @Test
+    public void rewritesBareSetterCallToTheDeclaredSetter() throws Exception {
+        File root = temporaryFolder.newFolder("src");
+        write(root, "app/src/main/java/com/example/model/Account.java",
+                "package com.example.model;\npublic class Account { private String name;\n"
+                        + " public void setName(String n) { this.name = n; } }");
+        File caller = write(root, "app/src/main/java/com/example/AccountUseCase.java",
+                "package com.example;\nimport com.example.model.Account;\n"
+                        + "class AccountUseCase { void f(Account account) { account.name(\"x\"); } }");
+
+        JavaApiReconciler.reconcile(root);
+
+        assertTrue(FileUtils.readText(caller).contains("account.setName(\"x\")"));
+    }
+
+    @Test
+    public void leavesABareAccessorAloneWhenTheNameExistsSomewhere() throws Exception {
+        // isSystem() IS declared on some class, so the call could be legitimate — never rewrite it.
+        File root = temporaryFolder.newFolder("src");
+        write(root, "app/src/main/java/com/example/model/Flag.java",
+                "package com.example.model;\npublic class Flag { public boolean isSystem() { return true; } }");
+        write(root, "app/src/main/java/com/example/model/Category.java",
+                "package com.example.model;\npublic class Category { public int getIsSystem() { return 0; } }");
+        File caller = write(root, "app/src/main/java/com/example/db/CategoryDao.java",
+                "package com.example.db;\nimport com.example.model.Category;\n"
+                        + "class CategoryDao { int f(Category category) { return category.isSystem() == 1 ? 1 : 0; } }");
+
+        JavaApiReconciler.reconcile(root);
+
+        // isSystem exists (on Flag), so the conservative reconciler leaves the call for the guard.
+        assertTrue(FileUtils.readText(caller).contains("category.isSystem()"));
+    }
+
+    @Test
     public void doesNotRewriteDenyListedTruncationSymptom() throws Exception {
         // getWritableDb absent (truncated DbHelper) must be LEFT for the guard, not silently
         // reconciled to the inherited getWritableDatabase.

@@ -14,11 +14,18 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Deterministic backstop for single-character method-name typos across the generated Java tree:
- * when a caller invokes receiver.foo() where "foo" is declared on NO class anywhere (so it is
- * definitely wrong) and the receiver's class declares exactly ONE arity-compatible method within
- * edit distance 1 of "foo", the call is rewritten to that method. AndroidSourceGuard re-validates
- * afterwards, so a rewrite that produces any detectable inconsistency is still rejected.
+ * Deterministic backstop for cross-file method-name mismatches across the generated Java tree, where the
+ * caller invokes receiver.foo() but "foo" is declared on NO class anywhere (so it is definitely wrong) and
+ * the receiver's class declares exactly ONE matching method. Two mismatch families are reconciled:
+ * <ul>
+ *   <li><b>accessor-prefix</b> — the model guessed a bare/boolean-style accessor for a field whose real
+ *       getter/setter is prefixed: {@code category.isSystem()} when the class declares {@code getIsSystem()}
+ *       (field {@code isSystem}), or {@code o.title(v)} when {@code setTitle(v)} is declared. The single most
+ *       common cross-file drift in generated DTO/DAO code.</li>
+ *   <li><b>single-character typo</b> — exactly one arity-compatible method within edit distance 1.</li>
+ * </ul>
+ * AndroidSourceGuard re-validates afterwards, so a rewrite that produces any detectable inconsistency is
+ * still rejected.
  *
  * Intentionally conservative: it never touches a name that exists somewhere (could be a real call),
  * never rewrites fields, and deny-lists getWritableDb/getReadableDb so a truncated DbHelper is left
@@ -27,7 +34,9 @@ import java.util.regex.Pattern;
 final class JavaApiReconciler {
     private static final Pattern CLASS_DECL = Pattern.compile("\\bclass\\s+([A-Z][A-Za-z0-9_]*)");
     private static final Pattern METHOD_DECL = Pattern.compile("\\b(?:public|protected|private)?\\s*(?:static\\s+)?(?:final\\s+)?[A-Za-z_][A-Za-z0-9_$.<>?\\[\\]]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(([^)]*)\\)\\s*[\\{;]");
-    private static final Pattern LOCAL_VAR = Pattern.compile("\\b([A-Z][A-Za-z0-9_]*)\\s+([a-z_][A-Za-z0-9_]*)\\s*[=;]");
+    // Type→variable bindings: locals/fields (`Type x =` / `Type x;`) AND method parameters / for-each / catch
+    // (`Type x,` / `Type x)`) — DAOs call into a model passed as a parameter, so params must resolve too.
+    private static final Pattern LOCAL_VAR = Pattern.compile("\\b([A-Z][A-Za-z0-9_]*)\\s+([a-z_][A-Za-z0-9_]*)\\s*[=;,)]");
     private static final Pattern CALL = Pattern.compile("\\b([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
     private static final Set<String> DENY = new HashSet<>(java.util.Arrays.asList("getWritableDb", "getReadableDb"));
 
@@ -105,6 +114,12 @@ final class JavaApiReconciler {
             return null;
         }
         int arity = callArity(content, callEnd);
+        // Accessor-prefix mismatch first (e.g. isSystem() -> getIsSystem()); it is the most common drift and
+        // unambiguous, so it takes precedence over the edit-distance heuristic.
+        String accessor = accessorCandidate(method, arity, methods);
+        if (accessor != null) {
+            return accessor;
+        }
         String match = null;
         for (Map.Entry<String, Set<Integer>> declared : methods.entrySet()) {
             if (editDistanceWithin1(method, declared.getKey()) && declared.getValue().contains(arity)) {
@@ -112,6 +127,34 @@ final class JavaApiReconciler {
                     return null; // ambiguous: more than one near-miss candidate
                 }
                 match = declared.getKey();
+            }
+        }
+        return match;
+    }
+
+    /** The receiver's declared accessor for the field the caller named bare: a 0-arg {@code X()} maps to
+     * {@code getX()}/{@code isX()}, a 1-arg {@code X(v)} maps to {@code setX(v)}. Returns the single declared
+     * variant with a matching arity, or null when none or more than one match (kept unambiguous). */
+    private static String accessorCandidate(String method, int arity, Map<String, Set<Integer>> methods) {
+        if (method.isEmpty()) {
+            return null;
+        }
+        String cap = Character.toUpperCase(method.charAt(0)) + method.substring(1);
+        List<String> variants = new ArrayList<>();
+        if (arity == 0) {
+            variants.add("get" + cap);
+            variants.add("is" + cap);
+        } else if (arity == 1) {
+            variants.add("set" + cap);
+        }
+        String match = null;
+        for (String variant : variants) {
+            Set<Integer> arities = methods.get(variant);
+            if (arities != null && arities.contains(arity)) {
+                if (match != null) {
+                    return null; // ambiguous (e.g. both getX and isX declared)
+                }
+                match = variant;
             }
         }
         return match;
