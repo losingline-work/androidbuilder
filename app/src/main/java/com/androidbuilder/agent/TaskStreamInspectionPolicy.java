@@ -25,7 +25,7 @@ final class TaskStreamInspectionPolicy implements OpenAiClient.StreamInspector {
         if (StreamFusePolicy.exceeds(latestAnswer.length())) {
             throw new OpenAiClient.StreamAbortException(StreamFusePolicy.fuseError(latestAnswer.length()));
         }
-        List<FileOperation> operations = TaskOperationsParser.completedOperations(latestAnswer);
+        List<FileOperation> operations = TaskOperationsCodec.completedOperations(latestAnswer);
         if (!shouldReview(operations.size())) {
             return;
         }
@@ -41,7 +41,7 @@ final class TaskStreamInspectionPolicy implements OpenAiClient.StreamInspector {
         // Drafts may only hold materialized full operations: a salvaged edit has no base draft
         // to apply to, and a later correction merge rejects edits found in the previous draft.
         List<FileOperation> salvaged = new ArrayList<>();
-        for (FileOperation operation : TaskOperationsParser.completedOperations(latestAnswer)) {
+        for (FileOperation operation : TaskOperationsCodec.completedOperations(latestAnswer)) {
             if (!"edit".equals(operation.action)) {
                 salvaged.add(operation);
             }

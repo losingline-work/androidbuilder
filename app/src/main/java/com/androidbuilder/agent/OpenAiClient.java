@@ -95,12 +95,20 @@ public class OpenAiClient {
         final String defaultEndpoint;
         final String defaultModel;
         final String[] models;
+        /** Max output tokens for this provider's DIRECT endpoint, or 0 to use the shared default. Only set
+         * from a verified provider doc — an over-cap value 400s every call for that provider. */
+        final int maxOutputTokens;
 
         ProviderSpec(String id, String defaultEndpoint, String defaultModel, String[] models) {
+            this(id, defaultEndpoint, defaultModel, models, 0);
+        }
+
+        ProviderSpec(String id, String defaultEndpoint, String defaultModel, String[] models, int maxOutputTokens) {
             this.id = id;
             this.defaultEndpoint = defaultEndpoint;
             this.defaultModel = defaultModel;
             this.models = models;
+            this.maxOutputTokens = maxOutputTokens;
         }
     }
 
@@ -110,9 +118,12 @@ public class OpenAiClient {
     private static final java.util.LinkedHashMap<String, ProviderSpec> SPECS = new java.util.LinkedHashMap<>();
 
     static {
+        // GLM-4.6 documents a 128K max output on the BigModel direct endpoint (docs.z.ai). 16384 is a
+        // conservative 2x bump — far under the real cap so it survives family/model variation — that halves
+        // mid-array truncation on big task-operation replies without risking a 400.
         SPECS.put(PROVIDER_ZHIPU, new ProviderSpec(PROVIDER_ZHIPU,
                 "https://open.bigmodel.cn/api/paas/v4/chat/completions", "glm-4.6",
-                new String[]{"glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4-flash"}));
+                new String[]{"glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4-flash"}, 16384));
         SPECS.put(PROVIDER_MOONSHOT, new ProviderSpec(PROVIDER_MOONSHOT,
                 "https://api.moonshot.cn/v1/chat/completions", "kimi-k2.6",
                 new String[]{"kimi-k2.6", "kimi-k2.7-code", "kimi-k2-thinking", "kimi-k2-turbo-preview"}));
@@ -452,11 +463,30 @@ public class OpenAiClient {
     // limit, and also bounds runaway repetition.
     static final int MAX_OUTPUT_TOKENS = 8192;
 
+    /**
+     * The output-token cap to request for an OpenAI-compatible provider: a verified per-provider value when
+     * its direct endpoint documents a higher cap (reduces mid-array truncation on big task replies), else the
+     * shared {@link #MAX_OUTPUT_TOKENS} default. Never returns an unverified high value — an over-cap request
+     * 400s every call for that provider, so a missing entry safely stays at 8192.
+     */
+    static int maxOutputTokensFor(String provider, String model) {
+        ProviderSpec spec = specFor(provider);
+        if (spec != null && spec.maxOutputTokens > 0) {
+            return spec.maxOutputTokens;
+        }
+        if (PROVIDER_MINIMAX.equals(provider)) {
+            // MiniMax M-series document a 131072 native max output (platform.minimax.io); 16384 is a safe,
+            // conservative bump on the direct endpoint.
+            return 16384;
+        }
+        return MAX_OUTPUT_TOKENS;
+    }
+
     private static JSONObject chatRequestBody(String provider, String model, String systemPrompt, List<ChatMessage> messages, String latestUserMessage, double temperature, boolean thinkingEnabled) throws Exception {
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("stream", true);
-        body.put("max_tokens", MAX_OUTPUT_TOKENS);
+        body.put("max_tokens", maxOutputTokensFor(provider, model));
         if (!usesDefaultSamplingParameters(provider, model)) {
             body.put("temperature", temperature);
         }
@@ -694,9 +724,24 @@ public class OpenAiClient {
         return readChatContent(reader, listener, callTag, null);
     }
 
+    // The OpenAI-compatible stream carries the truncation signal (finish_reason=="length") on the final
+    // chunk; it is otherwise discarded. Stash it per-thread so the caller building the AI-conversation
+    // metadata (same thread, immediately after the call) can attach it. Thread-local is correct here: each
+    // generation call runs start-to-finish on one thread, even across the parallel Hermes workers that share
+    // this client. Native Anthropic/Gemini readers do not set it (those are the strong-model paths).
+    private static final ThreadLocal<String> LAST_FINISH_REASON = new ThreadLocal<>();
+
+    /** The finish_reason from the most recent OpenAI-compatible read on THIS thread, then clears it. */
+    String consumeLastFinishReason() {
+        String reason = LAST_FINISH_REASON.get();
+        LAST_FINISH_REASON.remove();
+        return reason == null ? "" : reason;
+    }
+
     static String readChatContent(BufferedReader reader, ProgressListener listener, String callTag, StreamInspector streamInspector) throws Exception {
         StringBuilder answer = new StringBuilder();
         StringBuilder raw = new StringBuilder();
+        String finishReason = "";
         boolean sawStreamEvent = false;
         int reasoningChars = 0;
         int lastEmitted = -1;
@@ -720,6 +765,12 @@ public class OpenAiClient {
                     JSONArray choices = chunk.optJSONArray("choices");
                     if (choices != null && choices.length() > 0) {
                         JSONObject choice = choices.getJSONObject(0);
+                        if (!choice.isNull("finish_reason")) {
+                            String reason = choice.optString("finish_reason", "");
+                            if (!reason.isEmpty()) {
+                                finishReason = reason;
+                            }
+                        }
                         JSONObject delta = choice.optJSONObject("delta");
                         if (delta == null) {
                             delta = choice.optJSONObject("message");
@@ -758,8 +809,13 @@ public class OpenAiClient {
         }
         if (!sawStreamEvent) {
             // Server ignored stream:true and returned a single JSON object.
-            return extractChatContent(new JSONObject(raw.toString()));
+            JSONObject whole = new JSONObject(raw.toString());
+            LAST_FINISH_REASON.set(finishReasonOf(whole));
+            return extractChatContent(whole);
         }
+        // Overwrite (not append) each read so a stale value can never leak to the next call on this thread;
+        // "" clears it when the provider omitted finish_reason.
+        LAST_FINISH_REASON.set(finishReason);
         if (listener != null) {
             listener.onProgress(cleanCallTag(callTag), answer.length(), reasoningChars);
         }
@@ -767,6 +823,22 @@ public class OpenAiClient {
             streamInspector.onContent(answer.toString());
         }
         return answer.toString();
+    }
+
+    /** finish_reason from a non-streamed single response object ({@code choices[0].finish_reason}), or "". */
+    private static String finishReasonOf(JSONObject whole) {
+        try {
+            JSONArray choices = whole.optJSONArray("choices");
+            if (choices != null && choices.length() > 0) {
+                JSONObject choice = choices.getJSONObject(0);
+                if (!choice.isNull("finish_reason")) {
+                    return choice.optString("finish_reason", "");
+                }
+            }
+        } catch (Exception ignored) {
+            // Best-effort telemetry only.
+        }
+        return "";
     }
 
     private static String cleanCallTag(String callTag) {
@@ -1320,7 +1392,12 @@ public class OpenAiClient {
                 + "\n\nCurrent source tree:\n" + sourceSnapshot
                 + "\n\nExecute exactly this task:\nTitle: " + taskTitle
                 + "\nInstruction: " + cleanInstruction
-                + contractSection;
+                + contractSection
+                // Recency restatement: weaker models drift after a long snapshot/plan; the LAST thing they
+                // read should re-pin the deliverable and the output shape (dropped files are the failure
+                // carry-forward exists to mop up).
+                + "\n\nFINAL REMINDER: reply with ONLY the file-operations payload for this task (Title: "
+                + taskTitle + "). Every named deliverable file in the instruction MUST appear as a write or edit operation.";
     }
 
     private static String taskOperationsBatchUserPrompt(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, List<TaskManifest.Entry> batchFiles, String completedFilesContext) {
@@ -1336,7 +1413,26 @@ public class OpenAiClient {
                 + "and field/constant names shown; do not re-guess or rename them. If you need a method or field "
                 + "that does not exist on a frozen class, you must conform to what exists, not invent a new member:\n"
                 + completed
-                + "\n\nDo not include any unrequested file. Return only summary and operations JSON for this batch.";
+                + "\n\nDo not include any unrequested file. Return only summary and operations JSON for this batch."
+                // Recency restatement: the frozen-API context above can run to ~20K chars; repeat the exact
+                // target paths as the LAST thing the model reads so a weak model does not silently drop one.
+                + "\n\nFINAL REMINDER — produce one complete file operation for EACH of these exact paths, all in this single reply:\n"
+                + batchFilePaths(batchFiles);
+    }
+
+    /** Compact path-only list for the batch recency reminder (no action/intent — just the deliverables). */
+    private static String batchFilePaths(List<TaskManifest.Entry> files) {
+        if (files == null || files.isEmpty()) {
+            return "(empty)";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (TaskManifest.Entry file : files) {
+            if (file == null || file.path == null || file.path.trim().isEmpty()) {
+                continue;
+            }
+            builder.append("- ").append(file.path.trim()).append('\n');
+        }
+        return builder.toString().trim();
     }
 
     private static String batchFileList(List<TaskManifest.Entry> files) {

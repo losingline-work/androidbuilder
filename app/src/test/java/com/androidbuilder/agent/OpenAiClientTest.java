@@ -674,7 +674,8 @@ public class OpenAiClientTest {
                     Collections.emptyList(), "latest", 0.2, true);
             assertEquals(provider, OpenAiClient.defaultModel(provider), body.getString("model"));
             assertTrue(provider + " streams", body.getBoolean("stream"));
-            assertEquals(provider, OpenAiClient.MAX_OUTPUT_TOKENS, body.getInt("max_tokens"));
+            assertEquals(provider, OpenAiClient.maxOutputTokensFor(provider, OpenAiClient.defaultModel(provider)),
+                    body.getInt("max_tokens"));
             assertTrue(provider + " keeps temperature", body.has("temperature"));
             assertFalse(provider + " has no reasoning_split", body.has("reasoning_split"));
             assertFalse(provider + " has no thinking key", body.has("thinking"));
@@ -706,6 +707,28 @@ public class OpenAiClientTest {
         assertEquals(6, deepseek.length()); // + temperature + thinking
         assertEquals("disabled", deepseek.getJSONObject("thinking").getString("type"));
         assertFalse(deepseek.has("reasoning_split"));
+    }
+
+    @Test
+    public void maxOutputTokensRaisedOnlyForVerifiedProviders() throws Exception {
+        // Verified direct-endpoint output caps: zhipu GLM (128K) and MiniMax (131K) get a conservative 16K.
+        assertEquals(16384, OpenAiClient.maxOutputTokensFor(OpenAiClient.PROVIDER_ZHIPU, "glm-4.6"));
+        assertEquals(16384, OpenAiClient.maxOutputTokensFor(OpenAiClient.PROVIDER_MINIMAX, "MiniMax-M3"));
+        // Unverified providers stay at the safe shared default (an over-cap value would 400 every call).
+        assertEquals(OpenAiClient.MAX_OUTPUT_TOKENS,
+                OpenAiClient.maxOutputTokensFor(OpenAiClient.PROVIDER_DEEPSEEK, "deepseek-v4-flash"));
+        assertEquals(OpenAiClient.MAX_OUTPUT_TOKENS,
+                OpenAiClient.maxOutputTokensFor(OpenAiClient.PROVIDER_OPENAI, "gpt-5.5"));
+        assertEquals(OpenAiClient.MAX_OUTPUT_TOKENS,
+                OpenAiClient.maxOutputTokensFor(OpenAiClient.PROVIDER_MOONSHOT, "kimi-k2.6"));
+
+        // The verified value flows into the request body.
+        JSONObject zhipu = OpenAiClient.chatRequestBodyForTest(OpenAiClient.PROVIDER_ZHIPU, "glm-4.6", "sys",
+                Collections.emptyList(), "u", 0.2, true);
+        assertEquals(16384, zhipu.getInt("max_tokens"));
+        JSONObject deepseek = OpenAiClient.chatRequestBodyForTest(OpenAiClient.PROVIDER_DEEPSEEK, "deepseek-v4-flash",
+                "sys", Collections.emptyList(), "u", 0.2, true);
+        assertEquals(OpenAiClient.MAX_OUTPUT_TOKENS, deepseek.getInt("max_tokens"));
     }
 
     @Test

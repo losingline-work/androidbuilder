@@ -36,6 +36,69 @@ public final class TaskOperationsParser {
         }
     }
 
+    /**
+     * The same parse as {@link #fromJson} but reporting WHICH path produced the result (clean strict parse,
+     * lenient quoted-object recovery, truncation salvage, or hard failure) so the caller can record the
+     * outcome. Never throws — a failure is returned as {@link TaskOperationsCodec.ParseResult#failed} carrying
+     * the {@link IllegalArgumentException} {@link #fromJson} would have thrown. Additive: {@link #fromJson}
+     * is left byte-for-byte unchanged.
+     */
+    static TaskOperationsCodec.ParseResult fromJsonClassified(String raw) {
+        String jsonText;
+        try {
+            jsonText = extractJson(raw);
+        } catch (Exception extractError) {
+            return classifiedFailure(extractError);
+        }
+        JSONObject json = null;
+        try {
+            json = new JSONObject(jsonText);
+        } catch (Exception ignored) {
+            // Not strict JSON — fall through to the lenient/salvage paths below.
+        }
+        if (json != null) {
+            try {
+                return TaskOperationsCodec.ParseResult.of(fromJsonObject(json), TaskOperationsCodec.OUTCOME_JSON_OK);
+            } catch (Exception strictError) {
+                // Strict JSON but empty/invalid operations: try to salvage before declaring failure.
+                TaskOperationsCodec.ParseResult lenient = lenientClassified(jsonText);
+                return lenient != null ? lenient : classifiedFailure(strictError);
+            }
+        }
+        TaskOperationsCodec.ParseResult lenient = lenientClassified(jsonText);
+        return lenient != null ? lenient : classifiedFailure(new IllegalArgumentException("Task operation response JSON could not be parsed."));
+    }
+
+    /** Lenient recovery classified by which salvage fired, or null when nothing could be recovered. */
+    private static TaskOperationsCodec.ParseResult lenientClassified(String jsonText) {
+        if (QUOTED_OPERATION_OBJECT_PATTERN.matcher(jsonText).find()) {
+            try {
+                List<JSONObject> operationObjects = operationObjectsFromMalformedArray(jsonText);
+                List<FileOperation> operations = new ArrayList<>();
+                for (JSONObject operationObject : operationObjects) {
+                    operations.add(operationFromJson(operationObject));
+                }
+                if (!operations.isEmpty()) {
+                    return TaskOperationsCodec.ParseResult.of(
+                            new TaskOperations(summaryFromText(jsonText), operations), TaskOperationsCodec.OUTCOME_JSON_LENIENT);
+                }
+            } catch (Exception ignored) {
+                // Fall through to truncation salvage.
+            }
+        }
+        List<FileOperation> salvaged = completedOperations(jsonText);
+        if (!salvaged.isEmpty()) {
+            return TaskOperationsCodec.ParseResult.of(
+                    new TaskOperations(summaryFromText(jsonText), salvaged), TaskOperationsCodec.OUTCOME_JSON_SALVAGED);
+        }
+        return null;
+    }
+
+    private static TaskOperationsCodec.ParseResult classifiedFailure(Exception error) {
+        return TaskOperationsCodec.ParseResult.failed(
+                error instanceof IllegalArgumentException ? (IllegalArgumentException) error : parseException(error));
+    }
+
     public static List<FileOperation> completedOperations(String partialRaw) {
         List<FileOperation> operations = new ArrayList<>();
         String text = partialRaw == null ? "" : partialRaw;

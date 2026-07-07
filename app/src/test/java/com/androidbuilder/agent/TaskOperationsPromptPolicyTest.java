@@ -1,5 +1,7 @@
 package com.androidbuilder.agent;
 
+import com.androidbuilder.model.TaskManifest;
+
 import org.junit.Test;
 
 import static org.junit.Assert.assertTrue;
@@ -57,6 +59,35 @@ public class TaskOperationsPromptPolicyTest {
         assertTrue(projectPrompt.contains("CoordinatorLayout"));
         assertTrue(taskPrompt.contains("appbar_scrolling_view_behavior"));
         assertTrue(taskPrompt.contains("LinearLayout"));
+    }
+
+    @Test
+    public void singleShotUserPromptEndsWithDeliverableReminder() {
+        String prompt = OpenAiClient.taskOperationsUserPromptForTest(
+                "plan", "Add HomeFragment", "Create app/src/main/java/com/x/HomeFragment.java",
+                "current tree here", "", "");
+        int instructionIdx = prompt.indexOf("Add HomeFragment");
+        int reminderIdx = prompt.indexOf("FINAL REMINDER");
+        // The reminder must exist and be the LAST thing the model reads (recency bias).
+        assertTrue(reminderIdx > instructionIdx);
+        assertTrue(prompt.contains("Every named deliverable file"));
+        assertTrue(prompt.trim().endsWith("write or edit operation."));
+    }
+
+    @Test
+    public void batchUserPromptRepeatsPathsAfterFrozenApiContext() {
+        java.util.List<TaskManifest.Entry> batch = java.util.Arrays.asList(
+                new TaskManifest.Entry("app/src/main/res/layout/activity_main.xml", "write", "home screen"),
+                new TaskManifest.Entry("app/src/main/res/values/strings.xml", "write", "labels"));
+        String prompt = OpenAiClient.taskOperationsBatchUserPromptForTest(
+                "plan", "UI", "build the UI", "tree", "", "",
+                batch, "FROZEN: SomeClass.someMethod()");
+        int frozenIdx = prompt.indexOf("FROZEN: SomeClass.someMethod()");
+        int reminderIdx = prompt.indexOf("FINAL REMINDER — produce one complete file operation");
+        int pathIdx = prompt.lastIndexOf("app/src/main/res/layout/activity_main.xml");
+        // The path list is repeated as the last thing, AFTER the (potentially huge) frozen-API context.
+        assertTrue(reminderIdx > frozenIdx);
+        assertTrue(pathIdx > frozenIdx);
     }
 
     @Test

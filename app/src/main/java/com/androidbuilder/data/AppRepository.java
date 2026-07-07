@@ -149,6 +149,22 @@ public class AppRepository {
     }
 
     /**
+     * Overwrites the {@code status} of an already-recorded AI conversation. Used to stamp a task-operations
+     * row with its parse OUTCOME (json_ok / json_salvaged / parse_failed) once the reply has been parsed —
+     * the transport-level "success" recorded at call time cannot know whether the body was usable. No-op on a
+     * non-positive id (the record write failed / was skipped).
+     */
+    public synchronized void updateAiConversationStatus(long id, String status) {
+        if (id <= 0) {
+            return;
+        }
+        ContentValues values = new ContentValues();
+        values.put("status", status == null ? "" : status);
+        helper.getWritableDatabase().update(
+                DatabaseHelper.TABLE_AI_CONVERSATIONS, values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    /**
      * Lightweight AI-conversation rows for the log LIST: request/response text is truncated at the SQL
      * level to {@code previewChars} so a project with hundreds of multi-megabyte records can be listed
      * without loading every full body into memory (which OOM-crashed the log screen on large projects).

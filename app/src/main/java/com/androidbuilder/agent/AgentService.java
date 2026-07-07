@@ -4,6 +4,7 @@ import android.content.Context;
 
 import com.androidbuilder.data.AppRepository;
 import com.androidbuilder.backend.BuildBackendSettings;
+import com.androidbuilder.model.AiConversationRecord;
 import com.androidbuilder.model.AppSpec;
 import com.androidbuilder.model.BuildJobRecord;
 import com.androidbuilder.model.ChatMessage;
@@ -1705,15 +1706,17 @@ public class AgentService {
                 } else {
                     TaskStreamInspectionPolicy streamInspection = new TaskStreamInspectionPolicy(taskContract);
                     singleStreamInspection[0] = streamInspection;
-                    String operationsJson = recordCloudAiCall(
+                    CloudAiResult opsCall = recordCloudAiCallWithId(
                             projectId,
                             linkedBuildJobId,
                             (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
                             requestLog,
                             () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, attemptPreviousDraftSection, chinese, callTag, streamInspection),
                             taskId);
+                    TaskOperationsCodec.ParseResult parsed = TaskOperationsCodec.parse(opsCall.response);
+                    recordParseOutcome(opsCall.conversationId, parsed.outcome);
                     generatedOperations = JavaImportNormalizer.normalize(
-                            CanonicalPathPolicy.canonicalizeAll(TaskOperationsParser.fromJson(operationsJson)),
+                            CanonicalPathPolicy.canonicalizeAll(parsed.operationsOrThrow()),
                             attemptSnapshot);
                 }
             } catch (BatchGenerationException batchError) {
@@ -2182,7 +2185,7 @@ public class AgentService {
                 try {
                     updateStreamPhase(callTag, "coding", attempt);
                     updateStreamBatch(callTag, batchNumber, allBatches.size());
-                    String batchJson = recordCloudAiCall(
+                    CloudAiResult batchCall = recordCloudAiCallWithId(
                             projectId,
                             linkedBuildJobId,
                             (chinese ? "云端 AI · 文件操作生成批次 " : "Cloud AI · task operations batch ")
@@ -2201,8 +2204,10 @@ public class AgentService {
                                     callTag,
                                     streamInspection),
                             taskId);
+                    TaskOperationsCodec.ParseResult batchParsed = TaskOperationsCodec.parse(batchCall.response);
+                    recordParseOutcome(batchCall.conversationId, batchParsed.outcome);
                     TaskOperations batchOperations = JavaImportNormalizer.normalize(
-                            CanonicalPathPolicy.canonicalizeAll(TaskOperationsParser.fromJson(batchJson)),
+                            CanonicalPathPolicy.canonicalizeAll(batchParsed.operationsOrThrow()),
                             snapshot);
                     if (batchOperations.blocked) {
                         TaskOperations partial = partialBatchDraft(accepted, null, manifestJson);
@@ -2628,6 +2633,66 @@ public class AgentService {
 
     private String recordCloudAiCall(long projectId, Long linkedBuildJobId, String title, String requestText, AiTextCall call) throws Exception {
         return recordCloudAiCall(projectId, linkedBuildJobId, title, requestText, call, 0);
+    }
+
+    /** A recorded cloud call plus its conversation row id, so the caller can stamp the parse outcome later. */
+    private static final class CloudAiResult {
+        final String response;
+        final long conversationId;
+
+        CloudAiResult(String response, long conversationId) {
+            this.response = response;
+            this.conversationId = conversationId;
+        }
+    }
+
+    /**
+     * Like {@link #recordCloudAiCall} but returns the conversation id (so the task-operations sites can
+     * overwrite the row's status with the PARSE outcome once known) and attaches finish_reason to the
+     * success metadata (the ground-truth truncation signal). Used only at the two measurement points; other
+     * callers keep the simpler {@link #recordCloudAiCall}.
+     */
+    private CloudAiResult recordCloudAiCallWithId(long projectId, Long linkedBuildJobId, String title, String requestText, AiTextCall call, long taskId) throws Exception {
+        long startedAt = System.currentTimeMillis();
+        try {
+            String response = call.run();
+            String metadata = appendFinishReason(cloudAiMetadata(elapsedMs(startedAt), taskId), openAiClient.consumeLastFinishReason());
+            long id = recordAiConversationReturningId(projectId, "cloud", title, requestText, response, "success", metadata, linkedBuildJobId);
+            return new CloudAiResult(response, id);
+        } catch (Exception error) {
+            String message = error.getMessage() == null ? error.toString() : error.getMessage();
+            recordAiConversationSafely(projectId, "cloud", title, requestText, message, "failed",
+                    cloudAiMetadata(elapsedMs(startedAt), taskId), linkedBuildJobId);
+            throw error;
+        }
+    }
+
+    private long recordAiConversationReturningId(long projectId, String source, String title, String requestText, String responseText, String status, String metadata, Long linkedBuildJobId) {
+        try {
+            AiConversationRecord record = repository.addAiConversation(
+                    projectId, source, title, truncateAiLog(requestText), truncateAiLog(responseText), status, metadata, linkedBuildJobId);
+            return record == null ? 0 : record.id;
+        } catch (Exception ignored) {
+            // Diagnostic logging must never block generation.
+            return 0;
+        }
+    }
+
+    private static String appendFinishReason(String metadata, String finishReason) {
+        if (finishReason == null || finishReason.trim().isEmpty()) {
+            return metadata;
+        }
+        String base = metadata == null ? "" : metadata;
+        return base.isEmpty() ? "finishReason=" + finishReason.trim() : base + "\nfinishReason=" + finishReason.trim();
+    }
+
+    /** Stamps a task-operations conversation with its parse outcome for the weak-model funnel telemetry. */
+    private void recordParseOutcome(long conversationId, String outcome) {
+        try {
+            repository.updateAiConversationStatus(conversationId, outcome);
+        } catch (Exception ignored) {
+            // Telemetry only.
+        }
     }
 
     private String recordCloudAiCall(long projectId, Long linkedBuildJobId, String title, String requestText, AiTextCall call, long taskId) throws Exception {
