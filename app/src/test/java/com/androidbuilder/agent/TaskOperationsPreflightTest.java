@@ -15,6 +15,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class TaskOperationsPreflightTest {
@@ -230,5 +231,48 @@ public class TaskOperationsPreflightTest {
 
     private static TaskOperations ops(FileOperation operation) {
         return new TaskOperations("one", Collections.singletonList(operation));
+    }
+
+    @Test
+    public void findingsCollectsEveryStructuralDefectNotJustTheFirst() {
+        List<FileOperation> operations = new ArrayList<>();
+        operations.add(new FileOperation("write", "app/src/main/res/values/a.xml", "<resources>")); // unclosed
+        operations.add(new FileOperation("write", "app/src/main/res/values/b.xml", "<resources></resources>")); // ok
+        operations.add(new FileOperation("write", "app/src/main/res/layout/c.xml", "<LinearLayout>")); // unclosed
+        String snapshot = "android { namespace \"com.example\" }";
+
+        List<TaskOperationsPreflight.Finding> findings = TaskOperationsPreflight.findings(
+                new TaskOperations("t", operations), snapshot);
+
+        // Both malformed files are reported (not just the first) so a caller can micro-fix each.
+        assertEquals(2, findings.size());
+        assertTrue(findings.get(0).reason.contains("a.xml"));
+        assertTrue(findings.get(1).reason.contains("c.xml"));
+    }
+
+    @Test
+    public void findingsReportsMissingRImport() {
+        String java = "package com.example.ui;\nclass Home { int x = R.string.app_name; }\n";
+        List<FileOperation> operations = new ArrayList<>();
+        operations.add(new FileOperation("write", "app/src/main/java/com/example/ui/Home.java", java));
+
+        List<TaskOperationsPreflight.Finding> findings = TaskOperationsPreflight.findings(
+                new TaskOperations("t", operations), "android { namespace \"com.example\" }");
+
+        assertEquals(1, findings.size());
+        assertTrue(findings.get(0).reason.contains("missing R import"));
+        assertTrue(findings.get(0).reason.contains("import com.example.R;"));
+    }
+
+    @Test
+    public void validateSinglePassesAfterAFix() {
+        String namespace = "com.example";
+        // A now-well-formed XML file passes.
+        assertNull(TaskOperationsPreflight.validateSingle(
+                new FileOperation("write", "app/src/main/res/values/a.xml", "<resources></resources>"), namespace));
+        // A Java file that now imports R passes.
+        String fixed = "package com.example.ui;\nimport com.example.R;\nclass Home { int x = R.string.app_name; }\n";
+        assertNull(TaskOperationsPreflight.validateSingle(
+                new FileOperation("write", "app/src/main/java/com/example/ui/Home.java", fixed), namespace));
     }
 }

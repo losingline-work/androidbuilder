@@ -7,6 +7,8 @@ import com.androidbuilder.model.TaskOperations;
 import org.xml.sax.InputSource;
 
 import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -67,24 +69,92 @@ final class TaskOperationsPreflight {
     }
 
     private static HermesReview reviewJavaRImport(FileOperation operation, String namespace) {
-        String content = operation.content == null ? "" : operation.content;
-        if (!BARE_R_USAGE.matcher(content).find()) {
-            return ok();
-        }
-        Matcher packageMatcher = PACKAGE_PATTERN.matcher(content);
-        if (!packageMatcher.find()) {
-            return ok();
-        }
-        String packageName = packageMatcher.group(1);
-        if (!packageName.startsWith(namespace + ".")) {
+        String reason = rImportError(operation, namespace);
+        if (reason == null) {
             return ok();
         }
         String importLine = "import " + namespace + ".R;";
-        if (content.contains(importLine)) {
-            return ok();
-        }
-        return rewrite("Java file in subpackage " + packageName + " uses R.* but is missing R import.",
+        return rewrite(reason,
                 "Add " + importLine + " to " + operation.path + " or use fully qualified " + namespace + ".R references.");
+    }
+
+    /** The missing-R-import reason for a Java write, or null when the file is fine. Shared by review + findings. */
+    private static String rImportError(FileOperation operation, String namespace) {
+        String content = operation.content == null ? "" : operation.content;
+        if (!BARE_R_USAGE.matcher(content).find()) {
+            return null;
+        }
+        Matcher packageMatcher = PACKAGE_PATTERN.matcher(content);
+        if (!packageMatcher.find()) {
+            return null;
+        }
+        String packageName = packageMatcher.group(1);
+        if (!packageName.startsWith(namespace + ".")) {
+            return null;
+        }
+        if (content.contains("import " + namespace + ".R;")) {
+            return null;
+        }
+        return "Java file in subpackage " + packageName + " uses R.* but is missing R import; add import " + namespace + ".R;";
+    }
+
+    /**
+     * One structural defect per file (malformed XML or a missing R import) collected across the whole batch,
+     * so a caller can micro-fix just the bad files instead of re-rolling the whole batch. Excludes the
+     * &gt;{@link #MAX_OPERATIONS_PER_TASK} cap (that is a whole-batch decision, see {@link #review}).
+     */
+    static List<Finding> findings(TaskOperations operations, String sourceSnapshot) {
+        List<Finding> out = new ArrayList<>();
+        if (operations == null || operations.operations == null) {
+            return out;
+        }
+        for (FileOperation operation : operations.operations) {
+            if (isXmlWrite(operation)) {
+                String error = xmlError(operation.content);
+                if (error != null) {
+                    out.add(new Finding(operation, "Malformed XML in " + operation.path + ": " + error));
+                }
+            }
+        }
+        String namespace = namespaceFor(operations, sourceSnapshot);
+        if (!namespace.isEmpty()) {
+            for (FileOperation operation : operations.operations) {
+                if (isJavaWrite(operation)) {
+                    String reason = rImportError(operation, namespace);
+                    if (reason != null) {
+                        out.add(new Finding(operation, reason));
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Re-validate a single (micro-fixed) file's structure; null when it now passes. */
+    static String validateSingle(FileOperation operation, String namespace) {
+        if (isXmlWrite(operation)) {
+            return xmlError(operation.content);
+        }
+        if (isJavaWrite(operation) && namespace != null && !namespace.isEmpty()) {
+            return rImportError(operation, namespace);
+        }
+        return null;
+    }
+
+    /** The app's Gradle namespace, resolved from the operations or the snapshot (for validateSingle callers). */
+    static String resolveNamespace(TaskOperations operations, String sourceSnapshot) {
+        return namespaceFor(operations, sourceSnapshot);
+    }
+
+    /** A single structural defect: the offending operation and a human-readable reason for the fix prompt. */
+    static final class Finding {
+        final FileOperation op;
+        final String reason;
+
+        Finding(FileOperation op, String reason) {
+            this.op = op;
+            this.reason = reason;
+        }
     }
 
     private static boolean isXmlWrite(FileOperation operation) {

@@ -1847,6 +1847,15 @@ public class AgentService {
                     snapshot = sourceSnapshot(sourceDir, previousFailure);
                     continue;
                 }
+                // W2-B: before a whole-batch structural rewrite, repair just the bad file(s) in isolation.
+                // Re-rolling 9 good files to fix 1 malformed XML never converges on a weak model, and the
+                // re-roll can introduce fresh defects. Micro-fix does NOT consume the preflight rewrite budget.
+                List<TaskOperationsPreflight.Finding> structuralFindings = TaskOperationsPreflight.findings(operations, snapshot);
+                if (PreflightMicroFixPolicy.eligible(structuralFindings)) {
+                    operations = applyPreflightMicroFixes(projectId, linkedBuildJobId, taskId, operations,
+                            structuralFindings, snapshot, chinese, callTag, logs);
+                    previousDraft = operations;
+                }
                 HermesReview deterministicReview = TaskOperationsPreflight.review(operations, snapshot);
                 String deterministicTitle = (chinese ? "确定性预检" : "Deterministic preflight") + " #" + attempt;
                 appendHermesReviewLog(logs, deterministicTitle, deterministicReview);
@@ -2693,6 +2702,59 @@ public class AgentService {
         } catch (Exception ignored) {
             // Telemetry only.
         }
+    }
+
+    /**
+     * Repair each structurally-bad file (malformed XML / missing R import) in isolation, replacing only that
+     * operation. Bounded by {@link PreflightMicroFixPolicy#MAX_ATTEMPTS_PER_FILE} per file; a file that can't
+     * be fixed is left for the whole-batch rewrite / build to catch. Best-effort — never throws.
+     */
+    private TaskOperations applyPreflightMicroFixes(long projectId, Long linkedBuildJobId, long taskId,
+            TaskOperations operations, List<TaskOperationsPreflight.Finding> findings, String snapshot,
+            boolean chinese, String callTag, java.io.File logs) {
+        String namespace = TaskOperationsPreflight.resolveNamespace(operations, snapshot);
+        java.util.LinkedHashMap<String, FileOperation> byPath = new java.util.LinkedHashMap<>();
+        for (FileOperation operation : operations.operations) {
+            byPath.put(operation.path, operation);
+        }
+        for (final String path : PreflightMicroFixPolicy.paths(findings)) {
+            if (!byPath.containsKey(path)) {
+                continue;
+            }
+            final String reason = microFixReason(findings, path);
+            for (int attempt = 1; attempt <= PreflightMicroFixPolicy.MAX_ATTEMPTS_PER_FILE; attempt++) {
+                final FileOperation target = byPath.get(path);
+                try {
+                    String fixText = recordCloudAiCall(projectId, linkedBuildJobId,
+                            (chinese ? "云端 AI · 单文件修复 " : "Cloud AI · file fix ") + path + " #" + attempt,
+                            (chinese ? "修复单个文件：" : "Fix single file: ") + path + "\n" + reason,
+                            () -> openAiClient.createFileFix(path, "", reason, target.content, chinese, callTag),
+                            taskId);
+                    FileOperation fixed = PreflightMicroFixPolicy.extractFile(fixText, path);
+                    if (fixed != null && TaskOperationsPreflight.validateSingle(fixed, namespace) == null) {
+                        byPath.put(path, new FileOperation("write", path, fixed.content));
+                        FileUtils.appendText(logs, (chinese ? "单文件修复成功：" : "Micro-fixed file: ") + path + "\n");
+                        break;
+                    }
+                } catch (Exception ignored) {
+                    // Micro-fix is best-effort; the whole-batch rewrite path still runs when it fails.
+                }
+            }
+        }
+        List<FileOperation> rebuilt = new ArrayList<>();
+        for (FileOperation operation : operations.operations) {
+            rebuilt.add(byPath.get(operation.path));
+        }
+        return new TaskOperations(operations.summary, rebuilt);
+    }
+
+    private static String microFixReason(List<TaskOperationsPreflight.Finding> findings, String path) {
+        for (TaskOperationsPreflight.Finding finding : findings) {
+            if (finding != null && finding.op != null && path.equals(finding.op.path)) {
+                return finding.reason;
+            }
+        }
+        return "";
     }
 
     private String recordCloudAiCall(long projectId, Long linkedBuildJobId, String title, String requestText, AiTextCall call, long taskId) throws Exception {

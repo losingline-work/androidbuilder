@@ -109,6 +109,22 @@ public class TaskOperationsPromptPolicyTest {
     }
 
     @Test
+    public void fileFixPromptAsksForOneCorrectedFileInFencedForm() {
+        String system = OpenAiClient.fileFixSystemPromptForTest(false);
+        assertTrue(system.contains("ONE Android source file"));
+        assertTrue(system.contains("===FILE"));
+        assertTrue(system.contains("===END==="));
+        assertTrue(system.contains("entire file"));
+
+        String user = OpenAiClient.fileFixUserPromptForTest(
+                "app/src/main/res/values/strings.xml", "home labels",
+                "Malformed XML: unclosed tag", "<resources>");
+        assertTrue(user.contains("app/src/main/res/values/strings.xml"));
+        assertTrue(user.contains("Malformed XML: unclosed tag"));
+        assertTrue(user.contains("<resources>"));
+    }
+
+    @Test
     public void promptsRequireDatabaseLayerContractsToStaySynchronized() {
         String projectPrompt = OpenAiClient.projectFilesSystemPromptForTest(false);
         String taskPrompt = OpenAiClient.taskOperationsSystemPromptForTest(false);

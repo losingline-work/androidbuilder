@@ -347,6 +347,48 @@ public class OpenAiClient {
                 streamInspector);
     }
 
+    /**
+     * Micro-fix ONE structurally-bad file (malformed XML / missing R import) in isolation — cheaper and far
+     * more reliable for a weak model than re-rolling the whole batch. Returns a fenced ===FILE path=== block.
+     */
+    public String createFileFix(String path, String intent, String reason, String currentContent, boolean chinese, String callTag) throws Exception {
+        return completeChat(
+                fileFixSystemPromptText(chinese),
+                java.util.Collections.emptyList(),
+                fileFixUserPromptText(path, intent, reason, currentContent),
+                0.0,
+                chinese,
+                CODING_READ_TIMEOUT_MS,
+                false,
+                callTag);
+    }
+
+    static String fileFixSystemPromptForTest(boolean chinese) {
+        return fileFixSystemPromptText(chinese);
+    }
+
+    static String fileFixUserPromptForTest(String path, String intent, String reason, String currentContent) {
+        return fileFixUserPromptText(path, intent, reason, currentContent);
+    }
+
+    private static String fileFixSystemPromptText(boolean chinese) {
+        String language = chinese ? "Use Simplified Chinese for any user-facing app text when appropriate." : "Use English for user-facing app text.";
+        return "You fix exactly ONE Android source file that failed a structural check. "
+                + "Return ONLY the corrected COMPLETE file as a single fenced block with NO escaping:\n"
+                + "===FILE relative/posix/path===\n<the whole corrected file>\n===END===\n"
+                + "Do not return JSON, markdown code fences, prose, or any other file. Keep the file's original purpose and content; change only what is needed to fix the reported problem, and return the entire file (not a diff). "
+                + "Keep it buildable with Android Gradle Plugin 8.7.3, compileSdk 34, Java 8; Java + XML only (no Kotlin, lambdas, DataBinding, or ViewBinding). " + language;
+    }
+
+    private static String fileFixUserPromptText(String path, String intent, String reason, String currentContent) {
+        String purpose = intent == null || intent.trim().isEmpty() ? "" : "\nPurpose of this file: " + intent.trim();
+        return "Fix this file and return the corrected complete file.\n"
+                + "Path: " + path
+                + purpose
+                + "\nProblem to fix: " + (reason == null ? "" : reason.trim())
+                + "\n\nCurrent file content:\n" + (currentContent == null ? "" : currentContent);
+    }
+
     public String negotiateTaskContext(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String previousFailure, boolean chinese) throws Exception {
         return negotiateTaskContext(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, previousFailure, chinese, "");
     }
