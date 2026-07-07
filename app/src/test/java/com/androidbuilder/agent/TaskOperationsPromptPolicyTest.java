@@ -4,24 +4,42 @@ import com.androidbuilder.model.TaskManifest;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class TaskOperationsPromptPolicyTest {
     @Test
-    public void taskOperationsPromptRejectsEmptyOperations() {
+    public void taskOperationsPromptUsesFencedFormatWithWorkedExample() {
         String prompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
 
-        assertTrue(prompt.contains("Do not return an empty operations array"));
-        assertTrue(prompt.contains("at least one write or delete"));
+        // Fenced raw-file protocol (NOT JSON) with the markers and a worked example.
+        assertTrue(prompt.contains("FENCED"));
+        assertTrue(prompt.contains("===FILE"));
+        assertTrue(prompt.contains("===END==="));
+        assertTrue(prompt.contains("===EDIT"));
+        assertTrue(prompt.contains("===DELETE"));
+        assertTrue(prompt.contains("raw with NO escaping"));
+        // The worked example is present so weak models see a concrete valid reply.
+        assertTrue(prompt.contains("Worked example"));
+        assertTrue(prompt.contains("Add home strings and wire the title"));
+        // The JSON contract language is gone from the ops prompt.
+        assertFalse(prompt.contains("compact JSON with summary and operations"));
+    }
+
+    @Test
+    public void taskOperationsPromptRejectsEmptyReply() {
+        String prompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
+
+        assertTrue(prompt.contains("Do not return an empty reply"));
+        assertTrue(prompt.contains("at least one ===FILE=== or ===DELETE=== block"));
     }
 
     @Test
     public void taskOperationsPromptOffersBlockedExitForMissingPrerequisites() {
         String prompt = OpenAiClient.taskOperationsSystemPromptForTest(false);
 
-        assertTrue(prompt.contains("blocked"));
-        assertTrue(prompt.contains("blockedReason"));
-        assertTrue(prompt.contains("prerequisiteWork"));
+        assertTrue(prompt.contains("===BLOCKED==="));
+        assertTrue(prompt.contains("===PREREQ==="));
         assertTrue(prompt.contains("missing prerequisite"));
     }
 

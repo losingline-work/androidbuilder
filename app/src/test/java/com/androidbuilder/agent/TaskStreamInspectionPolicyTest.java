@@ -63,6 +63,20 @@ public class TaskStreamInspectionPolicyTest {
         assertEquals("write", draft.operations.get(0).action);
     }
 
+    @Test
+    public void salvagesCompletedFencedBlocksFromAbortedStream() throws Exception {
+        TaskStreamInspectionPolicy inspector = new TaskStreamInspectionPolicy(HermesTaskContract.empty());
+        // A fenced stream cut off mid-second-file: only the first, closed block survives.
+        inspector.onContent("===FILE app/src/main/res/values/colors.xml===\n<resources />\n===END===\n"
+                + "===FILE app/src/main/java/B.java===\nclass B {");
+
+        TaskOperations draft = inspector.partialDraft("partial fenced draft");
+
+        assertEquals(1, draft.operations.size());
+        assertEquals("app/src/main/res/values/colors.xml", draft.operations.get(0).path);
+        assertEquals("write", draft.operations.get(0).action);
+    }
+
     private static String repeat(String value, int count) {
         StringBuilder builder = new StringBuilder();
         for (int i = 0; i < count; i++) {

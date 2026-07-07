@@ -70,6 +70,34 @@ public class TaskOperationsCodecTest {
     }
 
     @Test
+    public void fencedReply_tagsFencedOk() {
+        String reply = "===SUMMARY===\nadd\n===FILE app/build.gradle===\nplugins {}\n===END===\n";
+
+        TaskOperationsCodec.ParseResult result = TaskOperationsCodec.parse(reply);
+
+        assertEquals(TaskOperationsCodec.OUTCOME_FENCED_OK, result.outcome);
+        assertNotNull(result.operations);
+        assertEquals("app/build.gradle", result.operations.operations.get(0).path);
+    }
+
+    @Test
+    public void jsonReplyStillParsesWhenNoFencedMarkers() {
+        // Regression: adding the fenced path must not disturb strong models that keep returning JSON.
+        TaskOperationsCodec.ParseResult result = TaskOperationsCodec.parse(
+                "{\"summary\":\"ok\",\"operations\":[{\"action\":\"write\",\"path\":\"a\",\"content\":\"y\"}]}");
+
+        assertEquals(TaskOperationsCodec.OUTCOME_JSON_OK, result.outcome);
+        assertNotNull(result.operations);
+    }
+
+    @Test
+    public void fencedCompletedOperationsSalvageClosedBlocks() {
+        String partial = "===FILE a.txt===\nx\n===END===\n===FILE b.txt===\ncut off";
+
+        assertEquals(1, TaskOperationsCodec.completedOperations(partial).size());
+    }
+
+    @Test
     public void completedOperations_matchesParserSalvage() {
         String partial = "{\"operations\":[" +
                 "{\"action\":\"write\",\"path\":\"a.txt\",\"content\":\"x\"}," +

@@ -17,22 +17,41 @@ import java.util.List;
  * parser stays as the permanent fallback so strong models that keep returning JSON are unaffected.
  */
 public final class TaskOperationsCodec {
+    public static final String OUTCOME_FENCED_OK = "fenced_ok";
     public static final String OUTCOME_JSON_OK = "json_ok";
     public static final String OUTCOME_JSON_LENIENT = "json_lenient";
     public static final String OUTCOME_JSON_SALVAGED = "json_salvaged";
     public static final String OUTCOME_PARSE_FAILED = "parse_failed";
-    // Wave 1 will add OUTCOME_FENCED_OK / OUTCOME_FENCED_SALVAGED here.
 
     private TaskOperationsCodec() {
     }
 
-    /** Parse without throwing; the outcome tag distinguishes clean / lenient / salvaged / failed. */
+    /**
+     * Parse without throwing; the outcome tag distinguishes fenced / clean-json / lenient / salvaged / failed.
+     * Fenced markers present → fenced parse; if that yields nothing usable, fall through to the JSON parser so
+     * a strong model that keeps returning JSON is entirely unaffected (the JSON path stays the permanent
+     * fallback).
+     */
     public static ParseResult parse(String raw) {
+        if (TaskOperationsFencedParser.isFenced(raw)) {
+            try {
+                return ParseResult.of(TaskOperationsFencedParser.parse(raw), OUTCOME_FENCED_OK);
+            } catch (RuntimeException fencedError) {
+                // Fenced markers but no closed block (e.g. truncated before the first ===END===): fall back to
+                // JSON in case the reply is actually JSON that merely mentioned a marker-looking line.
+            }
+        }
         return TaskOperationsParser.fromJsonClassified(raw);
     }
 
     /** Best-effort salvage of the fully-formed operations seen before a truncation point (partial stream). */
     public static List<FileOperation> completedOperations(String partialRaw) {
+        if (TaskOperationsFencedParser.isFenced(partialRaw)) {
+            List<FileOperation> fenced = TaskOperationsFencedParser.completedOperations(partialRaw);
+            if (!fenced.isEmpty()) {
+                return fenced;
+            }
+        }
         return TaskOperationsParser.completedOperations(partialRaw);
     }
 

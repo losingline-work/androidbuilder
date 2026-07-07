@@ -1379,7 +1379,7 @@ public class OpenAiClient {
         String draftSection = previousDraftSection == null || previousDraftSection.trim().isEmpty()
                 ? ""
                 : "\n\n" + previousDraftSection.trim()
-                + "\n\nYou are CORRECTING your previous draft for this task, not rewriting it. Return only operations for files you are changing or adding; every other operation from your previous draft is preserved automatically and must NOT be resent. To remove a file from your previous draft that should not be written at all, return {\"action\":\"drop\",\"path\":\"...\"} for it. Keep the same JSON contract (summary + operations), unless missing prerequisites make the task unsafe within the current boundary; in that case return blocked=true with blockedReason and prerequisiteWork.";
+                + "\n\nYou are CORRECTING your previous draft for this task, not rewriting it. Return only blocks for files you are changing or adding; every other file from your previous draft is preserved automatically and must NOT be resent. To remove a file from your previous draft that should not be written at all, return a single-line ===DROP relative/posix/path=== block for it. Keep the same fenced format, unless missing prerequisites make the task unsafe within the current boundary; in that case return a ===BLOCKED=== / ===PREREQ=== / ===END=== block.";
         String cleanInstruction = HermesTaskContractCodec.stripFromInstruction(taskInstruction);
         String contractContext = HermesTaskContractCodec.promptContextFromInstruction(taskInstruction);
         String contractSection = contractContext.isEmpty()
@@ -1413,7 +1413,7 @@ public class OpenAiClient {
                 + "and field/constant names shown; do not re-guess or rename them. If you need a method or field "
                 + "that does not exist on a frozen class, you must conform to what exists, not invent a new member:\n"
                 + completed
-                + "\n\nDo not include any unrequested file. Return only summary and operations JSON for this batch."
+                + "\n\nDo not include any unrequested file. Return only the fenced ===FILE===/===EDIT===/===DELETE=== blocks for this batch."
                 // Recency restatement: the frozen-API context above can run to ~20K chars; repeat the exact
                 // target paths as the LAST thing the model reads so a weak model does not silently drop one.
                 + "\n\nFINAL REMINDER — produce one complete file operation for EACH of these exact paths, all in this single reply:\n"
@@ -1458,13 +1458,23 @@ public class OpenAiClient {
 
     private static String taskOperationsSystemPromptText(boolean chinese, String dependencyPolicyPrompt) {
         String language = chinese ? "Use Simplified Chinese for user-facing app text when appropriate." : "Use English for user-facing app text.";
-        return "You execute one small Android coding task by returning file operations only. " +
-                "Return only compact JSON with summary and operations. operations is an array of objects with action, path, and content. " +
-                "Supported actions are write, edit, and delete. Use write for full-file replacement (content). Use edit for a small precise change to a file that already exists: provide find and replace strings instead of content, where find is a snippet that occurs EXACTLY ONCE in the current file (include enough surrounding context to be unique); the snippet is replaced verbatim. If you are unsure the find snippet is unique or present, resend the whole file with write. Use relative POSIX paths only. Simple tasks should still prefer one or two file operations; a resource or layout phase may return a small cohesive batch when those files must be written together. " +
+        return "You execute one small Android coding task by returning file operations in a FENCED text format (NOT JSON). " +
+                "Emit blocks delimited by line markers; file CONTENT is raw with NO escaping — do not escape quotes, backslashes, or newlines. Each marker is on its own line. Supported blocks:\n" +
+                "===SUMMARY===\none short line\n" +
+                "===FILE relative/posix/path===\n<complete raw file content>\n===END===\n" +
+                "===EDIT relative/posix/path===\n===FIND===\n<whole lines copied verbatim from the current file, occurring EXACTLY ONCE>\n===REPLACE===\n<replacement lines>\n===END===\n" +
+                "===DELETE relative/posix/path===\n" +
+                "Use ===FILE=== for a full-file write or to create a new file; ===EDIT=== for a small precise change to an existing file; ===DELETE=== (a single self-closing line) to remove one. For ===EDIT===, copy WHOLE lines into FIND exactly as they appear in the current file; if unsure the snippet is unique or present, send the whole file with ===FILE=== instead. Never emit a line that is exactly ===END=== inside file content. Use relative POSIX paths only. " +
+                "Worked example of a COMPLETE reply:\n" +
+                "===SUMMARY===\nAdd home strings and wire the title\n" +
+                "===FILE app/src/main/res/values/strings.xml===\n<resources>\n    <string name=\"app_name\">Ledger</string>\n    <string name=\"home_title\">Overview</string>\n</resources>\n===END===\n" +
+                "===EDIT app/src/main/java/com/example/HomeActivity.java===\n===FIND===\n        setTitle(\"Home\");\n===REPLACE===\n        setTitle(getString(R.string.home_title));\n===END===\n" +
+                "===DELETE app/src/main/res/layout/unused_old.xml===\n" +
+                "Return ONLY these fenced blocks — no JSON, no markdown code fences, no prose outside markers, no build logs, no base64. " +
+                "Simple tasks should still prefer one or two file operations; a resource or layout phase may return a small cohesive batch when those files must be written together. " +
                 "Keep each source file focused and small, ideally under about 250 lines; split large screens into separate Adapter, Helper, Dialog, or model classes instead of one giant file, so each write replaces a small file. " +
                 "Stay strictly within THIS task's scope: produce exactly the files the task description requires and nothing else. The phase label (Gradle, layout XML, values resources, Java wiring, etc.) is only a category hint, not the deliverable — follow the description. If the description names a specific class or file to create or complete (for example DatabaseHelper.java with its tables, or a DAO/model), that file MUST appear in your operations; never omit the named deliverable or pad the patch with unrelated screens, layouts, drawables, or resources for features that belong to other tasks. A patch that misses the named deliverable, or adds task-irrelevant files, will be rejected. " +
-                "Do not return an empty operations array; every task response must include at least one write or delete operation that advances the task. If a missing prerequisite file or resource makes the task unsafe to complete within its current boundary, return a compact blocked response instead of guessing or writing unrelated files: {\"summary\":\"...\",\"blocked\":true,\"blockedReason\":\"...\",\"prerequisiteWork\":\"...\"}. " +
-                "Do not return markdown, comments outside JSON, explanations, build logs, or base64. " +
+                "Do not return an empty reply; every task response must include at least one ===FILE=== or ===DELETE=== block that advances the task. If a missing prerequisite file or resource makes the task unsafe to complete within its current boundary, return a blocked response instead of guessing or writing unrelated files:\n===BLOCKED===\nwhy it is blocked\n===PREREQ===\nthe missing prerequisite work needed first\n===END===\n" +
                 "Keep the generated source buildable with Android Gradle Plugin 8.7.3, compileSdk 34, minSdk 24, targetSdk 34, and Java 8-compatible source/target. " +
                 "Use Java + XML only. Do not write Kotlin, .kt files, kotlinOptions, Kotlin Gradle plugins, DataBinding, ViewBinding, Compose, Java lambdas, or arrow syntax. Use anonymous listener classes instead of lambdas, and do not include arrow-style examples in comments/Javadocs/strings. Prefer org.json over Gson unless a Gson dependency is already declared and allowed. " + dependencyPolicyPrompt + " " +
                 "When writing Java files, keep package names consistent with Gradle namespace. Set android.namespace in app/build.gradle and do not set package=\"...\" in AndroidManifest.xml. " +

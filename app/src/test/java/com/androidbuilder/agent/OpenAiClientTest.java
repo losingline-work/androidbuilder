@@ -232,9 +232,9 @@ public class OpenAiClientTest {
                 "Previous draft manifest:\n- write app/src/main/java/com/example/RecordDao.java");
 
         assertTrue(prompt.contains("You are CORRECTING your previous draft for this task, not rewriting it."));
-        assertTrue(prompt.contains("blockedReason"));
-        assertTrue(prompt.contains("prerequisiteWork"));
-        assertTrue(prompt.contains("\"action\":\"drop\""));
+        assertTrue(prompt.contains("===BLOCKED==="));
+        assertTrue(prompt.contains("===PREREQ==="));
+        assertTrue(prompt.contains("===DROP relative/posix/path==="));
         assertTrue(prompt.indexOf("Previous draft manifest") < prompt.indexOf("Current source tree"));
         assertTrue(prompt.indexOf("You are CORRECTING") < prompt.indexOf("Current source tree"));
     }
