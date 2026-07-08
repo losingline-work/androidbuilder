@@ -189,6 +189,33 @@ public class ManifestBatchPolicyTest {
         return count;
     }
 
+    @Test
+    public void degradedLimitsPutEachHeavyFileInItsOwnBatch() {
+        // Two full-screen layouts (weight 6 each). At the default cap (10) they'd pack loosely; under the
+        // L2 degrade cap (maxWeight 3, threshold 1) each heavy file lands alone so no response overflows.
+        List<TaskManifest.Entry> files = Arrays.asList(
+                entry("app/src/main/res/layout/activity_main.xml"),
+                entry("app/src/main/res/layout/activity_detail.xml"));
+
+        List<List<TaskManifest.Entry>> degraded = ManifestBatchPolicy.batches(files, 3, 1);
+
+        assertEquals(2, degraded.size());
+        assertEquals(1, degraded.get(0).size());
+        assertEquals(1, degraded.get(1).size());
+    }
+
+    @Test
+    public void degradedThresholdSplitsWhatDefaultKeepsWhole() {
+        List<TaskManifest.Entry> files = Arrays.asList(
+                entry("app/src/main/res/values/colors.xml"),
+                entry("app/src/main/res/values/dimens.xml"));
+
+        // Default keeps two light value files together...
+        assertEquals(1, ManifestBatchPolicy.batches(files).size());
+        // ...but the aggressive degrade threshold (1) forces them apart.
+        assertEquals(2, ManifestBatchPolicy.batches(files, 3, 1).size());
+    }
+
     private static TaskManifest.Entry entry(String path) {
         return new TaskManifest.Entry(path, "write", "intent");
     }

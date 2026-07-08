@@ -322,11 +322,15 @@ public class OpenAiClient {
     }
 
     public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection, boolean chinese, String callTag, StreamInspector streamInspector) throws Exception {
+        return createTaskOperations(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, previousDraftSection, chinese, callTag, streamInspector, 0.2);
+    }
+
+    public String createTaskOperations(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, String previousDraftSection, boolean chinese, String callTag, StreamInspector streamInspector, double temperature) throws Exception {
         return completeChat(
                 taskOperationsSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
                 taskOperationsUserPrompt(plan, taskTitle, instructionWithGraphicsPolicy(taskInstruction, chinese), sourceSnapshot, recentRequirements, retryContext, previousDraftSection),
-                0.2,
+                temperature,
                 chinese,
                 CODING_READ_TIMEOUT_MS,
                 true,
@@ -335,11 +339,15 @@ public class OpenAiClient {
     }
 
     public String createTaskOperationsBatch(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, List<TaskManifest.Entry> batchFiles, String completedFilesContext, boolean chinese, String callTag, StreamInspector streamInspector) throws Exception {
+        return createTaskOperationsBatch(plan, taskTitle, taskInstruction, sourceSnapshot, recentRequirements, retryContext, batchFiles, completedFilesContext, chinese, callTag, streamInspector, 0.2);
+    }
+
+    public String createTaskOperationsBatch(String plan, String taskTitle, String taskInstruction, String sourceSnapshot, String recentRequirements, String retryContext, List<TaskManifest.Entry> batchFiles, String completedFilesContext, boolean chinese, String callTag, StreamInspector streamInspector, double temperature) throws Exception {
         return completeChat(
                 taskOperationsSystemPrompt(chinese),
                 java.util.Collections.emptyList(),
                 taskOperationsBatchUserPrompt(plan, taskTitle, instructionWithGraphicsPolicy(taskInstruction, chinese), sourceSnapshot, recentRequirements, retryContext, batchFiles, completedFilesContext),
-                0.2,
+                temperature,
                 chinese,
                 CODING_READ_TIMEOUT_MS,
                 true,

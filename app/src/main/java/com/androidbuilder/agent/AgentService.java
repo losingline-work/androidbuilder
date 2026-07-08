@@ -129,6 +129,11 @@ public class AgentService {
     private final Context context;
     private final AppRepository repository;
     private final OpenAiClient openAiClient;
+    // Per-project-march failure tally driving the weak-model generation degrade ladder (W2-D). In-memory
+    // only, keyed by projectId, reset when a new plan is created. Concurrent because parallel Hermes workers
+    // in one march increment it.
+    private final java.util.Map<Long, GenerationDegradePolicy.Counters> degradeCounters =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private final GeneratedProjectWriter writer = new GeneratedProjectWriter();
     private final FileOperationsWriter operationsWriter;
     private final TaskOperationExecutor taskOperationExecutor;
@@ -435,6 +440,9 @@ public class AgentService {
         if (project == null) {
             throw new IllegalArgumentException("Project not found: " + projectId);
         }
+        // A new plan starts a fresh march: clear the weak-model degrade tally so a prior struggling run does
+        // not keep the next one degraded.
+        degradeCounters.remove(projectId);
         repository.addMessage(projectId, "user", prompt, null);
         repository.saveProjectPlan(projectId, "", "planning", null);
         List<ChatMessage> history = ConversationContextPolicy.planningHistory(repository.listMessages(projectId), PLANNING_HISTORY_WINDOW);
@@ -1706,20 +1714,22 @@ public class AgentService {
                 } else {
                     TaskStreamInspectionPolicy streamInspection = new TaskStreamInspectionPolicy(taskContract);
                     singleStreamInspection[0] = streamInspection;
+                    final double genTemperature = GenerationDegradePolicy.temperature(degradeLevel(projectId), 0.2);
                     CloudAiResult opsCall = recordCloudAiCallWithId(
                             projectId,
                             linkedBuildJobId,
                             (chinese ? "云端 AI · 文件操作生成" : "Cloud AI · task operations") + " #" + attempt,
                             requestLog,
-                            () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, attemptPreviousDraftSection, chinese, callTag, streamInspection),
+                            () -> openAiClient.createTaskOperations(planContent, taskTitle, attemptInstruction, attemptSnapshot, recentRequirements, attemptRetryContext, attemptPreviousDraftSection, chinese, callTag, streamInspection, genTemperature),
                             taskId);
                     TaskOperationsCodec.ParseResult parsed = TaskOperationsCodec.parse(opsCall.response);
-                    recordParseOutcome(opsCall.conversationId, parsed.outcome);
+                    recordParseOutcome(projectId, opsCall.conversationId, parsed.outcome);
                     generatedOperations = JavaImportNormalizer.normalize(
                             CanonicalPathPolicy.canonicalizeAll(parsed.operationsOrThrow()),
                             attemptSnapshot);
                 }
             } catch (BatchGenerationException batchError) {
+                degradeCountersFor(projectId).carryForwardExhaustions++;
                 previousFailure = batchError.getMessage() == null ? batchError.toString() : batchError.getMessage();
                 // Merge the salvaged partial onto the accumulated draft rather than replacing it: a
                 // file written in an earlier correction round (e.g. a DAO gaining listInRange) must
@@ -1739,6 +1749,7 @@ public class AgentService {
                 }
                 continue;
             } catch (OpenAiClient.StreamAbortException streamAbort) {
+                degradeCountersFor(projectId).streamAborts++;
                 previousFailure = streamAbort.getMessage() == null ? streamAbort.toString() : streamAbort.getMessage();
                 TaskStreamInspectionPolicy streamInspection = singleStreamInspection[0];
                 TaskOperations salvaged = streamInspection == null
@@ -2153,7 +2164,11 @@ public class AgentService {
         if (manifest.blocked) {
             return manifest.toBlockedOperations();
         }
-        List<List<TaskManifest.Entry>> allBatches = ManifestBatchPolicy.batches(manifest.files);
+        // Weak-model degrade ladder: once this march has been struggling (truncations / parse failures /
+        // carry-forward exhaustions), shrink files-per-call so each cloud response fits and drops nothing.
+        int degrade = degradeLevel(projectId);
+        List<List<TaskManifest.Entry>> allBatches = ManifestBatchPolicy.batches(manifest.files,
+                GenerationDegradePolicy.maxBatchWeight(degrade), GenerationDegradePolicy.singleBatchThreshold(degrade));
         List<List<TaskManifest.Entry>> batches = ManifestResumePolicy.hasManifest(previousDraft)
                 ? ManifestResumePolicy.remainingBatches(manifest, previousDraft.acceptedPaths)
                 : allBatches;
@@ -2211,10 +2226,11 @@ public class AgentService {
                                     completedContext,
                                     chinese,
                                     callTag,
-                                    streamInspection),
+                                    streamInspection,
+                                    GenerationDegradePolicy.temperature(degrade, 0.2)),
                             taskId);
                     TaskOperationsCodec.ParseResult batchParsed = TaskOperationsCodec.parse(batchCall.response);
-                    recordParseOutcome(batchCall.conversationId, batchParsed.outcome);
+                    recordParseOutcome(projectId, batchCall.conversationId, batchParsed.outcome);
                     TaskOperations batchOperations = JavaImportNormalizer.normalize(
                             CanonicalPathPolicy.canonicalizeAll(batchParsed.operationsOrThrow()),
                             snapshot);
@@ -2666,6 +2682,10 @@ public class AgentService {
         try {
             String response = call.run();
             String metadata = appendFinishReason(cloudAiMetadata(elapsedMs(startedAt), taskId), openAiClient.consumeLastFinishReason());
+            int level = degradeLevel(projectId);
+            if (level > 0) {
+                metadata = metadata + "\ndegradeLevel=" + level;
+            }
             long id = recordAiConversationReturningId(projectId, "cloud", title, requestText, response, "success", metadata, linkedBuildJobId);
             return new CloudAiResult(response, id);
         } catch (Exception error) {
@@ -2695,13 +2715,30 @@ public class AgentService {
         return base.isEmpty() ? "finishReason=" + finishReason.trim() : base + "\nfinishReason=" + finishReason.trim();
     }
 
-    /** Stamps a task-operations conversation with its parse outcome for the weak-model funnel telemetry. */
-    private void recordParseOutcome(long conversationId, String outcome) {
+    /** Stamps a task-operations conversation with its parse outcome and feeds the degrade ladder. */
+    private void recordParseOutcome(long projectId, long conversationId, String outcome) {
         try {
             repository.updateAiConversationStatus(conversationId, outcome);
         } catch (Exception ignored) {
             // Telemetry only.
         }
+        // Feed the degrade ladder: a JSON-salvaged reply means truncation, a hard parse failure means garbage.
+        // (A truncated fenced reply that still yielded closed blocks parses as fenced_ok; its dropped file
+        // surfaces via carry-forward exhaustion instead.)
+        if (TaskOperationsCodec.OUTCOME_PARSE_FAILED.equals(outcome)) {
+            degradeCountersFor(projectId).parseFailures++;
+        } else if (TaskOperationsCodec.OUTCOME_JSON_SALVAGED.equals(outcome)) {
+            degradeCountersFor(projectId).salvaged++;
+        }
+    }
+
+    private GenerationDegradePolicy.Counters degradeCountersFor(long projectId) {
+        return degradeCounters.computeIfAbsent(projectId, id -> new GenerationDegradePolicy.Counters());
+    }
+
+    /** The degrade level for this project's current march (0 healthy → 2 aggressive). */
+    private int degradeLevel(long projectId) {
+        return GenerationDegradePolicy.level(degradeCounters.get(projectId));
     }
 
     /**

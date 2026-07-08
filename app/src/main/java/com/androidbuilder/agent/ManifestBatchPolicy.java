@@ -19,6 +19,16 @@ final class ManifestBatchPolicy {
     }
 
     static List<List<TaskManifest.Entry>> batches(List<TaskManifest.Entry> files) {
+        return batches(files, MAX_BATCH_WEIGHT, SINGLE_BATCH_THRESHOLD);
+    }
+
+    /**
+     * Batch with caller-supplied limits so a weak-model degrade ladder can shrink files-per-call (smaller
+     * {@code maxWeight} / {@code singleThreshold} → fewer files per cloud response → less truncation and fewer
+     * dropped files). The default {@link #batches(List)} uses {@link #MAX_BATCH_WEIGHT}/{@link
+     * #SINGLE_BATCH_THRESHOLD}.
+     */
+    static List<List<TaskManifest.Entry>> batches(List<TaskManifest.Entry> files, int maxWeight, int singleThreshold) {
         if (files == null || files.isEmpty()) {
             return Collections.emptyList();
         }
@@ -26,7 +36,7 @@ final class ManifestBatchPolicy {
         // of HEAVY files (e.g. complex layouts) must still be split, or one cloud response overflows
         // max_tokens, truncates, and the carry-forward keeps re-requesting the same oversized set forever
         // (project-14: 5 complex layouts looped to retry-exhaustion).
-        if (files.size() <= SINGLE_BATCH_THRESHOLD && totalWeight(files) <= MAX_BATCH_WEIGHT) {
+        if (files.size() <= singleThreshold && totalWeight(files) <= maxWeight) {
             return Collections.singletonList(Collections.unmodifiableList(new ArrayList<>(files)));
         }
         List<TaskManifest.Entry> ordered = new ArrayList<>();
@@ -53,7 +63,7 @@ final class ManifestBatchPolicy {
         int currentWeight = 0;
         for (TaskManifest.Entry file : ordered) {
             int weight = weightFor(file);
-            if (!current.isEmpty() && currentWeight + weight > MAX_BATCH_WEIGHT) {
+            if (!current.isEmpty() && currentWeight + weight > maxWeight) {
                 batches.add(Collections.unmodifiableList(current));
                 current = new ArrayList<>();
                 currentWeight = 0;
