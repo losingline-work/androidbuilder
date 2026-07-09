@@ -1,6 +1,9 @@
 package com.androidbuilder.agent;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -8,6 +11,8 @@ import java.util.regex.Pattern;
 
 public final class BuildLogContextExtractor {
     private static final Pattern JAVAC_ERROR = Pattern.compile(".*\\.java:\\d+:\\s+error:.*");
+    // The file portion of a javac diagnostic line: "<path>.java:<line>: error:".
+    private static final Pattern JAVAC_ERROR_FILE = Pattern.compile("([^\\s:]+\\.java):\\d+:\\s+error:");
     private static final Pattern ERROR_COUNT = Pattern.compile("\\d+\\s+errors?");
     // aapt missing-resource diagnostic, e.g. "error: resource color/colorSurface (aka ...) not found."
     private static final Pattern AAPT_MISSING_RESOURCE = Pattern.compile("error:\\s+resource\\s+([a-z]+)/([A-Za-z0-9_.]+)");
@@ -67,6 +72,40 @@ public final class BuildLogContextExtractor {
             appendLine(out, token);
         }
         return trimMiddle(out.toString(), maxChars);
+    }
+
+    /**
+     * javac error lines grouped by source file, in first-seen order, so a focused repair round can target the
+     * file with the most errors. Keys are normalized to the {@code app/src/...} project-relative path (the
+     * build runs in a work dir with an absolute prefix) so the model can match them to the snapshot.
+     */
+    public static LinkedHashMap<String, List<String>> perFileErrorClusters(String logs) {
+        LinkedHashMap<String, List<String>> clusters = new LinkedHashMap<>();
+        if (logs == null || logs.trim().isEmpty()) {
+            return clusters;
+        }
+        for (String line : logs.split("\\R")) {
+            Matcher matcher = JAVAC_ERROR_FILE.matcher(line);
+            if (matcher.find()) {
+                String file = normalizeJavaPath(matcher.group(1));
+                List<String> lines = clusters.get(file);
+                if (lines == null) {
+                    lines = new ArrayList<>();
+                    clusters.put(file, lines);
+                }
+                lines.add(line.trim());
+            }
+        }
+        return clusters;
+    }
+
+    private static String normalizeJavaPath(String rawPath) {
+        int index = rawPath.indexOf("app/src/");
+        if (index >= 0) {
+            return rawPath.substring(index);
+        }
+        int slash = rawPath.lastIndexOf('/');
+        return slash >= 0 ? rawPath.substring(slash + 1) : rawPath;
     }
 
     public static Set<String> referencedJavaTypes(String text) {

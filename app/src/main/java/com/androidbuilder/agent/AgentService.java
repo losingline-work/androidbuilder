@@ -134,6 +134,10 @@ public class AgentService {
     // in one march increment it.
     private final java.util.Map<Long, GenerationDegradePolicy.Counters> degradeCounters =
             new java.util.concurrent.ConcurrentHashMap<>();
+    // Cross-round repair focus (W2-F): the file the previous focused repair round targeted and its error
+    // count, so a file that did not shrink yields the focus to the next-worst file instead of looping on it.
+    private final java.util.Map<Long, String> lastRepairFocusFile = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<Long, Integer> lastRepairFocusErrorCount = new java.util.concurrent.ConcurrentHashMap<>();
     private final GeneratedProjectWriter writer = new GeneratedProjectWriter();
     private final FileOperationsWriter operationsWriter;
     private final TaskOperationExecutor taskOperationExecutor;
@@ -440,9 +444,11 @@ public class AgentService {
         if (project == null) {
             throw new IllegalArgumentException("Project not found: " + projectId);
         }
-        // A new plan starts a fresh march: clear the weak-model degrade tally so a prior struggling run does
-        // not keep the next one degraded.
+        // A new plan starts a fresh march: clear the weak-model degrade tally + repair-focus memory so a prior
+        // struggling run does not keep the next one degraded.
         degradeCounters.remove(projectId);
+        lastRepairFocusFile.remove(projectId);
+        lastRepairFocusErrorCount.remove(projectId);
         repository.addMessage(projectId, "user", prompt, null);
         repository.saveProjectPlan(projectId, "", "planning", null);
         List<ChatMessage> history = ConversationContextPolicy.planningHistory(repository.listMessages(projectId), PLANNING_HISTORY_WINDOW);
@@ -915,15 +921,37 @@ public class AgentService {
                 instruction = RuntimeCrashPlaybook.instruction(crashDiagnostics, chinese, escalate);
                 repairShards = java.util.Collections.emptyList();
             } else {
-                snapshot = sourceSnapshot(sourceDir, buildLog);
+                // W2-F: once this march is degrading, narrow each repair round to the single file with the
+                // most javac errors — a weak model asked to fix everything at once fixes a few and breaks
+                // others. Rotates off a file that did not shrink last round (see RepairFocusPolicy).
+                java.util.LinkedHashMap<String, List<String>> clusters = BuildLogContextExtractor.perFileErrorClusters(buildLog);
+                String focusFile = RepairFocusPolicy.shouldFocus(degradeLevel(projectId), escalate, clusters.size())
+                        ? RepairFocusPolicy.pickFocusFile(clusters, lastRepairFocusFile.get(projectId),
+                                lastRepairFocusErrorCount.getOrDefault(projectId, 0))
+                        : null;
+                String focusClause = "";
+                if (focusFile != null) {
+                    List<String> focusErrors = clusters.get(focusFile);
+                    focusClause = RepairFocusPolicy.focusClause(focusFile, focusErrors, chinese);
+                    lastRepairFocusFile.put(projectId, focusFile);
+                    lastRepairFocusErrorCount.put(projectId, focusErrors.size());
+                    FileUtils.appendText(logs, (chinese ? "本轮聚焦修复：" : "Focused repair round on: ") + focusFile + "\n");
+                }
+                // Bias the snapshot's full-text layer toward the focused file so its body is present to edit.
+                snapshot = sourceSnapshot(sourceDir, focusFile == null ? buildLog : focusFile + "\n" + buildLog);
                 String baseInstruction = repairInstruction(buildLog, chinese, escalate);
+                if (!focusClause.isEmpty()) {
+                    baseInstruction = focusClause + "\n\n" + baseInstruction;
+                }
                 LocalGuardResult triage = triageBuildFailureWithCloudGuard(projectId, job.id, buildLog, snapshot, chinese);
                 appendLocalGuardLog(logs, chinese ? "云端守卫构建日志分诊" : "Cloud guard build triage", triage);
                 instruction = triage.usable && triage.decision == LocalGuardResult.Decision.REWRITE
                         && triage.additionalInstruction != null && !triage.additionalInstruction.trim().isEmpty()
                         ? LocalGuardInstructionComposer.forBuildTriage(baseInstruction, triage.additionalInstruction)
                         : baseInstruction;
-                repairShards = HermesRepairShardingPolicy.shards(buildLog);
+                // A focused round is single-file by design; skip parallel sharding (which splits across files).
+                repairShards = focusFile != null ? java.util.Collections.<HermesRepairShard>emptyList()
+                        : HermesRepairShardingPolicy.shards(buildLog);
             }
             TaskOperations operations = null;
             if (canUseParallelRepair(repairShards)) {
