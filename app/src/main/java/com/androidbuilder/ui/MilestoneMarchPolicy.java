@@ -21,6 +21,9 @@ final class MilestoneMarchPolicy {
         ESCALATE_REPAIR,
         /** This milestone cannot be made to build — roll the source back to the last green checkpoint and stop. */
         ROLLBACK_AND_STOP,
+        /** Repairs are exhausted but a simplify retry is still available — re-derive this milestone as a
+         * smallest-viable version and try once more before rolling back. */
+        SIMPLIFY_AND_RETRY,
         /** Milestone is green — checkpoint it and generate the next pending milestone. */
         CHECKPOINT_AND_ADVANCE,
         /** Milestone is green but the user paused / is single-stepping — checkpoint it and stop here. */
@@ -30,6 +33,15 @@ final class MilestoneMarchPolicy {
     }
 
     private MilestoneMarchPolicy() {
+    }
+
+    /**
+     * When a milestone's bounded auto-repair loop is exhausted (or its generation failed outright): retry it as
+     * a smallest-viable version if that is still available, otherwise roll back to the last green checkpoint
+     * and stop. Pure so the decision is unit-tested; the activity performs the I/O.
+     */
+    static Action onRepairExhausted(boolean simplifyAvailable) {
+        return simplifyAvailable ? Action.SIMPLIFY_AND_RETRY : Action.ROLLBACK_AND_STOP;
     }
 
     /**

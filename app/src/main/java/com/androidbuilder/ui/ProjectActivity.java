@@ -132,6 +132,9 @@ public class ProjectActivity extends BaseActivity {
     private boolean milestoneMarchPaused;
     private boolean milestoneSingleStep;
     private long marchMilestoneId = -1;
+    // Repair-round budget for the CURRENT milestone: -1 = the default MAX_AUTO_REPAIR_ROUNDS; a simplify retry
+    // sets it to the smaller SIMPLIFIED_REPAIR_ROUNDS so a minimal slice does not itself burn a long loop.
+    private int marchRepairBudgetOverride = -1;
     private long lastScrolledMilestoneId = -1;
     // Per-milestone action routing (computed each rebuildSnapshot): which card hosts 执行/继续, 安装, and
     // whether the project is in milestone-card mode (so the bottom action bar yields to the cards).
@@ -990,6 +993,7 @@ public class ProjectActivity extends BaseActivity {
         milestoneMarchActive = true;
         milestoneMarchPaused = false;
         milestoneSingleStep = singleStep;
+        marchRepairBudgetOverride = -1;
         MilestoneMarchRegistry.setActive(projectId, true);
         updateKeepScreenOn();
         advanceMilestoneMarch();
@@ -1032,8 +1036,10 @@ public class ProjectActivity extends BaseActivity {
             public void onError(Exception error) {
                 runOnUiThread(() -> {
                     refresh();
-                    finishMilestoneMarch(null);
-                    Toast.makeText(ProjectActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
+                    // Generation itself failed (all attempts exhausted): route through the same
+                    // simplify-or-rollback path as a build exhaustion — a weak model that cannot generate the
+                    // full slice may still generate a minimal one.
+                    onMilestoneBuildExhausted();
                 });
             }
         });
@@ -1060,6 +1066,9 @@ public class ProjectActivity extends BaseActivity {
             }
             switch (action) {
                 case CHECKPOINT_AND_ADVANCE:
+                    // This milestone is green (a simplified one may have just succeeded); the next milestone
+                    // starts with the full repair budget again.
+                    marchRepairBudgetOverride = -1;
                     advanceMilestoneMarch();
                     break;
                 case CHECKPOINT_AND_PAUSE:
@@ -1097,15 +1106,52 @@ public class ProjectActivity extends BaseActivity {
         }
     }
 
-    /** A march milestone could not be made to build: mark it failed, roll back to the last green app, stop. */
+    private int effectiveMaxAutoRepairRounds() {
+        return marchRepairBudgetOverride > 0 ? marchRepairBudgetOverride : MAX_AUTO_REPAIR_ROUNDS;
+    }
+
+    /**
+     * A march milestone could not be made to build (repairs exhausted) or its generation failed outright. If a
+     * simplify retry is still available for it, re-derive it as a smallest-viable version and try once more;
+     * otherwise roll the source back to the last green checkpoint and stop. A network/dependency outage is not
+     * a code problem, so never waste the one simplify on it — go straight to rollback with a reconnect hint.
+     */
     private void onMilestoneBuildExhausted() {
         final long milestoneId = marchMilestoneId;
+        ProjectMilestoneRecord milestone = milestoneId > 0 ? repository.getMilestone(milestoneId) : null;
+        boolean network = isNetworkFailure(repository.latestBuildJob(projectId));
+        boolean canSimplify = !network && milestone != null
+                && MilestoneSimplifyPolicy.shouldSimplify(milestone.simplifyAttempts);
+        if (MilestoneMarchPolicy.onRepairExhausted(canSimplify) == MilestoneMarchPolicy.Action.SIMPLIFY_AND_RETRY) {
+            simplifyAndRetryMilestone(milestone);
+        } else {
+            rollbackAndStopMilestone(milestoneId, network);
+        }
+    }
+
+    /** Re-derive this milestone as a smallest-viable version on a clean base, with a reduced repair budget. */
+    private void simplifyAndRetryMilestone(ProjectMilestoneRecord milestone) {
+        boolean chinese = AppSettings.isChinese(this);
+        repository.updateMilestoneSlice(milestone.id,
+                MilestoneSimplifyPolicy.simplifiedSliceInstruction(milestone.slice, chinese));
+        repository.incrementMilestoneSimplifyAttempts(milestone.id);
+        repository.updateMilestoneStatus(milestone.id, MilestoneStatus.PENDING);
+        marchRepairBudgetOverride = MilestoneSimplifyPolicy.SIMPLIFIED_REPAIR_ROUNDS;
+        String message = getString(R.string.milestone_simplifying, milestone.orderIndex, milestone.title);
+        setOperationStatus(message);
+        repository.addMessage(projectId, "assistant", message, null);
+        // Roll the source back to the last green checkpoint so the simplified slice regenerates on a clean
+        // base, then re-pick this now-PENDING milestone through the normal advance path.
+        agentService.rollbackToLastCheckpointAsync(projectId, () -> runOnUiThread(() -> {
+            refresh();
+            advanceMilestoneMarch();
+        }));
+    }
+
+    private void rollbackAndStopMilestone(long milestoneId, boolean network) {
         if (milestoneId > 0) {
             repository.updateMilestoneStatus(milestoneId, MilestoneStatus.FAILED);
         }
-        // Distinguish an unfixable network/dependency outage from a real code failure: the former is not a
-        // code problem and no amount of repair helps — tell the user to reconnect and resume.
-        final boolean network = isNetworkFailure(repository.latestBuildJob(projectId));
         setOperationStatus(getString(R.string.milestone_rolling_back));
         agentService.rollbackToLastCheckpointAsync(projectId, () -> runOnUiThread(() -> {
             ProjectMilestoneRecord failed = milestoneId > 0 ? repository.getMilestone(milestoneId) : null;
@@ -1422,7 +1468,7 @@ public class ProjectActivity extends BaseActivity {
             lastFailureSignature = signature;
         }
         AutoRepairLoopPolicy.Decision decision = AutoRepairLoopPolicy.decide(
-                job.status, repairable, autoRepairRounds, MAX_AUTO_REPAIR_ROUNDS, stalledRounds);
+                job.status, repairable, autoRepairRounds, effectiveMaxAutoRepairRounds(), stalledRounds);
         switch (decision) {
             case IN_PROGRESS:
                 return;

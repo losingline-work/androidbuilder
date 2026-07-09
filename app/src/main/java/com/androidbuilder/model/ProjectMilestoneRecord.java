@@ -24,6 +24,8 @@ public class ProjectMilestoneRecord {
     public final long updatedAt;
     /** Snapshot of this milestone's task list (title+status JSON), captured when it finished. "" while pending. */
     public final String tasksJson;
+    /** How many times this milestone was re-derived as a SMALLEST-viable version after exhausting repairs. */
+    public final int simplifyAttempts;
 
     public ProjectMilestoneRecord(long id, long projectId, int orderIndex, String title, String description,
                                   String slice, String status, String checkpointPath, long buildJobId,
@@ -35,6 +37,14 @@ public class ProjectMilestoneRecord {
     public ProjectMilestoneRecord(long id, long projectId, int orderIndex, String title, String description,
                                   String slice, String status, String checkpointPath, long buildJobId,
                                   int repairRounds, long createdAt, long updatedAt, String tasksJson) {
+        this(id, projectId, orderIndex, title, description, slice, status, checkpointPath, buildJobId,
+                repairRounds, createdAt, updatedAt, tasksJson, 0);
+    }
+
+    public ProjectMilestoneRecord(long id, long projectId, int orderIndex, String title, String description,
+                                  String slice, String status, String checkpointPath, long buildJobId,
+                                  int repairRounds, long createdAt, long updatedAt, String tasksJson,
+                                  int simplifyAttempts) {
         this.id = id;
         this.projectId = projectId;
         this.orderIndex = orderIndex;
@@ -48,5 +58,6 @@ public class ProjectMilestoneRecord {
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
         this.tasksJson = tasksJson == null ? "" : tasksJson;
+        this.simplifyAttempts = simplifyAttempts;
     }
 }

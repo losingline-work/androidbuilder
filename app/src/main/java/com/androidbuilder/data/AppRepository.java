@@ -452,6 +452,14 @@ public class AppRepository {
         helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
     }
 
+    /** Overwrite a milestone's feature-slice — used to re-derive it as a smallest-viable version on simplify. */
+    public synchronized void updateMilestoneSlice(long id, String slice) {
+        ContentValues values = new ContentValues();
+        values.put("slice", slice == null ? "" : slice);
+        values.put("updated_at", System.currentTimeMillis());
+        helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
     public synchronized void updateMilestoneBuildJob(long id, long buildJobId) {
         ContentValues values = new ContentValues();
         values.put("build_job_id", buildJobId);
@@ -472,6 +480,15 @@ public class AppRepository {
         values.put("repair_rounds", repairRounds);
         values.put("updated_at", System.currentTimeMillis());
         helper.getWritableDatabase().update(DatabaseHelper.TABLE_PROJECT_MILESTONES, values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    /** Record that this milestone was re-derived as a smallest-viable version (bounds it to one simplify). */
+    public synchronized void incrementMilestoneSimplifyAttempts(long id) {
+        // Column-relative update, which ContentValues cannot express.
+        helper.getWritableDatabase().execSQL(
+                "UPDATE " + DatabaseHelper.TABLE_PROJECT_MILESTONES
+                        + " SET simplify_attempts = simplify_attempts + 1, updated_at = ? WHERE id = ?",
+                new Object[]{System.currentTimeMillis(), id});
     }
 
     /** Mark a milestone green: store its checkpoint snapshot path + build job and set status DONE. */
@@ -912,7 +929,8 @@ public class AppRepository {
                 cursor.getInt(cursor.getColumnIndexOrThrow("repair_rounds")),
                 cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
                 cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")),
-                cursor.getString(cursor.getColumnIndexOrThrow("tasks_json"))
+                cursor.getString(cursor.getColumnIndexOrThrow("tasks_json")),
+                cursor.getInt(cursor.getColumnIndexOrThrow("simplify_attempts"))
         );
     }
 
