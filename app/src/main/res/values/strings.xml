@@ -29,6 +29,7 @@
     <string name="status">Status</string>
     <string name="source_files">Source Files</string>
     <string name="export_project">Export Project</string>
+    <string name="generation_stats">Generation stats</string>
     <string name="log_query">AI Conversation Logs</string>
     <string name="search_logs">Search user, cloud model, and diagnostic logs</string>
     <string name="log_query_count">%1$d of %2$d records</string>

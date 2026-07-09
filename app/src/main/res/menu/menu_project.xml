@@ -10,4 +10,8 @@
         android:icon="@drawable/ic_log_search"
         android:title="@string/log_query"
         app:showAsAction="always" />
+    <item
+        android:id="@+id/action_generation_stats"
+        android:title="@string/generation_stats"
+        app:showAsAction="never" />
 </menu>

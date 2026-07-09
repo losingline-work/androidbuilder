@@ -14,9 +14,12 @@ public class InstallStatusReceiver extends BroadcastReceiver {
         int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
         String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
         InstallStatusPolicy.Result result = InstallStatusPolicy.resultFor(status);
+        long projectId = intent.getLongExtra(ApkInstaller.EXTRA_PROJECT_ID, -1);
+        String packageName = intent.getStringExtra(ApkInstaller.EXTRA_EXPECTED_PACKAGE_NAME);
         if (result == InstallStatusPolicy.Result.SUCCESS) {
+            recordInstall(context, projectId, packageName, true);
             Toast.makeText(context, R.string.install_success, Toast.LENGTH_LONG).show();
-            launchInstalledApp(context, intent.getStringExtra(ApkInstaller.EXTRA_EXPECTED_PACKAGE_NAME));
+            launchInstalledApp(context, packageName);
         } else if (result == InstallStatusPolicy.Result.PENDING_USER_ACTION) {
             Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
             if (confirm != null) {
@@ -24,7 +27,21 @@ public class InstallStatusReceiver extends BroadcastReceiver {
                 context.startActivity(confirm);
             }
         } else {
+            recordInstall(context, projectId, packageName, false);
             Toast.makeText(context, context.getString(R.string.install_failed, message == null ? String.valueOf(status) : message), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Persist the install outcome to the funnel (best-effort; a logging failure never affects the install). */
+    private static void recordInstall(Context context, long projectId, String packageName, boolean success) {
+        if (projectId <= 0) {
+            return;
+        }
+        try {
+            ((com.androidbuilder.AndroidBuilderApp) context.getApplicationContext())
+                    .repository().recordInstallEvent(projectId, packageName, success);
+        } catch (Exception ignored) {
+            // Funnel telemetry is diagnostic only.
         }
     }
 

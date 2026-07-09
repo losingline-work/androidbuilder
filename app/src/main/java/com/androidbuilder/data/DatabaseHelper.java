@@ -12,12 +12,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     static final String TABLE_PROJECT_PLANS = "project_plans";
     static final String TABLE_PROJECT_TASKS = "project_tasks";
     static final String TABLE_PROJECT_MILESTONES = "project_milestones";
+    static final String TABLE_INSTALL_EVENTS = "install_events";
     static final String TABLE_AI_CONVERSATIONS = "ai_conversations";
     static final String TABLE_HERMES_EXECUTION_RUNS = "hermes_execution_runs";
     static final String TABLE_HERMES_AGENT_RUNS = "hermes_agent_runs";
 
     private static final String DB_NAME = "android_builder.db";
-    private static final int DB_VERSION = 9;
+    private static final int DB_VERSION = 10;
 
     public DatabaseHelper(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -72,6 +73,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         createAiConversationsTable(db);
         createHermesExecutionRunsTable(db);
         createHermesAgentRunsTable(db);
+        createInstallEventsTable(db);
         db.execSQL("CREATE INDEX idx_messages_project ON messages(project_id, created_at)");
         db.execSQL("CREATE INDEX idx_jobs_project ON build_jobs(project_id, created_at)");
     }
@@ -107,6 +109,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         if (oldVersion < 9) {
             db.execSQL("ALTER TABLE project_milestones ADD COLUMN simplify_attempts INTEGER NOT NULL DEFAULT 0");
+        }
+        if (oldVersion < 10) {
+            createInstallEventsTable(db);
         }
     }
 
@@ -147,6 +152,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE" +
                 ")");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_project ON project_tasks(project_id, sort_order)");
+    }
+
+    /** Install outcomes for a project's generated APK, so the funnel can extend past "APK built" to "installs". */
+    private void createInstallEventsTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS install_events (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "project_id INTEGER NOT NULL," +
+                "package_name TEXT NOT NULL DEFAULT ''," +
+                "success INTEGER NOT NULL DEFAULT 0," +
+                "created_at INTEGER NOT NULL," +
+                "FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE" +
+                ")");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_install_events_project ON install_events(project_id, created_at)");
     }
 
     private void createProjectMilestonesTable(SQLiteDatabase db) {

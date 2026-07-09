@@ -20,6 +20,7 @@ import java.io.OutputStream;
 public class ApkInstaller {
     public static final String ACTION_INSTALL_STATUS = "com.androidbuilder.INSTALL_STATUS";
     public static final String EXTRA_EXPECTED_PACKAGE_NAME = "com.androidbuilder.EXTRA_EXPECTED_PACKAGE_NAME";
+    public static final String EXTRA_PROJECT_ID = "com.androidbuilder.EXTRA_PROJECT_ID";
 
     private final Context context;
 
@@ -39,6 +40,18 @@ public class ApkInstaller {
     }
 
     public void install(File apk) throws Exception {
+        install(apk, -1);
+    }
+
+    /** Install and tag the status broadcast with {@code projectId} so the outcome can be recorded to the funnel. */
+    public void install(File apk, long projectId) throws Exception {
+        this.pendingProjectId = projectId;
+        installInternal(apk);
+    }
+
+    private long pendingProjectId = -1;
+
+    private void installInternal(File apk) throws Exception {
         if (!apk.exists()) {
             throw new IllegalArgumentException("APK not found: " + apk);
         }
@@ -57,6 +70,7 @@ public class ApkInstaller {
             session.fsync(out);
         }
         Intent intent = new Intent(ACTION_INSTALL_STATUS).setPackage(context.getPackageName());
+        intent.putExtra(EXTRA_PROJECT_ID, pendingProjectId);
         String packageName = packageName(apk);
         if (packageName != null) {
             intent.putExtra(EXTRA_EXPECTED_PACKAGE_NAME, packageName);

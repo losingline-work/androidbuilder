@@ -190,6 +190,10 @@ public class ProjectActivity extends BaseActivity {
                 toggleLogQuery();
                 return true;
             }
+            if (item.getItemId() == R.id.action_generation_stats) {
+                showGenerationStats();
+                return true;
+            }
             return false;
         });
         repository = ((AndroidBuilderApp) getApplication()).repository();
@@ -1110,6 +1114,31 @@ public class ProjectActivity extends BaseActivity {
         return marchRepairBudgetOverride > 0 ? marchRepairBudgetOverride : MAX_AUTO_REPAIR_ROUNDS;
     }
 
+    /** Show the weak-model success funnel (plan → M0 → milestones → APK → install) + parse-outcome mix. */
+    private void showGenerationStats() {
+        boolean chinese = AppSettings.isChinese(this);
+        List<ProjectMilestoneRecord> milestones = repository.listProjectMilestones(projectId);
+        int total = milestones.size();
+        int green = 0;
+        for (ProjectMilestoneRecord milestone : milestones) {
+            if (MilestoneStatus.DONE.equals(milestone.status)
+                    && milestone.checkpointPath != null && !milestone.checkpointPath.isEmpty()) {
+                green++;
+            }
+        }
+        boolean planCreated = repository.latestProjectPlan(projectId) != null || total > 0;
+        BuildJobRecord latest = repository.latestBuildJob(projectId);
+        boolean apkBuilt = latest != null && latest.apkPath != null && !latest.apkPath.trim().isEmpty();
+        boolean installed = repository.hasSuccessfulInstall(projectId);
+        String text = FunnelPolicy.summary(planCreated, total, green, apkBuilt, installed,
+                repository.aiOutcomeCounts(projectId), chinese);
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(R.string.generation_stats)
+                .setMessage(text)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+    }
+
     /**
      * A march milestone could not be made to build (repairs exhausted) or its generation failed outright. If a
      * simplify retry is still available for it, re-derive it as a smallest-viable version and try once more;
@@ -1666,7 +1695,7 @@ public class ProjectActivity extends BaseActivity {
             return;
         }
         try {
-            new ApkInstaller(this).install(new File(job.apkPath));
+            new ApkInstaller(this).install(new File(job.apkPath), projectId);
         } catch (Exception error) {
             Toast.makeText(this, getString(R.string.install_failed, error.getMessage()), Toast.LENGTH_LONG).show();
         }

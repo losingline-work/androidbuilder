@@ -491,6 +491,39 @@ public class AppRepository {
                 new Object[]{System.currentTimeMillis(), id});
     }
 
+    /** Record an APK install outcome for a project so the funnel can extend past "APK built" to "installs". */
+    public synchronized void recordInstallEvent(long projectId, String packageName, boolean success) {
+        ContentValues values = new ContentValues();
+        values.put("project_id", projectId);
+        values.put("package_name", packageName == null ? "" : packageName);
+        values.put("success", success ? 1 : 0);
+        values.put("created_at", System.currentTimeMillis());
+        helper.getWritableDatabase().insertOrThrow(DatabaseHelper.TABLE_INSTALL_EVENTS, null, values);
+    }
+
+    /** True when this project's generated APK has installed successfully at least once. */
+    public synchronized boolean hasSuccessfulInstall(long projectId) {
+        try (Cursor cursor = helper.getReadableDatabase().rawQuery(
+                "SELECT 1 FROM " + DatabaseHelper.TABLE_INSTALL_EVENTS + " WHERE project_id = ? AND success = 1 LIMIT 1",
+                new String[]{String.valueOf(projectId)})) {
+            return cursor.moveToFirst();
+        }
+    }
+
+    /** Count of cloud AI calls by recorded status (parse outcome for task-ops calls), for the funnel view. */
+    public synchronized java.util.LinkedHashMap<String, Integer> aiOutcomeCounts(long projectId) {
+        java.util.LinkedHashMap<String, Integer> counts = new java.util.LinkedHashMap<>();
+        try (Cursor cursor = helper.getReadableDatabase().rawQuery(
+                "SELECT status, COUNT(*) FROM " + DatabaseHelper.TABLE_AI_CONVERSATIONS
+                        + " WHERE project_id = ? AND source = 'cloud' GROUP BY status ORDER BY COUNT(*) DESC",
+                new String[]{String.valueOf(projectId)})) {
+            while (cursor.moveToNext()) {
+                counts.put(cursor.getString(0) == null ? "" : cursor.getString(0), cursor.getInt(1));
+            }
+        }
+        return counts;
+    }
+
     /** Mark a milestone green: store its checkpoint snapshot path + build job and set status DONE. */
     public synchronized void markMilestoneCheckpoint(long id, String checkpointPath, long buildJobId) {
         markMilestoneCheckpoint(id, checkpointPath, buildJobId, "done");
